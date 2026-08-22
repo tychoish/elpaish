@@ -28,20 +28,18 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - run: "apt-get update"
-      - run: "apt-get install -y gnupg git"
-      - run: "emacs --batch -l scripts/bootstrap-elpaish.el"
+      - name: Install System Dependencies
+        run: apt-get update && apt-get install -y gnupg git
 
-      - name: Build Package Archives
+      - name: Bootstrap Build Dependencies
+        run: emacs --batch -l scripts/bootstrap-elpaish.el
+
+      - name: Build Multi-Track Package Archives
         env:
           ELPAISH_SIGNING_KEY: ${{ secrets.ELPAISH_SIGNING_KEY }}
           ELPAISH_GPG_PASSPHRASE: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
           ELPAISH_OUTPUT_DIR: public/
-        run: |
-          emacs --batch -L pkg -L scripts -l scripts/build-elpaish.el
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+        run: emacs --batch -L pkg -L scripts -l scripts/build-elpaish.el
 
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
@@ -54,7 +52,38 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  verify:
+    name: Verify Deployment & Run Consumer Integration Tests
+    runs-on: ubuntu-latest
+    container: silex/emacs:30.2-ci
+    needs: deploy
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install System Dependencies
+        run: apt-get update && apt-get install -y gnupg git
+
+      - name: Bootstrap Test Dependencies
+        run: emacs --batch -l scripts/bootstrap-elpaish.el
+
+      - name: Run Consumer Subprocess Integration Tests
+        env:
+          ELPAISH_RUN_INTEGRATION_TESTS: "1"
+          ELPAISH_ARCHIVE_URL: ${{ needs.deploy.outputs.page_url }}elpaish/
+        run: |
+          emacs --batch -L pkg -L scripts -L test \
+            -l test/test-elpaish-integration.el \
+            --eval '(ert-run-tests-batch-and-exit "^elpaish-integration-test-.*")'

@@ -1,0 +1,38 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    container: silex/emacs:${{ matrix.emacs_version }}-ci
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        emacs_version:
+          - "30.2"
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install System Dependencies
+        run: apt-get update && apt-get install -y gnupg git
+
+      - name: Bootstrap Build Dependencies
+        run: emacs --batch -l scripts/bootstrap-elpaish.el
+
+      - name: Run ELPAish Unit Tests
+        run: |
+          emacs --batch -L pkg -L scripts -L test \
+            -l test/test-elpaish.el \
+            --eval '(ert-run-tests-batch-and-exit "^elpaish-test-.*")'
