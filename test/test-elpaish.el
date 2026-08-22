@@ -204,7 +204,9 @@
          (goto-char (point-min))
          (should (search-forward "max-width:1200px" nil t))
          (goto-char (point-min))
-         (should (search-forward "pkg-name" nil t)))
+         (should (search-forward "pkg-name" nil t))
+         (goto-char (point-min))
+         (should (search-forward "table-wrapper" nil t)))
        (with-temp-buffer
          (insert-file-contents top-index)
          (goto-char (point-min))
@@ -236,6 +238,10 @@
          (should (search-forward "color:#0000aa" nil t))
          (goto-char (point-min))
          (should (search-forward "color:#721045" nil t))
+         (goto-char (point-min))
+         (should (search-forward "min-width:280px" nil t))
+         (goto-char (point-min))
+         (should (search-forward "white-space:nowrap!important" nil t))
          (goto-char (point-min))
          (should (search-forward "annotated-completing-read" nil t)))
        (with-temp-buffer
@@ -345,13 +351,13 @@
      (should (equal (elpaish--get-signing-passphrase) "SECRET123"))
 
      ;; Test environment variable overrides
-     (setenv "ELPAISH_SIGNING_KEY" "ENVKEY456")
+     (setenv "ELPAISH_KEY_ID" "ENVKEY456")
      (setenv "ELPAISH_GPG_PASSPHRASE" "ENVPASS456")
      (setq elpaish-gpg-key nil
            elpaish-gpg-passphrase nil)
      (should (equal (elpaish--get-signing-key) "ENVKEY456"))
      (should (equal (elpaish--get-signing-passphrase) "ENVPASS456"))
-     (setenv "ELPAISH_SIGNING_KEY" nil)
+     (setenv "ELPAISH_KEY_ID" nil)
      (setenv "ELPAISH_GPG_PASSPHRASE" nil)
 
      ;; Mock gpg CLI execution

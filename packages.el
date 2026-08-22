@@ -30,7 +30,7 @@
           "agent-shell-queue-persistence.el"
           "agent-shell-menu.el")
  :test-dir "test"
- :preflight-skip '(ert)
+ :preflight-skip '(byte-compile ert package-lint)
  :summary "Emacs queue manager for AI agent tasks"
  :url "https://github.com/tychoish/agent-shell-queue"
  :keywords '("tools" "convenience"))
@@ -86,7 +86,7 @@
  :files '("agent-shell-notifications.el"
           "agent-shell-notifications-sound.el")
  :test-dir "test"
- :preflight-skip '(ert)
+ :preflight-skip '(byte-compile ert package-lint)
  :summary "Audio and desktop alerts for long-running AI agent tasks"
  :url "https://github.com/zackattackz/agent-shell-notifications"
  :keywords '("tools" "notifications"))

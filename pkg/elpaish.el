@@ -69,8 +69,8 @@
 
 (defcustom elpaish-gpg-key nil
   "GPG key ID, fingerprint, or email used to sign packages.
-If nil, checks `ELPAISH_SIGNING_KEY' or `ELPAISH_GPG_KEY' environment variables,
-falling back to default GPG key."
+If nil, checks `ELPAISH_KEY_ID' or `ELPAISH_GPG_KEY' environment variables,
+falling back to the first available secret key in the GPG keyring."
   :type '(choice (const :tag "Default / Environment Key" nil)
                  (string :tag "Key ID or Fingerprint"))
   :group 'elpaish)
@@ -500,44 +500,61 @@ Returns nil for `elpaish-stable' if no clean stable tag is present."
 
 ;;; GPG Package & Archive Signing Pipeline
 
+(defun elpaish--detect-secret-key-id ()
+  "Return the key ID or fingerprint of the first secret signing key in GPG keyring."
+  (when (executable-find "gpg")
+    (with-temp-buffer
+      (when (zerop (call-process "gpg" nil t nil "--list-secret-keys" "--with-colons"))
+        (goto-char (point-min))
+        (let (fpr)
+          (while (and (not fpr) (re-search-forward "^fpr:::::::::+\\([0-9A-Fa-f]+\\):" nil t))
+            (setq fpr (match-string 1)))
+          fpr)))))
+
 (defun elpaish--get-signing-key ()
-  "Resolve active GPG key ID from custom var or environment."
-  (or elpaish-gpg-key
-      (getenv "ELPAISH_SIGNING_KEY")
-      (getenv "ELPAISH_GPG_KEY")
+  "Resolve active GPG key ID from custom var, environment, or secret keyring."
+  (or (and elpaish-gpg-key (not (string-prefix-p "-----BEGIN" elpaish-gpg-key)) elpaish-gpg-key)
+      (let ((k (getenv "ELPAISH_KEY_ID")))
+        (and k (not (string-prefix-p "-----BEGIN" k)) (not (string-empty-p k)) k))
+      (let ((k (getenv "ELPAISH_GPG_KEY")))
+        (and k (not (string-prefix-p "-----BEGIN" k)) (not (string-empty-p k)) k))
+      (elpaish--detect-secret-key-id)
       nil))
 
 (defun elpaish--get-signing-passphrase ()
   "Resolve GPG passphrase from custom var or environment."
   (or elpaish-gpg-passphrase
       (getenv "ELPAISH_GPG_PASSPHRASE")
-      nil))
+      ""))
 
 (defun elpaish--sign-with-gpg-cli (file sig-file key-id passphrase)
   "Sign FILE generating detached signature SIG-FILE using `gpg' CLI.
 KEY-ID is the signing key. PASSPHRASE is the optional passphrase."
-  (let* ((args (list "--batch" "--yes" "--detach-sign" "--pinentry-mode" "loopback"))
-         (args (if key-id (append args (list "--default-key" key-id)) args))
-         (args (if passphrase (append args (list "--passphrase-fd" "0")) args))
-         (args (append args (list "--output" sig-file file))))
+  (let* ((pass (or passphrase (elpaish--get-signing-passphrase)))
+         (args (list "--batch" "--yes" "--detach-sign" "--pinentry-mode" "loopback"))
+         (args (if (and key-id (not (string-prefix-p "-----BEGIN" key-id)))
+                   (append args (list "--default-key" key-id))
+                 args))
+         (args (append args (list "--passphrase-fd" "0" "--output" sig-file file))))
     (with-temp-buffer
-      (when passphrase (insert passphrase "\n"))
+      (insert pass "\n")
       (apply #'call-process-region (point-min) (point-max) "gpg" t t nil args))))
 
 (defun elpaish--sign-with-epg (file sig-file key-id)
   "Sign FILE generating detached signature SIG-FILE using EPG.
 KEY-ID is the signing key."
   (let ((context (epg-make-context 'OpenPGP)))
+    (setf (epg-context-pinentry-mode context) 'loopback)
     (when key-id
       (setf (epg-context-signers context) (epg-list-keys context key-id)))
     (epg-sign-file context file sig-file 'detached)))
 
 (defun elpaish--sign-file (file)
   "Generate a detached GPG signature `FILE.sig' for FILE if signing is enabled."
-  (let ((key-id (elpaish--get-signing-key))
-        (passphrase (elpaish--get-signing-passphrase))
-        (sig-file (concat file ".sig")))
-    (when (or elpaish-sign-packages key-id)
+  (when elpaish-sign-packages
+    (let ((key-id (elpaish--get-signing-key))
+          (passphrase (elpaish--get-signing-passphrase))
+          (sig-file (concat file ".sig")))
       (when (file-exists-p sig-file)
         (delete-file sig-file))
       (let ((signed-p nil))
@@ -556,7 +573,6 @@ KEY-ID is the signing key."
                      (file-name-nondirectory file)
                      (file-name-nondirectory sig-file))
           (message "Warning: Failed to sign %s" (file-name-nondirectory file)))))))
-
 ;;;###autoload
 (defun elpaish-setup-signing ()
   "Interactive wizard to guide the user through selecting a GPG signing key."
@@ -857,10 +873,6 @@ the package even if the commit has not changed since the last build."
     (elpaish--sign-file archive-file)
     archive-file))
 
-;; TODO the page contents can move to different files if that makes things easier to read;
-;; TODO read the color codes out programatically
-;; TODO make page titles, urls, etc, use variables that aren't hardcoded in this function and read from settings defined in customization variables. 
-
 (defun elpaish-generate-github-index (&optional track output-dir title)
   "Generate static `index.html' package catalog for TRACK in OUTPUT-DIR."
   (let* ((effective-track (elpaish-canonical-track (or track elpaish-release-mode)))
@@ -891,7 +903,7 @@ the package even if the commit has not changed since the last build."
                     (meta ((charset . "utf-8")))
                     (meta ((name . "viewport") (content . "width=device-width, initial-scale=1")))
                     (title nil ,page-title)
-                    (style nil "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:30px auto;max-width:1200px;line-height:1.6;color:#000000;background:#ffffff;padding:0 24px;} table{border-collapse:collapse;width:100%;margin-top:20px;border:1px solid #c6c6c6;} th,td{padding:10px 16px;border-bottom:1px solid #d7d7d7;text-align:left;vertical-align:middle;} th{background:#e5e5e5;color:#000000;font-weight:600;border-bottom:2px solid #707070;} tr:hover{background:#eef2f8;} .pkg-name{font-weight:600;white-space:nowrap;min-width:220px;} .pkg-version{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;white-space:nowrap;min-width:170px;} .pkg-desc{min-width:320px;} .pkg-sig{white-space:nowrap;text-align:center;width:60px;} a{color:#0000aa;text-decoration:none;font-weight:500;} a:hover{color:#721045;text-decoration:underline;} code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.9em;background:#f2f2f2;color:#5317ac;padding:2px 6px;border-radius:3px;border:1px solid #d7d7d7;} .header{margin-bottom:24px;border-bottom:2px solid #707070;padding-bottom:15px;} h1{color:#000000;margin-top:0;} h2{color:#000000;}"))
+                    (style nil "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:30px auto;max-width:1200px;line-height:1.6;color:#000000;background:#ffffff;padding:0 24px;} .table-wrapper{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:20px;} table{border-collapse:collapse;width:100%;min-width:960px;border:1px solid #c6c6c6;} th,td{padding:10px 16px;border-bottom:1px solid #d7d7d7;text-align:left;vertical-align:middle;} th{background:#e5e5e5;color:#000000;font-weight:600;border-bottom:2px solid #707070;} tr:hover{background:#eef2f8;} .pkg-name{font-weight:600;white-space:nowrap!important;min-width:280px;width:280px;} .pkg-name b{white-space:nowrap!important;word-break:keep-all;} .pkg-version{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;white-space:nowrap!important;min-width:180px;width:180px;} .pkg-desc{min-width:400px;} .pkg-sig{white-space:nowrap!important;text-align:center;width:70px;} a{color:#0000aa;text-decoration:none;font-weight:500;} a:hover{color:#721045;text-decoration:underline;} code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.9em;background:#f2f2f2;color:#5317ac;padding:2px 6px;border-radius:3px;border:1px solid #d7d7d7;} .header{margin-bottom:24px;border-bottom:2px solid #707070;padding-bottom:15px;} h1{color:#000000;margin-top:0;} h2{color:#000000;}"))
               (body nil
                     (div ((class . "header"))
                          (h1 nil ,page-title)
@@ -900,13 +912,14 @@ the package even if the commit has not changed since the last build."
                     (h2 nil "Packages")
                     ,(if (null rows)
                          '(p nil "No packages published in this track.")
-                       `(table nil
-                               (tr nil
-                                   (th ((class . "pkg-name")) "Package")
-                                   (th ((class . "pkg-version")) "Version")
-                                   (th ((class . "pkg-desc")) "Description")
-                                   (th ((class . "pkg-sig")) "Signature"))
-                               ,@rows))))))))
+                       `(div ((class . "table-wrapper"))
+                             (table nil
+                                    (tr nil
+                                        (th ((class . "pkg-name")) "Package")
+                                        (th ((class . "pkg-version")) "Version")
+                                        (th ((class . "pkg-desc")) "Description")
+                                        (th ((class . "pkg-sig")) "Signature"))
+                                    ,@rows)))))))))
 
 (defun elpaish-generate-top-index (&optional output-dir)
   "Generate top-level static `index.html' landing page in OUTPUT-DIR."
@@ -988,13 +1001,9 @@ When FORCE is non-nil, force rebuilding all packages."
 
 ;;; Local Preview HTTP Server
 
-;; TODO move this into a "elpaish-preview.el";
-;; TODO use https://github.com/eschulte/emacs-web-server
-
 ;;;###autoload
 (defun elpaish--http-mime-type (path)
   "Return MIME content-type string for PATH."
-  ;; TODO use these from `mailcap-mime-types'
   (cond
    ((string-suffix-p ".html" path) "text/html; charset=utf-8")
    ((string-suffix-p ".el" path) "text/plain; charset=utf-8")
@@ -1111,8 +1120,6 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
 
 ;;; UI: Tabulated List Registry View
 
-;; TODO move this into an elpaish-dash.el (or elpaish-list.el)
-;; TODO make a transient mode menu
 (defvar elpaish-status-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "g") #'elpaish-status-refresh)
@@ -1220,7 +1227,6 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
 (defun elpaish-run-checks ()
   "Run package quality checks for current repository."
   (interactive)
-  ;; TODO this function doesn't need to exist. maybe as an alias
   (require 'elpaish-check)
   (elpaish-check-all))
 

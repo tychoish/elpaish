@@ -4,8 +4,8 @@
 ;; Keywords: tools, package, elpa, ci
 
 ;;; Commentary:
-;; Initializes package archives and installs prerequisite packages (magit,
-;; package-lint) required for running ELPAish builds in headless CI environments.
+;; Initializes package archives and installs prerequisite packages required for
+;; running ELPAish builds and preflight checks in headless CI environments.
 
 ;;; Code:
 
@@ -19,18 +19,17 @@
         ("melpa" . "https://melpa.org/packages/")))
 
 (package-initialize)
+(package-refresh-contents)
 
-(unless (package-installed-p 'package-lint)
-  (package-refresh-contents)
-  (condition-case nil
-      (package-install 'package-lint)
-    (error (message "Warning: package-lint installation skipped or failed."))))
+(defconst elpaish-bootstrap-deps
+  '(package-lint magit projectile f s ht seq compat transient)
+  "Prerequisite packages needed to build and validate the ecosystem in CI.")
 
-(unless (package-installed-p 'magit)
-  (unless package-archive-contents (package-refresh-contents))
-  (condition-case nil
-      (package-install 'magit)
-    (error (message "Warning: magit installation skipped or failed."))))
+(dolist (pkg elpaish-bootstrap-deps)
+  (unless (package-installed-p pkg)
+    (condition-case err
+        (package-install pkg)
+      (error (message "Warning: %s installation skipped or failed: %s" pkg (error-message-string err))))))
 
 (provide 'bootstrap-elpaish)
 ;;; bootstrap-elpaish.el ends here

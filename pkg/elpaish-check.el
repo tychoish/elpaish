@@ -29,8 +29,6 @@
          (candidates
           (seq-remove (lambda (f)
                         (let ((base (file-name-nondirectory f)))
-			  ;; TODO build this as a list and then
-			  ;; filter; many of these files can probably be deleted and are elpaish specific
                           (or (string-prefix-p "." base)
                               (string-prefix-p "#" base)
                               (string-prefix-p ".#" base)
@@ -118,8 +116,6 @@
             (insert-file-contents pkg-file)
             (emacs-lisp-mode)
             (let ((lint-res (package-lint-buffer)))
-	      ;; TODO the item should become an alist and things can
-	      ;; get keyed rather than nth indexed
               (dolist (item lint-res)
                 (let* ((line (nth 0 item))
                        (col (nth 1 item))
@@ -158,10 +154,12 @@
 (defun elpaish-check--ert (test-files pkg-name verbose extra-load-path)
   "Run ERT on TEST-FILES for PKG-NAME with EXTRA-LOAD-PATH. Returns list of error strings."
   (when verbose (message "[elpaish-check] 5. Running ERT tests (%d files)..." (length test-files)))
-  (let ((errs nil))
+  (let ((errs nil)
+        (ert-quiet-redefinition t))
     (dolist (tf test-files)
       (condition-case err
-          (let ((load-path (append extra-load-path load-path)))
+          (let ((load-path (append extra-load-path load-path))
+                (ert-quiet-redefinition t))
             (load tf nil t)
             (let* ((stats (ert (format "%s.*" pkg-name)))
                    (failed (ert-stats-completed-unexpected stats)))

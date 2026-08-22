@@ -28,16 +28,11 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Install System Dependencies
-        run: |
-          apt-get update
-          apt-get install -y gnupg git
+      - run: "apt-get update"
+      - run: "apt-get install -y gnupg git"
+      - run: "emacs --batch -l scripts/bootstrap-elpaish.el"
 
-      - name: Bootstrap Build Dependencies
-        run: |
-          emacs --batch -l scripts/bootstrap-elpaish.el
-
-      - name: Build Multi-Track Package Archives
+      - name: Build Package Archives
         env:
           ELPAISH_SIGNING_KEY: ${{ secrets.ELPAISH_SIGNING_KEY }}
           ELPAISH_GPG_PASSPHRASE: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
