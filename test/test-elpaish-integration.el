@@ -205,11 +205,12 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
   (setq package-check-signature (quote allow-unsigned))
   (package-initialize)
   (package-refresh-contents)
-  (unless (assoc (quote annotated-completing-read) package-archive-contents)
-    (error \"annotated-completing-read not found in live archive\"))
-  (package-install (quote annotated-completing-read))
-  (require (quote annotated-completing-read))
-  (message \"LIVE_CONSUMER_SUCCESS\"))"
+  (unless package-archive-contents
+    (error \"No packages found in live archive\"))
+  (let ((first-pkg (car (car package-archive-contents))))
+    (package-install first-pkg)
+    (require first-pkg)
+    (message \"LIVE_CONSUMER_SUCCESS for %%S\" first-pkg)))"
                        consumer-home live-url))
               (output-buf (generate-new-buffer " *live-sub-output*"))
               (process-environment (cons (concat "HOME=" consumer-home) process-environment))

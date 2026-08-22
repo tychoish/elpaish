@@ -414,20 +414,23 @@ Derives deterministic UTC date strings from Git commit timestamps."
 (defun elpaish-derive-version (recipe track)
   "Derive the package version string for RECIPE on TRACK.
 TRACK is one of `elpaish', `elpaish-stable', or `elpaish-staging'.
-Returns nil for `elpaish-stable' if no clean stable tag is present."
+Returns normalized version string, or nil for `elpaish-stable' if no clean stable tag is present."
   (let* ((repo-dir (elpaish--resolve-repo-path recipe))
          (source-dir-rel (elpaish--recipe-source-dir-relative recipe))
-         (canon (elpaish-canonical-track track)))
-    (pcase canon
-      ('elpaish
-       (elpaish--get-snapshot-version repo-dir source-dir-rel))
-      ('elpaish-stable
-       (elpaish--get-stable-version repo-dir))
-      ('elpaish-staging
-       (elpaish--get-staging-version repo-dir))
-      (_
-       (elpaish--get-snapshot-version repo-dir)))))
-
+         (canon (elpaish-canonical-track track))
+         (raw-ver (pcase canon
+                    ('elpaish
+                     (elpaish--get-snapshot-version repo-dir source-dir-rel))
+                    ('elpaish-stable
+                     (elpaish--get-stable-version repo-dir))
+                    ('elpaish-staging
+                     (elpaish--get-staging-version repo-dir))
+                    (_
+                     (elpaish--get-snapshot-version repo-dir)))))
+    (when raw-ver
+      (condition-case nil
+          (package-version-join (version-to-list raw-ver))
+        (error raw-ver)))))
 ;;; In-Memory Version Header Injection & Packaging
 
 (defun elpaish--inject-version-header (version-str)
