@@ -29,8 +29,13 @@
     (package-initialize))
    (t
     (package-initialize))))
+
 (require 'elpaish)
 (require 'elpaish-recipes)
+(require 'elpaish-check nil t)
+
+;; Load external package definitions from top-level packages.el
+(elpaish-load-packages)
 
 ;; Configure output directory from environment or default to public/
 (setq elpaish-output-dir
@@ -40,6 +45,7 @@
 ;; Preflight quality gates can be toggled via ELPAISH_RUN_PREFLIGHT
 (when (equal (getenv "ELPAISH_RUN_PREFLIGHT") "0")
   (setq elpaish-run-preflight nil))
+
 ;; If secret key is provided in environment, import it into temporary GPG keyring
 (let ((key-armor (getenv "ELPAISH_SIGNING_KEY"))
       (passphrase (getenv "ELPAISH_GPG_PASSPHRASE")))
@@ -55,4 +61,5 @@
 (elpaish-build-all 'all elpaish-output-dir)
 (message "[elpaish] Multi-track build complete!")
 
+(provide 'build-elpaish)
 ;;; build-elpaish.el ends here

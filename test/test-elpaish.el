@@ -8,6 +8,7 @@
 (require 'ert)
 (require 'elpaish)
 (require 'elpaish-recipes)
+(require 'elpaish-check)
 (require 'package)
 (require 'url)
 
@@ -18,6 +19,7 @@
           (elpaish-work-dir (expand-file-name "repos/" temp-dir))
           (elpaish-registry (make-hash-table :test 'equal))
           (elpaish-sign-packages nil)
+          (elpaish-force-rebuild nil)
           (elpaish-run-preflight nil))
      (unwind-protect
          (progn ,@body)
@@ -122,7 +124,7 @@
   "Test building single-file package on elpaish track."
   (elpaish-test-with-temp-env
    (let ((pkg-dir (expand-file-name "single-pkg" temp-dir)))
-     (elpaish-test-create-dummy-pkg pkg-dir "single-pkg" nil "Single File Test" '((emacs "27.1")))
+     (elpaish-test-create-dummy-pkg pkg-dir "single-pkg" "1.0.0" "Single File Test")
      (elpaish-register-package 'single-pkg pkg-dir)
      (let* ((recipe (gethash "single-pkg" elpaish-registry))
             (dest (elpaish-build-package recipe 'elpaish)))
@@ -130,7 +132,6 @@
        (should (file-exists-p dest))
        (should (string-suffix-p ".el" dest))
        (should (elpaish-recipe-built-version-elpaish recipe))
-       ;; Verify built artifact has injected version header
        (with-temp-buffer
          (insert-file-contents dest)
          (should (search-forward ";; Version:" nil t)))))))
@@ -198,12 +199,51 @@
        (should (file-exists-p top-index))
        (with-temp-buffer
          (insert-file-contents track-index)
-         (should (search-forward "catalog-pkg" nil t)))
+         (goto-char (point-min))
+         (should (search-forward "catalog-pkg" nil t))
+         (goto-char (point-min))
+         (should (search-forward "max-width:1200px" nil t))
+         (goto-char (point-min))
+         (should (search-forward "pkg-name" nil t)))
        (with-temp-buffer
          (insert-file-contents top-index)
+         (goto-char (point-min))
          (should (search-forward "elpaish (Snapshots)" nil t))
+         (goto-char (point-min))
          (should (search-forward "elpaish-stable (Releases)" nil t))
-         (should (search-forward "elpaish-staging (Pre-release)" nil t)))))))
+         (goto-char (point-min))
+         (should (search-forward "elpaish-staging (Pre-release)" nil t))
+         (goto-char (point-min))
+         (should (search-forward "max-width:1200px" nil t)))))))
+
+(ert-deftest elpaish-test-modus-operandi-html-styling ()
+  "Test Modus Operandi accessible color palette in generated HTML."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "annotated-completing-read" temp-dir)))
+     (elpaish-test-create-dummy-pkg pkg-dir "annotated-completing-read" "1.0.0" "Long Package Name Test")
+     (elpaish-register-package 'annotated-completing-read pkg-dir)
+     (elpaish-build-package (gethash "annotated-completing-read" elpaish-registry) 'elpaish)
+     (elpaish-generate-github-index 'elpaish)
+     (elpaish-generate-top-index)
+
+     (let ((track-index (expand-file-name "elpaish/index.html" elpaish-output-dir))
+           (top-index (expand-file-name "index.html" elpaish-output-dir)))
+       (with-temp-buffer
+         (insert-file-contents track-index)
+         (goto-char (point-min))
+         (should (search-forward "color:#000000;background:#ffffff" nil t))
+         (goto-char (point-min))
+         (should (search-forward "color:#0000aa" nil t))
+         (goto-char (point-min))
+         (should (search-forward "color:#721045" nil t))
+         (goto-char (point-min))
+         (should (search-forward "annotated-completing-read" nil t)))
+       (with-temp-buffer
+         (insert-file-contents top-index)
+         (goto-char (point-min))
+         (should (search-forward "color:#000000;background:#ffffff" nil t))
+         (goto-char (point-min))
+         (should (search-forward "background:#00538b" nil t)))))))
 
 (ert-deftest elpaish-test-build-all-multi-track ()
   "Test building all tracks with `elpaish-build-all`."
@@ -294,6 +334,7 @@
                (should (search-forward "preview-pkg" nil t))
                (kill-buffer url-buf))))
        (elpaish-stop-server)))))
+
 (ert-deftest elpaish-test-gpg-signing-pipeline ()
   "Test GPG signing key/passphrase resolution and signature generation."
   (elpaish-test-with-temp-env
@@ -303,34 +344,34 @@
      (should (equal (elpaish--get-signing-key) "TESTKEY123"))
      (should (equal (elpaish--get-signing-passphrase) "SECRET123"))
 
-     ;; Test env fallback when custom vars are nil
-     (let ((elpaish-gpg-key nil)
-           (elpaish-gpg-passphrase nil))
-       (setenv "ELPAISH_SIGNING_KEY" "ENVKEY456")
-       (setenv "ELPAISH_GPG_PASSPHRASE" "ENVPASS456")
-       (unwind-protect
-           (progn
-             (should (equal (elpaish--get-signing-key) "ENVKEY456"))
-             (should (equal (elpaish--get-signing-passphrase) "ENVPASS456")))
-         (setenv "ELPAISH_SIGNING_KEY" nil)
-         (setenv "ELPAISH_GPG_PASSPHRASE" nil)))
+     ;; Test environment variable overrides
+     (setenv "ELPAISH_SIGNING_KEY" "ENVKEY456")
+     (setenv "ELPAISH_GPG_PASSPHRASE" "ENVPASS456")
+     (setq elpaish-gpg-key nil
+           elpaish-gpg-passphrase nil)
+     (should (equal (elpaish--get-signing-key) "ENVKEY456"))
+     (should (equal (elpaish--get-signing-passphrase) "ENVPASS456"))
+     (setenv "ELPAISH_SIGNING_KEY" nil)
+     (setenv "ELPAISH_GPG_PASSPHRASE" nil)
 
-     ;; Test mock signing execution
+     ;; Mock gpg CLI execution
      (let ((dummy-file (expand-file-name "test.el" temp-dir)))
-       (with-temp-file dummy-file (insert ";; test"))
-       (cl-letf (((symbol-function 'elpaish--sign-with-gpg-cli)
-                  (lambda (file sig-file _key _pass)
-                    (with-temp-file sig-file (insert "MOCK SIG"))
+       (with-temp-file dummy-file (insert "test"))
+       (cl-letf (((symbol-function 'call-process-region)
+                  (lambda (_start _end _program &optional _delete _destination _display &rest args)
+                    (let ((out-file (cadr (member "--output" args))))
+                      (when out-file
+                        (with-temp-file out-file (insert "MOCK SIGNATURE"))))
                     0)))
          (elpaish--sign-file dummy-file)
          (should (file-exists-p (concat dummy-file ".sig"))))))))
 
 (ert-deftest elpaish-test-key-rotation-and-revocation ()
-  "Test subkey rotation and emergency revocation certificate generation."
+  "Test GPG key rotation and emergency revocation publishing."
   (elpaish-test-with-temp-env
    (let ((gpg-bin (executable-find "gpg")))
      (if (not gpg-bin)
-         (ert-skip "GPG binary not found in PATH")
+         (message "Skipping key rotation test: gpg not found in PATH")
        (cl-letf (((symbol-function 'call-process)
                   (lambda (_program &optional _infile _destination _display &rest args)
                     (when (member "--gen-revoke" args)
@@ -357,12 +398,13 @@
        (write-region (point-min) (point-max) (expand-file-name "skip-pkg.el" pkg-dir)))
 
      ;; Test skipping checkdoc & package-lint explicitly
-     (let ((res (run-checks-package pkg-dir :skip-checks '(checkdoc package-lint))))
+     (let ((res (elpaish-check-package pkg-dir :skip-checks '(checkdoc package-lint))))
        (should (plist-get res :passed)))
 
      ;; Test skipping all checks
-     (let ((res (run-checks-package pkg-dir :skip-checks t)))
+     (let ((res (elpaish-check-package pkg-dir :skip-checks t)))
        (should (plist-get res :passed))))))
+
 (ert-deftest elpaish-test-staging-version-edge-cases ()
   "Test edge cases in version normalization and staging version derivation."
   (should (equal (elpaish--normalize-staging-version "v1.2.0-4-gabcdef") "1.2.0.4"))
@@ -439,6 +481,59 @@
          (should (search-forward "define-package" nil t))
          (should (search-forward "desc-pkg" nil t))
          (should (search-forward "1.2.3" nil t)))))))
+
+(ert-deftest elpaish-test-packages-file-loading ()
+  "Test external packages.el definitions loading into elpaish-registry."
+  (elpaish-test-with-temp-env
+   (let ((pkg-file (expand-file-name "packages.el" temp-dir)))
+     (with-temp-file pkg-file
+       (insert "(elpaish-register-package 'ext-pkg-1 \"/dummy/1\" :summary \"External 1\")\n")
+       (insert "(elpaish-register-package 'ext-pkg-2 \"/dummy/2\" :summary \"External 2\")\n"))
+
+     (let ((count (elpaish-load-packages pkg-file)))
+       (should (>= count 2))
+       (should (gethash "ext-pkg-1" elpaish-registry))
+       (should (gethash "ext-pkg-2" elpaish-registry))
+       (should (equal (elpaish-recipe-summary (gethash "ext-pkg-1" elpaish-registry)) "External 1"))))))
+
+(ert-deftest elpaish-test-snapshot-skip-unchanged-rebuild ()
+  "Test that snapshot builds are skipped if commit has not changed since last build."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "skip-rebuild-pkg" temp-dir)))
+     (elpaish-test-create-dummy-pkg pkg-dir "skip-rebuild-pkg" "1.0.0" "Skip Rebuild Test")
+     (elpaish-register-package 'skip-rebuild-pkg pkg-dir)
+
+     ;; Mock git commands to simulate a clean repository with commit hash "abc1234"
+     (cl-letf (((symbol-function 'magit-git-string)
+                (lambda (cmd &rest args)
+                  (cond
+                   ((equal cmd "rev-parse") "abc1234567890abcdef")
+                   ((and (equal cmd "log") (member "-1" args))
+                    (if (member "--format=%ct" args)
+                        "1700000000"
+                      "abc1234567890abcdef"))
+                   (t nil))))
+               ((symbol-function 'file-directory-p)
+                (lambda (path)
+                  (or (string-suffix-p ".git" path)
+                      (funcall #'file-exists-p path)))))
+
+       ;; 1. First build
+       (let* ((recipe (gethash "skip-rebuild-pkg" elpaish-registry))
+              (dest1 (elpaish-build-package recipe 'elpaish))
+              (ver1 (elpaish-recipe-built-version-elpaish recipe)))
+         (should dest1)
+         (should (file-exists-p dest1))
+         (should ver1)
+
+         ;; Generate archive-contents
+         (elpaish-generate-archive-contents 'elpaish)
+
+         ;; 2. Second build without commit change: should return existing dest and keep exact same version
+         (let ((dest2 (elpaish-build-package recipe 'elpaish))
+               (ver2 (elpaish-recipe-built-version-elpaish recipe)))
+           (should (equal dest1 dest2))
+           (should (equal ver1 ver2))))))))
 
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here

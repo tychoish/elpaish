@@ -40,6 +40,7 @@
 (require 'subr-x)
 (require 'tabulated-list)
 (require 'timer)
+(require 'elpaish-check nil t)
 (require 'annotated-completing-read nil t)
 
 (defgroup elpaish nil
@@ -58,6 +59,11 @@
 
 (defcustom elpaish-sign-packages nil
   "When non-nil, sign generated package archives and `archive-contents' with GPG."
+  :type 'boolean
+  :group 'elpaish)
+
+(defcustom elpaish-force-rebuild nil
+  "When non-nil, rebuild package artifacts even if the commit hash is unchanged."
   :type 'boolean
   :group 'elpaish)
 
@@ -279,7 +285,6 @@ load-path entry for every other recipe's preflight check).")
         (make-directory elpaish-work-dir t)
         (if (file-exists-p (expand-file-name ".git" pkg-dir))
             (let ((default-directory pkg-dir))
-	      ;; TODO use magit for this 
               (call-process "git" nil nil nil "fetch" "origin")
               (call-process "git" nil nil nil "checkout" branch)
               (call-process "git" nil nil nil "reset" "--hard" (concat "origin/" branch)))
@@ -300,10 +305,13 @@ load-path entry for every other recipe's preflight check).")
         (expand-file-name rel repo-dir)
       repo-dir)))
 
-(defun elpaish--current-hash (repo-dir)
-  "Get current HEAD hash in REPO-DIR."
+(defun elpaish--current-hash (repo-dir &optional source-dir-rel)
+  "Get current HEAD hash in REPO-DIR, optionally scoped to SOURCE-DIR-REL."
   (let ((default-directory repo-dir))
-    (or (magit-git-string "rev-parse" "HEAD") "uncommitted")))
+    (or (if (and source-dir-rel (file-directory-p (expand-file-name ".git" repo-dir)))
+            (magit-git-string "log" "-1" "--format=%H" "--" source-dir-rel)
+          (magit-git-string "rev-parse" "HEAD"))
+        "uncommitted")))
 
 (defun elpaish--commit-delta (repo-dir built-hash &optional source-dir-rel)
   "Calculate commit count between BUILT-HASH and HEAD in REPO-DIR.
@@ -321,13 +329,15 @@ When SOURCE-DIR-REL is non-nil, scope the count to that subtree."
 (defun elpaish--get-snapshot-version (repo-dir &optional source-dir-rel)
   "Return pure UTC date version string (YYYYMMDD.HHMMSS) for REPO-DIR.
 When SOURCE-DIR-REL is non-nil, scope the Git log query to that subtree so
-that unrelated monorepo packages do not bump each other's snapshot version."
+that unrelated monorepo packages do not bump each other's snapshot version.
+Derives deterministic UTC date strings from Git commit timestamps."
   (let ((default-directory repo-dir))
     (or (and (file-directory-p (expand-file-name ".git" repo-dir))
-             (if source-dir-rel
-                 (magit-git-string "log" "-1" "--format=%cd" "--date=format-local:%Y%m%d.%H%M%S"
-                                    "--" source-dir-rel)
-               (magit-git-string "log" "-1" "--format=%cd" "--date=format-local:%Y%m%d.%H%M%S")))
+             (when-let* ((epoch-str (if source-dir-rel
+                                        (magit-git-string "log" "-1" "--format=%ct" "--" source-dir-rel)
+                                      (magit-git-string "log" "-1" "--format=%ct"))))
+               (unless (string-empty-p (string-trim epoch-str))
+                 (format-time-string "%Y%m%d.%H%M%S" (seconds-to-time (string-to-number epoch-str)) t))))
         (format-time-string "%Y%m%d.%H%M%S" nil t))))
 
 (defun elpaish--stable-tag-p (tag)
@@ -431,6 +441,7 @@ Returns nil for `elpaish-stable' if no clean stable tag is present."
           (beginning-of-line)
         (forward-line 1))
       (insert (format ";; Version: %s\n" version-str)))))
+
 (defun elpaish--collect-files (repo-dir patterns &optional pkg-name)
   "Collect relative file paths in REPO-DIR matching PATTERNS, excluding tests and generated descriptor files."
   (let ((default-directory repo-dir)
@@ -638,18 +649,6 @@ REPO-SLUG defaults to \"tychoish/elpaish\"."
 
 ;;; Preflight Package Quality Gates
 
-(defun elpaish--resolve-checks-file ()
-  "Locate `run-checks.el' across load-path, default-directory, and user configuration."
-  (or (locate-library "run-checks")
-      (let ((p (expand-file-name "scripts/run-checks.el" default-directory)))
-        (and (file-exists-p p) p))
-      (when-let* ((lib-loc (locate-library "elpaish"))
-                  (p (expand-file-name "../scripts/run-checks.el" (file-name-directory lib-loc))))
-        (and (file-exists-p p) p))
-      (and (boundp 'user-emacs-directory)
-           (let ((p (expand-file-name "scripts/run-checks.el" user-emacs-directory)))
-             (and (file-exists-p p) p)))))
-
 (defun elpaish-preflight-package (recipe)
   "Execute preflight quality gates on RECIPE.
 Returns t if checks pass, nil if quarantined."
@@ -658,28 +657,44 @@ Returns t if checks pass, nil if quarantined."
     (let ((skip (elpaish-recipe-preflight-skip recipe)))
       (if (eq skip t)
           t
-        (let* ((repo-dir (elpaish--recipe-source-path recipe))
-               (checks-file (elpaish--resolve-checks-file))
-               (sibling-dirs (thread-last (hash-table-values elpaish-registry)
-                               (seq-remove (lambda (r) (eq r recipe)))
-                               (seq-map #'elpaish--recipe-source-path))))
-          (when (and checks-file (file-exists-p checks-file))
-            (load checks-file nil t))
-          (if (fboundp 'run-checks-package)
-              (let* ((tdir (elpaish-recipe-test-dir recipe))
-                     (res (run-checks-package repo-dir :test-dir tdir :skip-checks skip
-                                              :extra-load-path sibling-dirs))
-                     (passed (plist-get res :passed))
-                     (errs (plist-get res :errors)))
-                (unless passed
-                  (message "PREFLIGHT QUARANTINE for %s: %d error(s)"
-                           (elpaish-recipe-name recipe) (length errs))
-                  (dolist (e errs)
-                    (message "   - %s" e)))
-                passed)
-            t))))))
+        (unless (featurep 'elpaish-check)
+          (require 'elpaish-check nil t))
+        (if (fboundp 'elpaish-check-package)
+            (let* ((repo-dir (elpaish--recipe-source-path recipe))
+                   (sibling-dirs (thread-last (hash-table-values elpaish-registry)
+                                   (seq-remove (lambda (r) (eq r recipe)))
+                                   (seq-map #'elpaish--recipe-source-path)))
+                   (tdir (elpaish-recipe-test-dir recipe))
+                   (res (elpaish-check-package repo-dir :test-dir tdir :skip-checks skip
+                                               :extra-load-path sibling-dirs))
+                   (passed (plist-get res :passed))
+                   (errs (plist-get res :errors)))
+              (unless passed
+                (message "PREFLIGHT QUARANTINE for %s: %d error(s)"
+                         (elpaish-recipe-name recipe) (length errs))
+                (dolist (e errs)
+                  (message "   - %s" e)))
+              passed)
+          t)))))
 
 ;;; Package Build Engine
+
+(defun elpaish-read-archive-contents (target-dir)
+  "Read and parse `archive-contents' from TARGET-DIR if it exists.
+Returns a hash table of package-name -> entry-vector."
+  (let ((ac-file (expand-file-name "archive-contents" target-dir))
+        (tbl (make-hash-table :test 'equal)))
+    (when (file-exists-p ac-file)
+      (condition-case nil
+          (with-temp-buffer
+            (insert-file-contents ac-file)
+            (let ((data (read (current-buffer))))
+              (when (and (listp data) (eq (car data) 1))
+                (dolist (entry (cdr data))
+                  (when (and (consp entry) (symbolp (car entry)) (vectorp (cdr entry)))
+                    (puthash (symbol-name (car entry)) (cdr entry) tbl))))))
+        (error nil)))
+    tbl))
 
 (defun elpaish--extract-buffer-metadata (recipe)
   "Extract package metadata from current buffer or fallback to RECIPE defaults.
@@ -696,16 +711,20 @@ Returns a plist with :summary, :reqs, :url, and :keywords."
                         (elpaish-recipe-keywords recipe)
                         '("tools")))))
 
-(cl-defun elpaish-build-package (recipe &optional track output-dir)
+(cl-defun elpaish-build-package (recipe &optional track output-dir force)
   "Build, package, sign, and record status for RECIPE on TRACK.
 TRACK is `elpaish', `elpaish-stable', or `elpaish-staging'.
-OUTPUT-DIR defaults to track directory under `elpaish-output-dir'."
+OUTPUT-DIR defaults to track directory under `elpaish-output-dir'.
+When FORCE is non-nil or `elpaish-force-rebuild' is non-nil, rebuild
+the package even if the commit has not changed since the last build."
   (let* ((effective-track (elpaish-canonical-track (or track elpaish-release-mode)))
          (target-dir (or output-dir (elpaish-track-dir effective-track)))
          (repo-dir (elpaish--recipe-source-path recipe))
+         (source-dir-rel (elpaish--recipe-source-dir-relative recipe))
          (name (elpaish-recipe-name recipe))
          (main-file-name (if (string-suffix-p ".el" name) name (concat name ".el")))
-         (main-file (expand-file-name main-file-name repo-dir)))
+         (main-file (expand-file-name main-file-name repo-dir))
+         (current-commit (elpaish--current-hash repo-dir source-dir-rel)))
 
     (unless (file-exists-p main-file)
       (error "Main file %s not found in %s" main-file-name repo-dir))
@@ -730,40 +749,79 @@ OUTPUT-DIR defaults to track directory under `elpaish-output-dir'."
              (pkg-name-ver (format "%s-%s" name version-str))
              (dest-file (expand-file-name (format "%s.%s" pkg-name-ver (if is-tar "tar" "el"))
                                           target-dir))
-             meta summary reqs url keywords)
+             (sig-file (concat dest-file ".sig"))
+             (existing-ac-entry (gethash name (elpaish-read-archive-contents target-dir)))
+             (existing-commit (when existing-ac-entry
+                                (let ((extras (and (> (length existing-ac-entry) 4)
+                                                   (aref existing-ac-entry 4))))
+                                  (cdr (assq :commit extras)))))
+             (existing-ver-list (when existing-ac-entry (aref existing-ac-entry 0)))
+             (existing-ver-str (when existing-ver-list (package-version-join existing-ver-list)))
+             (should-skip-rebuild
+              (and (not force)
+                   (not elpaish-force-rebuild)
+                   (file-exists-p dest-file)
+                   (or (not elpaish-sign-packages) (file-exists-p sig-file))
+                   (not (equal current-commit "uncommitted"))
+                   (or (equal (elpaish-recipe-built-hash recipe) current-commit)
+                       (equal existing-commit current-commit))
+                   (or (equal (elpaish-recipe-version-for-track recipe effective-track) version-str)
+                       (equal existing-ver-str version-str)))))
 
-        (with-temp-buffer
-          (insert-file-contents main-file)
-          (elpaish--inject-version-header version-str)
-          (setq meta (elpaish--extract-buffer-metadata recipe))
-          (setq summary (plist-get meta :summary)
-                reqs (plist-get meta :reqs)
-                url (plist-get meta :url)
-                keywords (plist-get meta :keywords))
+        (if should-skip-rebuild
+            (progn
+              (pcase effective-track
+                ('elpaish (setf (elpaish-recipe-built-version-elpaish recipe) version-str))
+                ('elpaish-stable (setf (elpaish-recipe-built-version-stable recipe) version-str))
+                ('elpaish-staging (setf (elpaish-recipe-built-version-staging recipe) version-str)))
+              (setf (elpaish-recipe-built-type recipe) pkg-type
+                    (elpaish-recipe-built-hash recipe) current-commit)
+              (unless (elpaish-recipe-summary recipe)
+                (with-temp-buffer
+                  (insert-file-contents main-file)
+                  (let ((meta (elpaish--extract-buffer-metadata recipe)))
+                    (setf (elpaish-recipe-summary recipe) (plist-get meta :summary)
+                          (elpaish-recipe-url recipe) (plist-get meta :url)
+                          (elpaish-recipe-keywords recipe) (plist-get meta :keywords)
+                          (elpaish-recipe-requires recipe) (plist-get meta :reqs)))))
+              (message "Skipping rebuild for %s version %s on %s (commit %s unchanged)"
+                       name version-str effective-track current-commit)
+              dest-file)
 
-          (if is-tar
-              (elpaish--create-tar-package repo-dir dest-file pkg-name-ver files
-                                                name version-str summary reqs url keywords)
-            (write-region (point-min) (point-max) dest-file nil 'silent)))
+          ;; Build artifact
+          (let (meta summary reqs url keywords)
+            (with-temp-buffer
+              (insert-file-contents main-file)
+              (elpaish--inject-version-header version-str)
+              (setq meta (elpaish--extract-buffer-metadata recipe))
+              (setq summary (plist-get meta :summary)
+                    reqs (plist-get meta :reqs)
+                    url (plist-get meta :url)
+                    keywords (plist-get meta :keywords))
 
-        ;; 4. Sign artifact
-        (elpaish--sign-file dest-file)
+              (if is-tar
+                  (elpaish--create-tar-package repo-dir dest-file pkg-name-ver files
+                                              name version-str summary reqs url keywords)
+                (write-region (point-min) (point-max) dest-file nil 'silent)))
 
-        ;; 5. Update recipe metadata & status
-        (pcase effective-track
-          ('elpaish (setf (elpaish-recipe-built-version-elpaish recipe) version-str))
-          ('elpaish-stable (setf (elpaish-recipe-built-version-stable recipe) version-str))
-          ('elpaish-staging (setf (elpaish-recipe-built-version-staging recipe) version-str)))
+            ;; 4. Sign artifact
+            (elpaish--sign-file dest-file)
 
-        (setf (elpaish-recipe-built-type recipe) pkg-type
-              (elpaish-recipe-summary recipe) summary
-              (elpaish-recipe-url recipe) url
-              (elpaish-recipe-keywords recipe) keywords
-              (elpaish-recipe-requires recipe) reqs
-              (elpaish-recipe-built-hash recipe) (elpaish--current-hash repo-dir))
+            ;; 5. Update recipe metadata & status
+            (pcase effective-track
+              ('elpaish (setf (elpaish-recipe-built-version-elpaish recipe) version-str))
+              ('elpaish-stable (setf (elpaish-recipe-built-version-stable recipe) version-str))
+              ('elpaish-staging (setf (elpaish-recipe-built-version-staging recipe) version-str)))
 
-        (message "Successfully built %s version %s on %s" name version-str effective-track)
-        dest-file))))
+            (setf (elpaish-recipe-built-type recipe) pkg-type
+                  (elpaish-recipe-summary recipe) summary
+                  (elpaish-recipe-url recipe) url
+                  (elpaish-recipe-keywords recipe) keywords
+                  (elpaish-recipe-requires recipe) reqs
+                  (elpaish-recipe-built-hash recipe) current-commit)
+
+            (message "Successfully built %s version %s on %s" name version-str effective-track)
+            dest-file))))))
 
 ;;; Archive Contents & Static HTML Generation
 
@@ -799,6 +857,10 @@ OUTPUT-DIR defaults to track directory under `elpaish-output-dir'."
     (elpaish--sign-file archive-file)
     archive-file))
 
+;; TODO the page contents can move to different files if that makes things easier to read;
+;; TODO read the color codes out programatically
+;; TODO make page titles, urls, etc, use variables that aren't hardcoded in this function and read from settings defined in customization variables. 
+
 (defun elpaish-generate-github-index (&optional track output-dir title)
   "Generate static `index.html' package catalog for TRACK in OUTPUT-DIR."
   (let* ((effective-track (elpaish-canonical-track (or track elpaish-release-mode)))
@@ -815,10 +877,10 @@ OUTPUT-DIR defaults to track directory under `elpaish-output-dir'."
                             (is-tar (eq (elpaish-recipe-built-type recipe) 'tar))
                             (artifact (format "%s-%s.%s" name ver-str (if is-tar "tar" "el"))))
                        `(tr nil
-                            (td nil (b nil ,name))
-                            (td nil (a ((href . ,artifact)) ,ver-str))
-                            (td nil ,summary)
-                            (td nil (a ((href . ,(concat artifact ".sig"))) "sig"))))))
+                            (td ((class . "pkg-name")) (b nil ,name))
+                            (td ((class . "pkg-version")) (a ((href . ,artifact)) ,ver-str))
+                            (td ((class . "pkg-desc")) ,summary)
+                            (td ((class . "pkg-sig")) (a ((href . ,(concat artifact ".sig"))) "sig"))))))
                  recipes))))
     (make-directory target-dir t)
     (with-temp-file (expand-file-name "index.html" target-dir)
@@ -827,8 +889,9 @@ OUTPUT-DIR defaults to track directory under `elpaish-output-dir'."
        `(html nil
               (head nil
                     (meta ((charset . "utf-8")))
+                    (meta ((name . "viewport") (content . "width=device-width, initial-scale=1")))
                     (title nil ,page-title)
-                    (style nil "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:40px auto;max-width:900px;line-height:1.6;color:#222;} table{border-collapse:collapse;width:100%;margin-top:20px;} th,td{padding:10px 14px;border-bottom:1px solid #eee;text-align:left;} th{background:#f8f9fa;} tr:hover{background:#f5f8ff;} a{color:#0969da;text-decoration:none;} a:hover{text-decoration:underline;} .header{margin-bottom:30px;border-bottom:2px solid #eaecef;padding-bottom:15px;}"))
+                    (style nil "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:30px auto;max-width:1200px;line-height:1.6;color:#000000;background:#ffffff;padding:0 24px;} table{border-collapse:collapse;width:100%;margin-top:20px;border:1px solid #c6c6c6;} th,td{padding:10px 16px;border-bottom:1px solid #d7d7d7;text-align:left;vertical-align:middle;} th{background:#e5e5e5;color:#000000;font-weight:600;border-bottom:2px solid #707070;} tr:hover{background:#eef2f8;} .pkg-name{font-weight:600;white-space:nowrap;min-width:220px;} .pkg-version{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;white-space:nowrap;min-width:170px;} .pkg-desc{min-width:320px;} .pkg-sig{white-space:nowrap;text-align:center;width:60px;} a{color:#0000aa;text-decoration:none;font-weight:500;} a:hover{color:#721045;text-decoration:underline;} code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.9em;background:#f2f2f2;color:#5317ac;padding:2px 6px;border-radius:3px;border:1px solid #d7d7d7;} .header{margin-bottom:24px;border-bottom:2px solid #707070;padding-bottom:15px;} h1{color:#000000;margin-top:0;} h2{color:#000000;}"))
               (body nil
                     (div ((class . "header"))
                          (h1 nil ,page-title)
@@ -839,10 +902,10 @@ OUTPUT-DIR defaults to track directory under `elpaish-output-dir'."
                          '(p nil "No packages published in this track.")
                        `(table nil
                                (tr nil
-                                   (th nil "Package")
-                                   (th nil "Version")
-                                   (th nil "Description")
-                                   (th nil "Signature"))
+                                   (th ((class . "pkg-name")) "Package")
+                                   (th ((class . "pkg-version")) "Version")
+                                   (th ((class . "pkg-desc")) "Description")
+                                   (th ((class . "pkg-sig")) "Signature"))
                                ,@rows))))))))
 
 (defun elpaish-generate-top-index (&optional output-dir)
@@ -855,23 +918,24 @@ OUTPUT-DIR defaults to track directory under `elpaish-output-dir'."
        `(html nil
               (head nil
                     (meta ((charset . "utf-8")))
+                    (meta ((name . "viewport") (content . "width=device-width, initial-scale=1")))
                     (title nil "ELPAish: tychoish Emacs Lisp Package Archives")
-                    (style nil "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:40px auto;max-width:960px;line-height:1.6;color:#24292f;padding:0 20px;} .track-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin:30px 0;} .card{border:1px solid #d0d7de;border-radius:6px;padding:20px;background:#f6f8fa;box-shadow:0 1px 3px rgba(0,0,0,0.05);} .card h2{margin-top:0;font-size:1.3em;} pre{background:#24292e;color:#f6f8fa;padding:16px;border-radius:6px;overflow-x:auto;} code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;} a{color:#0969da;text-decoration:none;} a:hover{text-decoration:underline;} .btn{display:inline-block;padding:8px 16px;background:#2da44e;color:#fff;border-radius:6px;font-weight:600;margin-top:10px;} .btn:hover{background:#2c974b;text-decoration:none;color:#fff;}"))
+                    (style nil "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:30px auto;max-width:1200px;line-height:1.6;color:#000000;background:#ffffff;padding:0 24px;} h1{color:#000000;border-bottom:2px solid #707070;padding-bottom:10px;margin-top:0;} h2{color:#000000;margin-top:28px;margin-bottom:12px;} .track-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;margin:24px 0;} .card{border:1px solid #c6c6c6;border-radius:6px;padding:20px;background:#f8f8f8;box-shadow:0 1px 3px rgba(0,0,0,0.06);} .card h2{margin-top:0;font-size:1.25em;color:#002f5e;} pre{background:#f8f8f8;color:#000000;border:1px solid #c6c6c6;padding:14px 18px;border-radius:4px;overflow-x:auto;} code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.9em;background:#f2f2f2;color:#5317ac;padding:2px 6px;border-radius:3px;border:1px solid #d7d7d7;} pre code{background:transparent;color:inherit;padding:0;border:none;font-size:0.92em;} a{color:#0000aa;text-decoration:none;font-weight:500;} a:hover{color:#721045;text-decoration:underline;} .btn{display:inline-block;padding:8px 18px;background:#00538b;color:#ffffff;border-radius:4px;font-weight:600;text-decoration:none;margin-top:8px;} .btn:hover{background:#003494;color:#ffffff;text-decoration:none;} ul{padding-left:24px;} li{margin:6px 0;}"))
               (body nil
                     (h1 nil "ELPAish Emacs Package Archives")
                     (p nil "Automated, GPG-signed package publishing tracks for packages authored across the " (b nil "tychoish") " ecosystem.")
 
                     (div ((class . "track-grid"))
                          (div ((class . "card"))
-                              (h2 nil (a ((href . "elpaish/index.html")) "elpaish (Snapshot)"))
+                              (h2 nil (a ((href . "elpaish/index.html")) "elpaish (Snapshots)"))
                               (p nil "Continuous development snapshots built from the default branch head with pure UTC date versioning (" (code nil "YYYYMMDD.HHMMSS") ").")
                               (a ((class . "btn") (href . "elpaish/index.html")) "Browse Snapshots"))
                          (div ((class . "card"))
-                              (h2 nil (a ((href . "elpaish-stable/index.html")) "elpaish-stable (Release)"))
+                              (h2 nil (a ((href . "elpaish-stable/index.html")) "elpaish-stable (Releases)"))
                               (p nil "Official release builds strictly from clean semver Git tags (" (code nil "vX.Y.Z") "). Repositories without clean tags are omitted.")
                               (a ((class . "btn") (href . "elpaish-stable/index.html")) "Browse Stable"))
                          (div ((class . "card"))
-                              (h2 nil (a ((href . "elpaish-staging/index.html")) "elpaish-staging (Testing)"))
+                              (h2 nil (a ((href . "elpaish-staging/index.html")) "elpaish-staging (Pre-release)"))
                               (p nil "Staging release candidates (" (code nil "-rc") ", " (code nil "-pre") ") and " (code nil "git describe") " builds for integration testing.")
                               (a ((class . "btn") (href . "elpaish-staging/index.html")) "Browse Staging")))
 
@@ -893,10 +957,11 @@ OUTPUT-DIR defaults to track directory under `elpaish-output-dir'."
 ;;; Build Orchestration
 
 ;;;###autoload
-(defun elpaish-build-all (&optional mode output-dir)
+(cl-defun elpaish-build-all (&optional mode output-dir force)
   "Build registered packages, generate indexes, and sign archives.
 MODE can be `all', `elpaish', `elpaish-stable', or `elpaish-staging'.
-Defaults to `elpaish-release-mode'. OUTPUT-DIR defaults to `elpaish-output-dir'."
+Defaults to `elpaish-release-mode'. OUTPUT-DIR defaults to `elpaish-output-dir'.
+When FORCE is non-nil, force rebuilding all packages."
   (interactive)
   (clrhash elpaish--resolved-repo-path-cache)
   (let* ((effective-mode (or mode elpaish-release-mode))
@@ -909,7 +974,7 @@ Defaults to `elpaish-release-mode'. OUTPUT-DIR defaults to `elpaish-output-dir'.
       (let ((track-dir (elpaish-track-dir track target-root)))
         (make-directory track-dir t)
         (dolist (recipe (hash-table-values elpaish-registry))
-          (elpaish-build-package recipe track track-dir))
+          (elpaish-build-package recipe track track-dir force))
         (elpaish-generate-archive-contents track track-dir)
         (elpaish-generate-github-index track track-dir)))
 
@@ -923,9 +988,13 @@ Defaults to `elpaish-release-mode'. OUTPUT-DIR defaults to `elpaish-output-dir'.
 
 ;;; Local Preview HTTP Server
 
+;; TODO move this into a "elpaish-preview.el";
+;; TODO use https://github.com/eschulte/emacs-web-server
+
 ;;;###autoload
 (defun elpaish--http-mime-type (path)
   "Return MIME content-type string for PATH."
+  ;; TODO use these from `mailcap-mime-types'
   (cond
    ((string-suffix-p ".html" path) "text/html; charset=utf-8")
    ((string-suffix-p ".el" path) "text/plain; charset=utf-8")
@@ -1042,6 +1111,8 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
 
 ;;; UI: Tabulated List Registry View
 
+;; TODO move this into an elpaish-dash.el (or elpaish-list.el)
+;; TODO make a transient mode menu
 (defvar elpaish-status-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "g") #'elpaish-status-refresh)
@@ -1147,16 +1218,11 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
 
 ;;;###autoload
 (defun elpaish-run-checks ()
-  "Run package quality checks from scripts/run-checks.el."
+  "Run package quality checks for current repository."
   (interactive)
-  (let ((checks-file (elpaish--resolve-checks-file)))
-    (if (and checks-file (file-exists-p checks-file))
-        (progn
-          (load checks-file nil t)
-          (if (fboundp 'acr-run-all-checks)
-              (call-interactively #'acr-run-all-checks)
-            (error "Function `acr-run-all-checks' not found in %s" checks-file)))
-      (error "Checks script not found at %s" checks-file))))
+  ;; TODO this function doesn't need to exist. maybe as an alias
+  (require 'elpaish-check)
+  (elpaish-check-all))
 
 (provide 'elpaish)
 ;;; elpaish.el ends here

@@ -1,12 +1,13 @@
-;;; elpaish-recipes.el --- Package recipes for the Tychoish ecosystem -*- lexical-binding: t; -*-
+;;; elpaish-recipes.el --- Recipe discovery and configuration for ELPAish -*- lexical-binding: t; -*-
 
 ;; Author: tychoish
 ;; Keywords: maintenance, tools, elpa, package
 
 ;;; Commentary:
-;; Declarative package recipes for packages maintained across the tychoish
-;; ecosystem.  Provides automatic local-or-remote path resolution so builds
-;; execute seamlessly on the developer workstation or in clean CI runners.
+;; Recipe path resolution, package loading, and monorepo discovery tooling for
+;; the ELPAish package repository builder.  Decoupled from specific package
+;; manifests — package definitions are loaded from a top-level `packages.el'
+;; file or registered dynamically via `elpaish-register-package'.
 
 ;;; Code:
 
@@ -17,9 +18,18 @@
 Each recipe's bare directory NAME is looked up under every root, in
 order (after which \"external/NAME\" is tried under
 `user-emacs-directory' and under `default-directory') — the first
-existing directory wins. Customize this instead of hardcoding a
+match that exists on disk is used.  Falls back to the recipe's
+remote URL if no local directory matches.
+
+Customizing this lets a developer work against their personal
+local checkouts without baking any assumptions about one
 maintainer's personal directory layout into individual recipes."
   :type '(repeat directory)
+  :group 'elpaish)
+
+(defcustom elpaish-packages-file "packages.el"
+  "Filename or path of the top-level package definitions file."
+  :type 'string
   :group 'elpaish)
 
 (defun elpaish-recipe-path (name remote-url)
@@ -32,147 +42,80 @@ hardcode where any particular maintainer's checkouts happen to live."
                        (list (expand-file-name "external/" user-emacs-directory)
                              (expand-file-name "external/" default-directory)))))
     (or (seq-some (lambda (root)
-                    (let ((candidate (expand-file-name name root)))
-                      (and (file-directory-p candidate) candidate)))
+                    (let ((cand (expand-file-name name (expand-file-name root))))
+                      (and (file-directory-p cand) cand)))
                   roots)
         remote-url)))
 
+(defun elpaish-find-packages-file (&optional file)
+  "Locate package definitions FILE across current directory hierarchy.
+Defaults to `elpaish-packages-file'."
+  (let* ((target (or file elpaish-packages-file))
+         (candidates
+          (delq nil
+		;; TODO refactor this as a list without conitionals and then filter nils
+                (list (and (file-name-absolute-p target) (file-exists-p target) target)
+                      (let ((p (expand-file-name target default-directory)))
+                        (and (file-exists-p p) p))
+                      (let ((p (expand-file-name target (expand-file-name ".." default-directory))))
+                        (and (file-exists-p p) p))
+                      (when-let* ((lib (locate-library "elpaish")))
+                        (let ((p (expand-file-name target (file-name-directory lib))))
+                          (and (file-exists-p p) p)))
+                      (when-let* ((lib (locate-library "elpaish")))
+                        (let ((p (expand-file-name (concat "../" target) (file-name-directory lib))))
+                          (and (file-exists-p p) p)))
+                      (and (boundp 'user-emacs-directory)
+                           (let ((p (expand-file-name target user-emacs-directory)))
+                             (and (file-exists-p p) p)))))))
+    (car candidates)))
+
+;;;###autoload
+(defun elpaish-load-packages (&optional file)
+  "Load package recipe definitions from FILE (defaults to `elpaish-packages-file').
+Returns the number of registered recipes."
+  (interactive)
+  (let ((resolved (elpaish-find-packages-file file)))
+    (if (and resolved (file-exists-p resolved))
+        (progn
+          (load resolved nil t)
+          (let ((count (hash-table-count elpaish-registry)))
+            (message "Loaded %d ELPAish package definitions from %s" count resolved)
+            count))
+      (message "No package definitions file found matching %s" (or file elpaish-packages-file))
+      (hash-table-count elpaish-registry))))
+
 ;;;###autoload
 (defun elpaish-recipes-register-all ()
-  "Register all Tychoish ecosystem package recipes in `elpaish-registry'."
+  "Load all package recipes from the active `packages.el' file."
   (interactive)
+  ;; TODO this is redundant: remove one or make an alias
+  (elpaish-load-packages))
 
-  ;; 1. annotated-completing-read
-  (elpaish-register-package
-   'annotated-completing-read
-   (elpaish-recipe-path "annotated-completing-read"
-                        "https://github.com/tychoish/annotated-completing-read.git")
-   :branch "main"
-   :files '("annotated-completing-read.el")
-   :test-dir "test"
-   :summary "Annotated completing-read interface with aligned annotations"
-   :url "https://github.com/tychoish/annotated-completing-read"
-   :keywords '("convenience" "completion" "matching"))
+;;; Monorepo Package Discovery Tooling
 
-  ;; 2. agent-shell-queue
-  (elpaish-register-package
-   'agent-shell-queue
-   (elpaish-recipe-path "agent-shell-queue"
-                        "https://github.com/tychoish/agent-shell-queue.git")
-   :branch "main"
-   :files '("agent-shell-queue.el"
-            "agent-shell-queue-org.el"
-            "agent-shell-queue-db.el"
-            "agent-shell-queue-persistence.el"
-            "agent-shell-menu.el")
-   :test-dir "test"
-   :preflight-skip '(ert)
-   :summary "Emacs queue manager for AI agent tasks"
-   :url "https://github.com/tychoish/agent-shell-queue"
-   :keywords '("tools" "convenience"))
-
-  ;; 3. magit-dash
-  (elpaish-register-package
-   'magit-dash
-   (elpaish-recipe-path "magit-dash"
-                        "https://github.com/tychoish/magit-dash.git")
-   :branch "main"
-   :files '("magit-dash.el"
-            "magit-dash-gh.el"
-            "magit-dash-gh-pr.el"
-            "magit-dash-gh-actions.el"
-            "magit-dash-gh-ci.el"
-            "magit-dash-open.el"
-            "magit-dash-submodules.el"
-            "magit-dash-timer.el")
-   :test-dir "test"
-   :summary "Personal multi-repository dashboard for Magit and GitHub"
-   :url "https://github.com/tychoish/magit-dash"
-   :keywords '("tools" "vc" "git"))
-
-  ;; 4. sprite
-  (elpaish-register-package
-   'sprite
-   (elpaish-recipe-path "sprite"
-                        "https://github.com/tychoish/sprite.git")
-   :branch "main"
-   :files '("sprite.el"
-            "sprite-direct.el"
-            "sprite-fleet.el"
-            "sprite-future.el"
-            "sprite-heartbeat.el"
-            "sprite-list.el"
-            "sprite-session.el")
-   :test-dir "test"
-   :preflight-skip '(ert)
-   :summary "Fast ephemeral Emacs child-daemon manager"
-   :url "https://github.com/tychoish/sprite"
-   :keywords '("processes" "tools"))
-
-  ;; 5. agent-shell-notifications
-  (elpaish-register-package
-   'agent-shell-notifications
-   (elpaish-recipe-path "agent-shell-notifications"
-                        "https://github.com/zackattackz/agent-shell-notifications.git")
-   :branch "main"
-   :files '("agent-shell-notifications.el"
-            "agent-shell-notifications-knockknock.el"
-            "agent-shell-notifications-libnotify.el")
-   :preflight-skip '(byte-compile)
-   :summary "Notification routing for agent shell sessions"
-   :url "https://github.com/zackattackz/agent-shell-notifications"
-   :keywords '("tools" "notifications"))
-
-  ;; 6. xtdlib
-  (elpaish-register-package
-   'xtdlib
-   (elpaish-recipe-path "xtdlib"
-                        "https://github.com/tychoish/xtdlib.el")
-   :branch "main"
-   :files '("xtdlib.el"
-            "xtd-dash.el"
-            "xtd-f.el"
-            "xtd-ht.el"
-            "xtd-macro.el"
-            "xtd-project.el"
-            "xtd-s.el")
-   :summary "Extended standard library and macros for Emacs Lisp"
-   :url "https://github.com/tychoish/xtdlib"
-   :keywords '("extensions" "lisp"))
-
-  ;; 7. elpaish-keyring
-  (elpaish-register-package
-   'elpaish-keyring
-   (elpaish-recipe-path "elpaish"
-                        "https://github.com/tychoish/elpaish.git")
-   :branch "main"
-   :source-dir "pkg"
-   :files '("elpaish-keyring.el")
-   :preflight-skip t
-   :summary "GPG keyring and trust anchors for ELPAish package archives"
-   :url "https://github.com/tychoish/elpaish"
-   :keywords '("package" "security" "maintenance" "elpa"))
-
-  ;; 8. elpaish (self-hosting)
-  (elpaish-register-package
-   'elpaish
-   (elpaish-recipe-path "elpaish"
-                        "https://github.com/tychoish/elpaish.git")
-   :branch "main"
-   :source-dir "pkg"
-   :files '("elpaish.el"
-            "elpaish-recipes.el"
-            "elpaish-keyring.el"
-            "elpaish-signing-keys.el")
-   :test-dir "test"
-   :summary "Multi-track signed ELPA package archive builder and server"
-   :url "https://github.com/tychoish/elpaish"
-   :keywords '("tools" "elpa" "package" "distribution"))
-
-  (message "Registered %d ELPAish recipes." (hash-table-count elpaish-registry)))
-
-;; Automatically register recipes when loaded
-(elpaish-recipes-register-all)
+;;;###autoload
+(defun elpaish-discover-recipes (root-dir &optional patterns)
+  "Scan ROOT-DIR for subdirectories containing Emacs Lisp package headers.
+Registers a recipe for each discovered package with appropriate `:source-dir'."
+  (interactive "DDiscover packages in directory: ")
+  (let ((root (expand-file-name root-dir))
+        (count 0))
+    (dolist (subdir (directory-files root t "\\`[^.]"))
+      (when (file-directory-p subdir)
+        (let* ((dir-name (file-name-nondirectory subdir))
+               (main-el (expand-file-name (format "%s.el" dir-name) subdir)))
+          (when (file-exists-p main-el)
+            (let ((pkg-sym (intern dir-name)))
+              (elpaish-register-package
+               pkg-sym
+               root
+               :source-dir dir-name
+               :files (or patterns '("*.el"))
+               :summary (format "Package %s from %s" dir-name (file-name-nondirectory root)))
+              (setq count (1+ count)))))))
+    (message "Discovered and registered %d package recipes in %s" count root)
+    count))
 
 (provide 'elpaish-recipes)
 ;;; elpaish-recipes.el ends here
