@@ -12,24 +12,30 @@
 
 (require 'elpaish)
 
-(defun elpaish-recipe-path (local-path remote-url)
-  "Return LOCAL-PATH if it exists as a directory, otherwise REMOTE-URL."
-  (let* ((expanded (expand-file-name local-path))
-         (clean-rel (and (stringp local-path)
-                         (string-remove-prefix "~/.emacs.d/" local-path)))
-         (local-emacs-d (and clean-rel
-                             (boundp 'user-emacs-directory)
-                             (expand-file-name clean-rel user-emacs-directory)))
-         (local-rel (and clean-rel
-                         (expand-file-name clean-rel default-directory))))
-    (cond
-     ((and (stringp expanded) (file-directory-p expanded))
-      expanded)
-     ((and local-emacs-d (file-directory-p local-emacs-d))
-      local-emacs-d)
-     ((and local-rel (file-directory-p local-rel))
-      local-rel)
-     (t remote-url))))
+(defcustom elpaish-recipe-local-search-dirs '("~/src/")
+  "Local checkout root directories searched by `elpaish-recipe-path'.
+Each recipe's bare directory NAME is looked up under every root, in
+order (after which \"external/NAME\" is tried under
+`user-emacs-directory' and under `default-directory') — the first
+existing directory wins. Customize this instead of hardcoding a
+maintainer's personal directory layout into individual recipes."
+  :type '(repeat directory)
+  :group 'elpaish)
+
+(defun elpaish-recipe-path (name remote-url)
+  "Return the first existing local checkout of NAME, or REMOTE-URL.
+NAME is a bare directory name (e.g. \"xtdlib\"), not a full path — this
+searches `elpaish-recipe-local-search-dirs', then \"external/NAME\" under
+`user-emacs-directory' and under `default-directory', so recipes never
+hardcode where any particular maintainer's checkouts happen to live."
+  (let ((roots (append elpaish-recipe-local-search-dirs
+                       (list (expand-file-name "external/" user-emacs-directory)
+                             (expand-file-name "external/" default-directory)))))
+    (or (seq-some (lambda (root)
+                    (let ((candidate (expand-file-name name root)))
+                      (and (file-directory-p candidate) candidate)))
+                  roots)
+        remote-url)))
 
 ;;;###autoload
 (defun elpaish-recipes-register-all ()
@@ -39,7 +45,7 @@
   ;; 1. annotated-completing-read
   (elpaish-register-package
    'annotated-completing-read
-   (elpaish-recipe-path "~/src/annotated-completing-read"
+   (elpaish-recipe-path "annotated-completing-read"
                         "https://github.com/tychoish/annotated-completing-read.git")
    :branch "main"
    :files '("annotated-completing-read.el")
@@ -51,7 +57,7 @@
   ;; 2. agent-shell-queue
   (elpaish-register-package
    'agent-shell-queue
-   (elpaish-recipe-path "~/.emacs.d/external/agent-shell-queue"
+   (elpaish-recipe-path "agent-shell-queue"
                         "https://github.com/tychoish/agent-shell-queue.git")
    :branch "main"
    :files '("agent-shell-queue.el"
@@ -68,7 +74,7 @@
   ;; 3. magit-dash
   (elpaish-register-package
    'magit-dash
-   (elpaish-recipe-path "~/.emacs.d/external/magit-dash"
+   (elpaish-recipe-path "magit-dash"
                         "https://github.com/tychoish/magit-dash.git")
    :branch "main"
    :files '("magit-dash.el"
@@ -87,7 +93,7 @@
   ;; 4. sprite
   (elpaish-register-package
    'sprite
-   (elpaish-recipe-path "~/.emacs.d/external/sprite"
+   (elpaish-recipe-path "sprite"
                         "https://github.com/tychoish/sprite.git")
    :branch "main"
    :files '("sprite.el"
@@ -106,7 +112,7 @@
   ;; 5. agent-shell-notifications
   (elpaish-register-package
    'agent-shell-notifications
-   (elpaish-recipe-path "~/.emacs.d/external/agent-shell-notifications"
+   (elpaish-recipe-path "agent-shell-notifications"
                         "https://github.com/zackattackz/agent-shell-notifications.git")
    :branch "main"
    :files '("agent-shell-notifications.el"
@@ -120,7 +126,7 @@
   ;; 6. xtdlib
   (elpaish-register-package
    'xtdlib
-   (elpaish-recipe-path "~/.emacs.d/external/xtdlib"
+   (elpaish-recipe-path "xtdlib"
                         "https://github.com/tychoish/xtdlib.el")
    :branch "main"
    :files '("xtdlib.el"
@@ -137,7 +143,7 @@
   ;; 7. xlib
   (elpaish-register-package
    'xlib
-   (elpaish-recipe-path "~/src/xlib.el"
+   (elpaish-recipe-path "xlib.el"
                         "https://github.com/tychoish/xlib.el.git")
    :branch "main"
    :files '("xlib.el")
@@ -149,9 +155,10 @@
   ;; 8. elpaish-keyring
   (elpaish-register-package
    'elpaish-keyring
-   (elpaish-recipe-path "~/.emacs.d/lisp"
+   (elpaish-recipe-path "elpaish"
                         "https://github.com/tychoish/elpaish.git")
    :branch "main"
+   :source-dir "pkg"
    :files '("elpaish-keyring.el")
    :preflight-skip t
    :summary "GPG keyring and trust anchors for ELPAish package archives"
@@ -161,13 +168,14 @@
   ;; 9. elpaish (self-hosting)
   (elpaish-register-package
    'elpaish
-   (elpaish-recipe-path "~/src/elpaish"
+   (elpaish-recipe-path "elpaish"
                         "https://github.com/tychoish/elpaish.git")
    :branch "main"
    :source-dir "pkg"
    :files '("elpaish.el"
             "elpaish-recipes.el"
-            "elpaish-keyring.el")
+            "elpaish-keyring.el"
+            "elpaish-signing-keys.el")
    :test-dir "test"
    :summary "Multi-track signed ELPA package archive builder and server"
    :url "https://github.com/tychoish/elpaish"
