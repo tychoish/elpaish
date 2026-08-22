@@ -32,6 +32,9 @@ jobs:
         run: emacs --batch -l scripts/bootstrap-elpaish.el
 
       - name: Run ELPAish Unit Tests
+        env:
+          ELPAISH_SIGNING_KEY: "__testing_value"
+          ELPAISH_GPG_PASSPHRASE: ""
         run: |
           emacs --batch -L pkg -L scripts -L test \
             -l test/test-elpaish.el \

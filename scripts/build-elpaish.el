@@ -46,27 +46,8 @@
 (when (equal (getenv "ELPAISH_RUN_PREFLIGHT") "0")
   (setq elpaish-run-preflight nil))
 
-;; If secret key is provided in environment, configure loopback pinentry and import key
-(let ((key-armor (getenv "ELPAISH_SIGNING_KEY"))
-      (passphrase (or (getenv "ELPAISH_GPG_PASSPHRASE") "")))
-  (when (and key-armor (not (string-empty-p key-armor)) (executable-find "gpg"))
-    ;; Ensure gpg-agent is configured for loopback pinentry in CI
-    (let* ((gnupg-dir (expand-file-name ".gnupg" (or (getenv "GNUPGHOME") (getenv "HOME"))))
-           (agent-conf (expand-file-name "gpg-agent.conf" gnupg-dir)))
-      (make-directory gnupg-dir t)
-      (set-file-modes gnupg-dir #o700)
-      (with-temp-file agent-conf
-        (insert "allow-loopback-pinentry\n"))
-      (set-file-modes agent-conf #o600)
-      (call-process "gpgconf" nil nil nil "--kill" "gpg-agent")
-      (call-process "gpg-connect-agent" nil nil nil "reloadagent" "/bye"))
-    (with-temp-buffer
-      (insert key-armor)
-      (call-process-region (point-min) (point-max) "gpg" nil nil nil "--batch" "--import"))
-    (setq elpaish-sign-packages t)
-    (setq elpaish-gpg-passphrase passphrase)
-    (setq elpaish-gpg-key (elpaish--detect-secret-key-id))
-    (message "[elpaish] GPG signing initialized for key %s" elpaish-gpg-key)))
+;; Initialize GPG signing from environment variables (ELPAISH_SIGNING_KEY)
+(elpaish-init-signing-from-env)
 
 (message "[elpaish] Building ELPAish multi-track repository into %s..." elpaish-output-dir)
 (elpaish-build-all 'all elpaish-output-dir)

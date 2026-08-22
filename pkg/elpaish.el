@@ -528,7 +528,7 @@ Returns nil for `elpaish-stable' if no clean stable tag is present."
       ""))
 
 (defun elpaish--sign-with-gpg-cli (file sig-file key-id passphrase)
-  "Sign FILE generating detached signature SIG-FILE using `gpg' CLI.
+  "Sign FILE generating detached signature SIG-FILE using `gpg' CLI in non-interactive batch mode.
 KEY-ID is the signing key. PASSPHRASE is the optional passphrase."
   (let* ((pass (or passphrase (elpaish--get-signing-passphrase)))
          (args (list "--batch" "--yes" "--detach-sign" "--pinentry-mode" "loopback"))
@@ -540,40 +540,65 @@ KEY-ID is the signing key. PASSPHRASE is the optional passphrase."
       (insert pass "\n")
       (apply #'call-process-region (point-min) (point-max) "gpg" t t nil args))))
 
-(defun elpaish--sign-with-epg (file sig-file key-id)
-  "Sign FILE generating detached signature SIG-FILE using EPG.
-KEY-ID is the signing key."
-  (let ((context (epg-make-context 'OpenPGP)))
-    (setf (epg-context-pinentry-mode context) 'loopback)
-    (when key-id
-      (setf (epg-context-signers context) (epg-list-keys context key-id)))
-    (epg-sign-file context file sig-file 'detached)))
-
 (defun elpaish--sign-file (file)
-  "Generate a detached GPG signature `FILE.sig' for FILE if signing is enabled."
+  "Generate a detached GPG signature `FILE.sig' for FILE if signing is enabled.
+Strictly non-interactive: executes in batch mode via loopback without prompting."
   (when elpaish-sign-packages
     (let ((key-id (elpaish--get-signing-key))
           (passphrase (elpaish--get-signing-passphrase))
           (sig-file (concat file ".sig")))
       (when (file-exists-p sig-file)
         (delete-file sig-file))
-      (let ((signed-p nil))
-        (when (executable-find "gpg")
-          (let ((exit-code (elpaish--sign-with-gpg-cli file sig-file key-id passphrase)))
-            (setq signed-p (and (numberp exit-code) (zerop exit-code) (file-exists-p sig-file)))))
-        (unless signed-p
-          ;; Fall back to epg if CLI signing did not produce signature
-          (condition-case nil
-              (progn
-                (elpaish--sign-with-epg file sig-file key-id)
-                (setq signed-p (file-exists-p sig-file)))
-            (t nil)))
-        (if (file-exists-p sig-file)
-            (message "Signed %s -> %s"
-                     (file-name-nondirectory file)
-                     (file-name-nondirectory sig-file))
-          (message "Warning: Failed to sign %s" (file-name-nondirectory file)))))))
+      (when (executable-find "gpg")
+        (let ((exit-code (elpaish--sign-with-gpg-cli file sig-file key-id passphrase)))
+          (if (and (numberp exit-code) (zerop exit-code) (file-exists-p sig-file))
+              (message "Signed %s -> %s"
+                       (file-name-nondirectory file)
+                       (file-name-nondirectory sig-file))
+            (message "Warning: Failed to sign %s" (file-name-nondirectory file))))))))
+
 ;;;###autoload
+(cl-defun elpaish-sign-file-headless (file &key key-id passphrase output-file)
+  "Sign FILE headlessly generating detached signature for encrypted or unencrypted keys.
+Passphrase is provided non-interactively via PASSPHRASE argument,
+`elpaish-gpg-passphrase', or `ELPAISH_GPG_PASSPHRASE' environment variable.
+Never triggers interactive terminal or GUI pinentry dialogs.
+OUTPUT-FILE defaults to FILE.sig. Returns the path to the generated signature, or nil."
+  (let* ((sig-file (or output-file (concat file ".sig")))
+         (resolved-key (or key-id (elpaish--get-signing-key)))
+         (resolved-pass (or passphrase (elpaish--get-signing-passphrase))))
+    (when (file-exists-p sig-file)
+      (delete-file sig-file))
+    (if (not (executable-find "gpg"))
+        (progn
+          (message "GPG binary not found in PATH")
+          nil)
+      (let ((exit-code (elpaish--sign-with-gpg-cli file sig-file resolved-key resolved-pass)))
+        (if (and (numberp exit-code) (zerop exit-code) (file-exists-p sig-file))
+            (progn
+              (message "Headless signature created: %s" sig-file)
+              sig-file)
+          (message "Headless signing failed for %s (exit code %S)" file exit-code)
+          nil)))))
+;;;###autoload
+(defun elpaish-init-signing-from-env ()
+  "Initialize GPG signing configuration from `ELPAISH_SIGNING_KEY' environment variable.
+Imports key armor, configures loopback pinentry, detects secret key ID, and enables signing.
+Returns the detected signing key ID or nil."
+  (let ((key-armor (getenv "ELPAISH_SIGNING_KEY"))
+        (passphrase (or (getenv "ELPAISH_GPG_PASSPHRASE") "")))
+    (when (and key-armor (not (string-empty-p key-armor)) (executable-find "gpg"))
+      (elpaish--ensure-gpg-agent-loopback)
+      (with-temp-buffer
+        (insert key-armor)
+        (call-process-region (point-min) (point-max) "gpg" nil nil nil "--batch" "--import"))
+      (setq elpaish-sign-packages t)
+      (setq elpaish-gpg-passphrase passphrase)
+      (setq elpaish-gpg-key (elpaish--detect-secret-key-id))
+      (when elpaish-gpg-key
+        (message "[elpaish] GPG signing initialized for key %s" elpaish-gpg-key))
+      elpaish-gpg-key)))
+
 (defun elpaish-setup-signing ()
   "Interactive wizard to guide the user through selecting a GPG signing key."
   (interactive)
@@ -877,7 +902,12 @@ the package even if the commit has not changed since the last build."
   "Generate static `index.html' package catalog for TRACK in OUTPUT-DIR."
   (let* ((effective-track (elpaish-canonical-track (or track elpaish-release-mode)))
          (target-dir (or output-dir (elpaish-track-dir effective-track)))
-         (page-title (or title (format "ELPAish Repository — %s" effective-track)))
+         (track-label (pcase effective-track
+                        ('elpaish "snapshot")
+                        ('elpaish-stable "stable")
+                        ('elpaish-staging "staging")
+                        (_ (symbol-name effective-track))))
+         (page-title (or title (format "ELPAish Repository — (%s)" track-label)))
          (recipes (hash-table-values elpaish-registry))
          (rows
           (delq nil
@@ -887,12 +917,16 @@ the package even if the commit has not changed since the last build."
                      (let* ((name (elpaish-recipe-name recipe))
                             (summary (or (elpaish-recipe-summary recipe) "No description"))
                             (is-tar (eq (elpaish-recipe-built-type recipe) 'tar))
-                            (artifact (format "%s-%s.%s" name ver-str (if is-tar "tar" "el"))))
+                            (artifact (format "%s-%s.%s" name ver-str (if is-tar "tar" "el")))
+                            (sig-file (expand-file-name (concat artifact ".sig") target-dir))
+                            (sig-cell (if (file-exists-p sig-file)
+                                          `(a ((href . ,(concat artifact ".sig"))) "sig")
+                                        "—")))
                        `(tr nil
                             (td ((class . "pkg-name")) (b nil ,name))
                             (td ((class . "pkg-version")) (a ((href . ,artifact)) ,ver-str))
                             (td ((class . "pkg-desc")) ,summary)
-                            (td ((class . "pkg-sig")) (a ((href . ,(concat artifact ".sig"))) "sig"))))))
+                            (td ((class . "pkg-sig")) ,sig-cell)))))
                  recipes))))
     (make-directory target-dir t)
     (with-temp-file (expand-file-name "index.html" target-dir)
@@ -903,7 +937,10 @@ the package even if the commit has not changed since the last build."
                     (meta ((charset . "utf-8")))
                     (meta ((name . "viewport") (content . "width=device-width, initial-scale=1")))
                     (title nil ,page-title)
-                    (style nil "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:30px auto;max-width:1200px;line-height:1.6;color:#000000;background:#ffffff;padding:0 24px;} .table-wrapper{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:20px;} table{border-collapse:collapse;width:100%;min-width:960px;border:1px solid #c6c6c6;} th,td{padding:10px 16px;border-bottom:1px solid #d7d7d7;text-align:left;vertical-align:middle;} th{background:#e5e5e5;color:#000000;font-weight:600;border-bottom:2px solid #707070;} tr:hover{background:#eef2f8;} .pkg-name{font-weight:600;white-space:nowrap!important;min-width:280px;width:280px;} .pkg-name b{white-space:nowrap!important;word-break:keep-all;} .pkg-version{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;white-space:nowrap!important;min-width:180px;width:180px;} .pkg-desc{min-width:400px;} .pkg-sig{white-space:nowrap!important;text-align:center;width:70px;} a{color:#0000aa;text-decoration:none;font-weight:500;} a:hover{color:#721045;text-decoration:underline;} code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.9em;background:#f2f2f2;color:#5317ac;padding:2px 6px;border-radius:3px;border:1px solid #d7d7d7;} .header{margin-bottom:24px;border-bottom:2px solid #707070;padding-bottom:15px;} h1{color:#000000;margin-top:0;} h2{color:#000000;}"))
+                    (link ((rel . "preconnect") (href . "https://fonts.googleapis.com")))
+                    (link ((rel . "preconnect") (href . "https://fonts.gstatic.com") (crossorigin . "")))
+                    (link ((rel . "stylesheet") (href . "https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap")))
+                    (style nil "body{font-family:'Source Sans 3','Source Sans Pro',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:36px auto;max-width:1240px;font-size:18px;line-height:1.6;color:#000000;background:#ffffff;padding:0 28px;} .table-wrapper{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:24px;} table{border-collapse:collapse;width:100%;min-width:1020px;font-size:1em;border:1px solid #c6c6c6;} th,td{padding:14px 20px;border-bottom:1px solid #d7d7d7;text-align:left;vertical-align:middle;} th{background:#e5e5e5;color:#000000;font-weight:700;font-size:1.05em;border-bottom:2px solid #707070;} tr:hover{background:#eef2f8;} .pkg-name{font-weight:700;font-size:1.05em;white-space:nowrap!important;min-width:320px;width:320px;} .pkg-name b{white-space:nowrap!important;word-break:keep-all;font-weight:700;} .pkg-version{font-family:'Source Code Pro',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.95em;white-space:nowrap!important;min-width:200px;width:200px;} .pkg-desc{min-width:440px;font-size:1em;} .pkg-sig{white-space:nowrap!important;text-align:center;width:80px;font-size:0.95em;} a{color:#0000aa;text-decoration:none;font-weight:600;} a:hover{color:#721045;text-decoration:underline;} code{font-family:'Source Code Pro',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.92em;background:#f2f2f2;color:#5317ac;padding:3px 8px;border-radius:4px;border:1px solid #d7d7d7;} .header{margin-bottom:28px;border-bottom:2px solid #707070;padding-bottom:18px;} h1{font-size:2.2em;font-weight:700;color:#000000;margin-top:0;margin-bottom:12px;} h2{font-size:1.6em;font-weight:700;color:#000000;margin-top:36px;margin-bottom:16px;}"))
               (body nil
                     (div ((class . "header"))
                          (h1 nil ,page-title)
@@ -933,10 +970,12 @@ the package even if the commit has not changed since the last build."
                     (meta ((charset . "utf-8")))
                     (meta ((name . "viewport") (content . "width=device-width, initial-scale=1")))
                     (title nil "ELPAish: tychoish Emacs Lisp Package Archives")
-                    (style nil "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:30px auto;max-width:1200px;line-height:1.6;color:#000000;background:#ffffff;padding:0 24px;} h1{color:#000000;border-bottom:2px solid #707070;padding-bottom:10px;margin-top:0;} h2{color:#000000;margin-top:28px;margin-bottom:12px;} .track-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;margin:24px 0;} .card{border:1px solid #c6c6c6;border-radius:6px;padding:20px;background:#f8f8f8;box-shadow:0 1px 3px rgba(0,0,0,0.06);} .card h2{margin-top:0;font-size:1.25em;color:#002f5e;} pre{background:#f8f8f8;color:#000000;border:1px solid #c6c6c6;padding:14px 18px;border-radius:4px;overflow-x:auto;} code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.9em;background:#f2f2f2;color:#5317ac;padding:2px 6px;border-radius:3px;border:1px solid #d7d7d7;} pre code{background:transparent;color:inherit;padding:0;border:none;font-size:0.92em;} a{color:#0000aa;text-decoration:none;font-weight:500;} a:hover{color:#721045;text-decoration:underline;} .btn{display:inline-block;padding:8px 18px;background:#00538b;color:#ffffff;border-radius:4px;font-weight:600;text-decoration:none;margin-top:8px;} .btn:hover{background:#003494;color:#ffffff;text-decoration:none;} ul{padding-left:24px;} li{margin:6px 0;}"))
+                    (link ((rel . "preconnect") (href . "https://fonts.googleapis.com")))
+                    (link ((rel . "preconnect") (href . "https://fonts.gstatic.com") (crossorigin . "")))
+                    (link ((rel . "stylesheet") (href . "https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap")))
+                    (style nil "body{font-family:'Source Sans 3','Source Sans Pro',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:36px auto;max-width:1240px;font-size:18px;line-height:1.6;color:#000000;background:#ffffff;padding:0 28px;} h1{font-size:2.2em;font-weight:700;color:#000000;border-bottom:2px solid #707070;padding-bottom:14px;margin-top:0;margin-bottom:14px;} h2{font-size:1.6em;font-weight:700;color:#000000;margin-top:36px;margin-bottom:16px;} p{font-size:1.05em;margin:10px 0;} .track-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:24px;margin:28px 0;} .card{border:1px solid #c6c6c6;border-radius:8px;padding:24px;background:#f8f8f8;box-shadow:0 2px 6px rgba(0,0,0,0.06);} .card h2{font-size:1.45em;font-weight:700;margin-top:0;margin-bottom:12px;color:#002f5e;} .card p{font-size:1em;line-height:1.6;} pre{font-family:'Source Code Pro',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.95em;background:#f8f8f8;color:#000000;border:1px solid #c6c6c6;padding:18px 24px;border-radius:6px;overflow-x:auto;line-height:1.5;} code{font-family:'Source Code Pro',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.92em;background:#f2f2f2;color:#5317ac;padding:3px 8px;border-radius:4px;border:1px solid #d7d7d7;} pre code{background:transparent;color:inherit;padding:0;border:none;font-size:1em;} a{color:#0000aa;text-decoration:none;font-weight:600;} a:hover{color:#721045;text-decoration:underline;} .btn{display:inline-block;padding:10px 22px;font-size:1.02em;font-weight:700;background:#00538b;color:#ffffff;border-radius:5px;text-decoration:none;margin-top:10px;} .btn:hover{background:#003494;color:#ffffff;text-decoration:none;} ul{font-size:1.05em;padding-left:28px;} li{margin:8px 0;}"))
               (body nil
                     (h1 nil "ELPAish Emacs Package Archives")
-                    (p nil "Automated, GPG-signed package publishing tracks for packages authored across the " (b nil "tychoish") " ecosystem.")
 
                     (div ((class . "track-grid"))
                          (div ((class . "card"))
@@ -966,7 +1005,6 @@ the package even if the commit has not changed since the last build."
                         (li nil (a ((href . "elpaish.rev.asc")) "elpaish.rev.asc") " — Published revocation certificates (if any)"))
                     (pre nil
                          (code nil "gpg --import < elpaish.pub.asc"))))))))
-
 ;;; Build Orchestration
 
 ;;;###autoload

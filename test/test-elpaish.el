@@ -202,7 +202,15 @@
          (goto-char (point-min))
          (should (search-forward "catalog-pkg" nil t))
          (goto-char (point-min))
-         (should (search-forward "max-width:1200px" nil t))
+         (should (search-forward "ELPAish Repository — (snapshot)" nil t))
+         (goto-char (point-min))
+         (should (search-forward "Source Sans" nil t))
+         (goto-char (point-min))
+         (should (search-forward "Source Code Pro" nil t))
+         (goto-char (point-min))
+         (should (search-forward "max-width:1240px" nil t))
+         (goto-char (point-min))
+         (should (search-forward "font-size:18px" nil t))
          (goto-char (point-min))
          (should (search-forward "pkg-name" nil t))
          (goto-char (point-min))
@@ -216,8 +224,9 @@
          (goto-char (point-min))
          (should (search-forward "elpaish-staging (Pre-release)" nil t))
          (goto-char (point-min))
-         (should (search-forward "max-width:1200px" nil t)))))))
-
+         (should (search-forward "Source Sans" nil t))
+         (goto-char (point-min))
+         (should (search-forward "max-width:1240px" nil t)))))))
 (ert-deftest elpaish-test-modus-operandi-html-styling ()
   "Test Modus Operandi accessible color palette in generated HTML."
   (elpaish-test-with-temp-env
@@ -239,7 +248,7 @@
          (goto-char (point-min))
          (should (search-forward "color:#721045" nil t))
          (goto-char (point-min))
-         (should (search-forward "min-width:280px" nil t))
+         (should (search-forward "min-width:320px" nil t))
          (goto-char (point-min))
          (should (search-forward "white-space:nowrap!important" nil t))
          (goto-char (point-min))
@@ -250,7 +259,6 @@
          (should (search-forward "color:#000000;background:#ffffff" nil t))
          (goto-char (point-min))
          (should (search-forward "background:#00538b" nil t)))))))
-
 (ert-deftest elpaish-test-build-all-multi-track ()
   "Test building all tracks with `elpaish-build-all`."
   (elpaish-test-with-temp-env
@@ -392,6 +400,113 @@
          ;; Test revocation publishing
          (elpaish-revoke-key "MASTERKEY" elpaish-output-dir)
          (should (file-exists-p (expand-file-name "elpaish.rev.asc" elpaish-output-dir))))))))
+
+(ert-deftest elpaish-test-gpg-signing-envvar-testing-value ()
+  "Test handling ELPAISH_SIGNING_KEY set to dummy __testing_value from pages.yml."
+  (elpaish-test-with-temp-env
+   (let ((orig-key (getenv "ELPAISH_SIGNING_KEY"))
+         (orig-gpg-key elpaish-gpg-key))
+     (unwind-protect
+         (progn
+           (setenv "ELPAISH_SIGNING_KEY" "__testing_value")
+           (setq elpaish-gpg-key nil)
+
+           ;; Should not treat __testing_value as a key ID
+           (should-not (equal (elpaish--get-signing-key) "__testing_value"))
+
+           ;; Initializing from dummy env var should handle invalid armor gracefully
+           (let ((res (elpaish-init-signing-from-env)))
+             (should (or (null res) (stringp res)))))
+       (setenv "ELPAISH_SIGNING_KEY" orig-key)
+       (setq elpaish-gpg-key orig-gpg-key)))))
+
+(ert-deftest elpaish-test-ci-workflow-env-signing-key ()
+  "Verify reading and handling ELPAISH_SIGNING_KEY directly from workflow environment."
+  (let ((key-env (getenv "ELPAISH_SIGNING_KEY")))
+    (if (equal key-env "__testing_value")
+        (progn
+          (should (equal (getenv "ELPAISH_SIGNING_KEY") "__testing_value"))
+          (should-not (equal (elpaish--get-signing-key) "__testing_value"))
+          (let ((res (elpaish-init-signing-from-env)))
+            (should (or (null res) (stringp res)))))
+      ;; In local environments where the CI envvar isn't set, verify simulated state
+      (elpaish-test-with-temp-env
+       (let ((orig (getenv "ELPAISH_SIGNING_KEY")))
+         (unwind-protect
+             (progn
+               (setenv "ELPAISH_SIGNING_KEY" "__testing_value")
+               (should (equal (getenv "ELPAISH_SIGNING_KEY") "__testing_value"))
+               (should-not (equal (elpaish--get-signing-key) "__testing_value"))
+               (let ((res (elpaish-init-signing-from-env)))
+                 (should (or (null res) (stringp res)))))
+           (setenv "ELPAISH_SIGNING_KEY" orig)))))))
+(ert-deftest elpaish-test-gpg-signing-envvar-real-key ()
+  "Test complete GPG signing workflow using ELPAISH_SIGNING_KEY armored key environment variable."
+  (elpaish-test-with-temp-env
+   (let ((dummy-armor "-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: Test\n\nmQGNBF...\n-----END PGP PRIVATE KEY BLOCK-----\n")
+         (orig-armor (getenv "ELPAISH_SIGNING_KEY"))
+         (orig-pass (getenv "ELPAISH_GPG_PASSPHRASE")))
+     (unwind-protect
+         (progn
+           (setenv "ELPAISH_SIGNING_KEY" dummy-armor)
+           (setenv "ELPAISH_GPG_PASSPHRASE" "test-passphrase")
+           (setq elpaish-sign-packages nil
+                 elpaish-gpg-key nil)
+
+           ;; Mock gpg import and key detection
+           (cl-letf (((symbol-function 'call-process-region)
+                      (lambda (_start _end _program &optional _delete _destination _display &rest args)
+                        (let ((out-file (cadr (member "--output" args))))
+                          (when out-file
+                            (with-temp-file out-file (insert "MOCK SIGNATURE"))))
+                        0))
+                     ((symbol-function 'elpaish--detect-secret-key-id)
+                      (lambda () "MOCK_KEY_FPR_12345")))
+
+             (elpaish-init-signing-from-env)
+             (should elpaish-sign-packages)
+             (should (equal elpaish-gpg-key "MOCK_KEY_FPR_12345"))
+             (should (equal elpaish-gpg-passphrase "test-passphrase"))
+
+             ;; Build package and archive-contents
+             (let ((pkg-dir (expand-file-name "env-signed-pkg" temp-dir)))
+               (elpaish-test-create-dummy-pkg pkg-dir "env-signed-pkg" "1.0.0" "Env Signed Test")
+               (elpaish-register-package 'env-signed-pkg pkg-dir)
+               (let ((dest (elpaish-build-package (gethash "env-signed-pkg" elpaish-registry) 'elpaish)))
+                 (should dest)
+                 (should (file-exists-p (concat dest ".sig")))
+                 (let ((ac-file (elpaish-generate-archive-contents 'elpaish)))
+                   (should (file-exists-p (concat ac-file ".sig"))))))))
+       (setenv "ELPAISH_SIGNING_KEY" orig-armor)
+       (setenv "ELPAISH_GPG_PASSPHRASE" orig-pass)))))
+
+(ert-deftest elpaish-test-headless-encrypted-key-signing ()
+  "Test headless non-interactive signing with a passphrase-protected encrypted key."
+  (elpaish-test-with-temp-env
+   (let ((dummy-file (expand-file-name "headless-payload.txt" temp-dir))
+         (captured-stdin nil)
+         (captured-args nil))
+     (with-temp-file dummy-file (insert "headless encrypted payload content"))
+     (cl-letf (((symbol-function 'call-process-region)
+                (lambda (start end _program &optional _delete _destination _display &rest args)
+                  (setq captured-stdin (buffer-substring-no-properties start end))
+                  (setq captured-args args)
+                  (let ((out-file (cadr (member "--output" args))))
+                    (when out-file
+                      (with-temp-file out-file (insert "MOCK HEADLESS SIGNATURE"))))
+                  0)))
+       (let ((sig (elpaish-sign-file-headless dummy-file :key-id "ENCRYPTED_KEY_ID" :passphrase "mysecretpass")))
+         (should sig)
+         (should (file-exists-p sig))
+         ;; Verify passphrase was piped over stdin non-interactively
+         (should (string-match-p "mysecretpass" captured-stdin))
+         ;; Verify CLI args enforce batch loopback mode
+         (should (member "--batch" captured-args))
+         (should (member "--pinentry-mode" captured-args))
+         (should (member "loopback" captured-args))
+         (should (member "--passphrase-fd" captured-args))
+         (should (member "0" captured-args))
+         (should (member "ENCRYPTED_KEY_ID" captured-args)))))))
 
 (ert-deftest elpaish-test-preflight-skip-options ()
   "Test preflight gate skipping specific checks and skipping all."
