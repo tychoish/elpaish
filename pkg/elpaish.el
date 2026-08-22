@@ -644,18 +644,22 @@ Returns the detected signing key ID or nil."
 ;;; Key Lifecycle, Subkey Rotation & Secret Sync
 
 (defun elpaish-export-keyring (&optional output-dir key-id)
-  "Export binary `elpaish-keyring.gpg' and armored `elpaish.pub.asc' to OUTPUT-DIR."
+  "Export binary `elpaish-keyring.gpg', armored `elpaish.pub.asc', and `elpaish.rev.asc' to OUTPUT-DIR."
   (let* ((target-dir (or output-dir elpaish-output-dir))
          (key (or key-id (elpaish--get-signing-key) ""))
-         (gpg-bin (executable-find "gpg")))
+         (gpg-bin (executable-find "gpg"))
+         (rev-file (expand-file-name "elpaish.rev.asc" target-dir)))
+    (make-directory target-dir t)
+    ;; Ensure revocation certificate file exists (empty placeholder if no revocation cert is published yet)
+    (unless (file-exists-p rev-file)
+      (with-temp-file rev-file
+        (insert "")))
     (when gpg-bin
-      (make-directory target-dir t)
       (let ((binary-ring (expand-file-name "elpaish-keyring.gpg" target-dir))
             (armor-pub (expand-file-name "elpaish.pub.asc" target-dir)))
         (call-process gpg-bin nil nil nil "--batch" "--yes" "--output" binary-ring "--export" key)
         (call-process gpg-bin nil nil nil "--batch" "--yes" "--armor" "--output" armor-pub "--export" key)
         (message "Exported public keyrings to %s and %s" binary-ring armor-pub)))))
-
 ;;;###autoload
 (cl-defun elpaish-rotate-keys (&key master-key-id repo-slug (output-dir elpaish-output-dir))
   "Rotate GPG signing subkey [S], sync with GitHub secrets, and export updated keyring.
@@ -1020,13 +1024,15 @@ the package even if the commit has not changed since the last build."
                                ";; Primary development snapshot track:\n(add-to-list 'package-archives '(\"elpaish\" . \"https://tychoish.github.io/elpaish/elpaish/\") t)\n\n;; Production stable release track:\n(add-to-list 'package-archives '(\"elpaish-stable\" . \"https://tychoish.github.io/elpaish/elpaish-stable/\") t)\n\n;; Pre-release / staging track:\n(add-to-list 'package-archives '(\"elpaish-staging\" . \"https://tychoish.github.io/elpaish/elpaish-staging/\") t)"))
 
                     (h2 nil "GPG Keyring Verification")
-                    (p nil "Packages and index files are GPG signed. Import the public keyring or trust anchor:")
+                    (p nil "Packages and index files are GPG signed. Download and import the public key into your GPG keyring:")
+                    (pre nil
+                         (code nil
+                               "# Download and import armored public key into GPG keyring:\ncurl -sSL https://tychoish.github.io/elpaish/elpaish.pub.asc | gpg --import\n\n# Or download key file directly:\ncurl -O https://tychoish.github.io/elpaish/elpaish.pub.asc\ngpg --import < elpaish.pub.asc"))
+                    (p nil "Keyring and certificate assets:")
                     (ul nil
                         (li nil (a ((href . "elpaish-keyring.gpg")) "elpaish-keyring.gpg") " — Binary public keyring")
                         (li nil (a ((href . "elpaish.pub.asc")) "elpaish.pub.asc") " — Armored ASCII public key")
-                        (li nil (a ((href . "elpaish.rev.asc")) "elpaish.rev.asc") " — Published revocation certificates (if any)"))
-                    (pre nil
-                         (code nil "gpg --import < elpaish.pub.asc"))))))))
+                        (li nil (a ((href . "elpaish.rev.asc")) "elpaish.rev.asc") " — Published revocation certificates (if any)"))))))))
 ;;; Build Orchestration
 
 ;;;###autoload

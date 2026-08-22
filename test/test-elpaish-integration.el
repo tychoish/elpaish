@@ -16,11 +16,23 @@
 
 ;;; Code:
 
+(require 'package)
+(let ((ci-elpa (expand-file-name "elpa-ci" default-directory))
+      (local-elpa (expand-file-name "elpa" default-directory)))
+  (cond
+   ((file-directory-p ci-elpa)
+    (setq package-user-dir ci-elpa)
+    (package-initialize))
+   ((file-directory-p local-elpa)
+    (setq package-user-dir local-elpa)
+    (package-initialize))
+   (t
+    (package-initialize))))
+
 (require 'cl-lib)
 (require 'ert)
 (require 'elpaish)
 (require 'elpaish-recipes)
-(require 'package)
 
 (defcustom elpaish-run-integration-tests nil
   "When non-nil, enable execution of subprocess integration tests.
@@ -88,6 +100,7 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
 
      ;; 4. Run consumer installation in isolated emacs -Q subprocess
      (let* ((archive-dir (expand-file-name "elpaish" elpaish-output-dir))
+            (default-directory consumer-home)
             (sub-code
              (format "(progn
   (require (quote package))
@@ -156,7 +169,8 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
                (should (file-exists-p (expand-file-name "archive-contents.sig" archive-dir)))
 
                ;; Consumer subprocess imports public key and verifies signatures
-               (let* ((sub-code
+               (let* ((default-directory consumer-home)
+                      (sub-code
                        (format "(progn
   (require (quote package))
   (setq package-user-dir \"%s/elpa\")
@@ -182,7 +196,8 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
   (when-let* ((live-url (getenv "ELPAISH_ARCHIVE_URL")))
     (unless (string-empty-p live-url)
       (elpaish-integration-test-with-env
-       (let* ((sub-code
+       (let* ((default-directory consumer-home)
+              (sub-code
                (format "(progn
   (require (quote package))
   (setq package-user-dir \"%s/elpa\")

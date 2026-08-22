@@ -5,11 +5,23 @@
 
 ;;; Code:
 
+(require 'package)
+(let ((ci-elpa (expand-file-name "elpa-ci" default-directory))
+      (local-elpa (expand-file-name "elpa" default-directory)))
+  (cond
+   ((file-directory-p ci-elpa)
+    (setq package-user-dir ci-elpa)
+    (package-initialize))
+   ((file-directory-p local-elpa)
+    (setq package-user-dir local-elpa)
+    (package-initialize))
+   (t
+    (package-initialize))))
+
 (require 'ert)
 (require 'elpaish)
 (require 'elpaish-recipes)
 (require 'elpaish-check)
-(require 'package)
 (require 'url)
 
 (defmacro elpaish-test-with-temp-env (&rest body)
@@ -400,6 +412,14 @@
          ;; Test revocation publishing
          (elpaish-revoke-key "MASTERKEY" elpaish-output-dir)
          (should (file-exists-p (expand-file-name "elpaish.rev.asc" elpaish-output-dir))))))))
+(ert-deftest elpaish-test-empty-revocation-file-export ()
+  "Test that an empty elpaish.rev.asc file is created if no revocation cert exists."
+  (elpaish-test-with-temp-env
+   (let ((rev-file (expand-file-name "elpaish.rev.asc" elpaish-output-dir)))
+     (should-not (file-exists-p rev-file))
+     (elpaish-export-keyring elpaish-output-dir)
+     (should (file-exists-p rev-file))
+     (should (zerop (file-attribute-size (file-attributes rev-file)))))))
 
 (ert-deftest elpaish-test-gpg-signing-envvar-testing-value ()
   "Test handling ELPAISH_SIGNING_KEY set to dummy __testing_value from pages.yml."
