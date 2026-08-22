@@ -580,6 +580,28 @@ OUTPUT-FILE defaults to FILE.sig. Returns the path to the generated signature, o
               sig-file)
           (message "Headless signing failed for %s (exit code %S)" file exit-code)
           nil)))))
+(defun elpaish--ensure-gpg-agent-loopback ()
+  "Ensure gpg-agent is configured to allow loopback pinentry for batch signing."
+  (when (executable-find "gpg")
+    (let* ((gnupg-dir (expand-file-name ".gnupg" (or (getenv "GNUPGHOME") (getenv "HOME"))))
+           (agent-conf (expand-file-name "gpg-agent.conf" gnupg-dir)))
+      (make-directory gnupg-dir t)
+      (set-file-modes gnupg-dir #o700)
+      (unless (and (file-exists-p agent-conf)
+                   (with-temp-buffer
+                     (insert-file-contents agent-conf)
+                     (search-forward "allow-loopback-pinentry" nil t)))
+        (with-temp-file agent-conf
+          (when (file-exists-p agent-conf)
+            (insert-file-contents agent-conf))
+          (goto-char (point-max))
+          (insert "\nallow-loopback-pinentry\n"))
+        (set-file-modes agent-conf #o600)
+        (when (executable-find "gpgconf")
+          (call-process "gpgconf" nil nil nil "--kill" "gpg-agent"))
+        (when (executable-find "gpg-connect-agent")
+          (call-process "gpg-connect-agent" nil nil nil "reloadagent" "/bye"))))))
+
 ;;;###autoload
 (defun elpaish-init-signing-from-env ()
   "Initialize GPG signing configuration from `ELPAISH_SIGNING_KEY' environment variable.

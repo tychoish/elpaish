@@ -154,12 +154,12 @@
 (defun elpaish-check--ert (test-files pkg-name verbose extra-load-path)
   "Run ERT on TEST-FILES for PKG-NAME with EXTRA-LOAD-PATH. Returns list of error strings."
   (when verbose (message "[elpaish-check] 5. Running ERT tests (%d files)..." (length test-files)))
-  (let ((errs nil)
-        (ert-quiet-redefinition t))
+  (let ((errs nil))
+    (when (fboundp 'ert-delete-all-tests)
+      (ert-delete-all-tests))
     (dolist (tf test-files)
       (condition-case err
-          (let ((load-path (append extra-load-path load-path))
-                (ert-quiet-redefinition t))
+          (let ((load-path (append extra-load-path load-path)))
             (load tf nil t)
             (let* ((stats (ert (format "%s.*" pkg-name)))
                    (failed (ert-stats-completed-unexpected stats)))
@@ -171,7 +171,6 @@
                        (error-message-string err))
                errs))))
     (nreverse errs)))
-
 ;;;###autoload
 (cl-defun elpaish-check-package (&optional dir &key main-file test-dir skip-checks verbose
                                            extra-load-path)
