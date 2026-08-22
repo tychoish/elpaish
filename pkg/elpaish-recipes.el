@@ -140,19 +140,7 @@ hardcode where any particular maintainer's checkouts happen to live."
    :url "https://github.com/tychoish/xtdlib"
    :keywords '("extensions" "lisp"))
 
-  ;; 7. xlib
-  (elpaish-register-package
-   'xlib
-   (elpaish-recipe-path "xlib.el"
-                        "https://github.com/tychoish/xlib.el.git")
-   :branch "main"
-   :files '("xlib.el")
-   :test-dir "test"
-   :summary "Extended elisp utility library"
-   :url "https://github.com/tychoish/xlib.el"
-   :keywords '("extensions" "utility"))
-
-  ;; 8. elpaish-keyring
+  ;; 7. elpaish-keyring
   (elpaish-register-package
    'elpaish-keyring
    (elpaish-recipe-path "elpaish"
@@ -165,7 +153,7 @@ hardcode where any particular maintainer's checkouts happen to live."
    :url "https://github.com/tychoish/elpaish"
    :keywords '("package" "security" "maintenance" "elpa"))
 
-  ;; 9. elpaish (self-hosting)
+  ;; 8. elpaish (self-hosting)
   (elpaish-register-package
    'elpaish
    (elpaish-recipe-path "elpaish"
