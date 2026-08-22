@@ -252,8 +252,20 @@ BRANCH defaults to `elpaish-default-branch'."
     (_ (elpaish-recipe-built-version recipe))))
 
 ;;; Git & Path Resolution
+(defvar elpaish--resolved-repo-path-cache (make-hash-table :test 'eq)
+  "Cache of RECIPE -> resolved local repo directory for the current build run.
+Avoids redundant `git fetch'/clone operations when the same recipe's path
+is resolved more than once (its own preflight/build, plus as a sibling
+load-path entry for every other recipe's preflight check).")
+
 (defun elpaish--resolve-repo-path (recipe)
   "Return working directory for RECIPE, cloning or fetching if remote Git URL."
+  (or (map-elt elpaish--resolved-repo-path-cache recipe)
+      (setf (map-elt elpaish--resolved-repo-path-cache recipe)
+            (elpaish--resolve-repo-path-1 recipe))))
+
+(defun elpaish--resolve-repo-path-1 (recipe)
+  "Uncached implementation of `elpaish--resolve-repo-path'."
   (let ((repo-target (elpaish-recipe-repo recipe)))
     (if (and (stringp repo-target)
              (not (string-match-p "\\`https?://" repo-target))
@@ -267,6 +279,7 @@ BRANCH defaults to `elpaish-default-branch'."
         (make-directory elpaish-work-dir t)
         (if (file-exists-p (expand-file-name ".git" pkg-dir))
             (let ((default-directory pkg-dir))
+	      ;; TODO use magit for this 
               (call-process "git" nil nil nil "fetch" "origin")
               (call-process "git" nil nil nil "checkout" branch)
               (call-process "git" nil nil nil "reset" "--hard" (concat "origin/" branch)))
@@ -646,12 +659,16 @@ Returns t if checks pass, nil if quarantined."
       (if (eq skip t)
           t
         (let* ((repo-dir (elpaish--recipe-source-path recipe))
-               (checks-file (elpaish--resolve-checks-file)))
+               (checks-file (elpaish--resolve-checks-file))
+               (sibling-dirs (thread-last (hash-table-values elpaish-registry)
+                               (seq-remove (lambda (r) (eq r recipe)))
+                               (seq-map #'elpaish--recipe-source-path))))
           (when (and checks-file (file-exists-p checks-file))
             (load checks-file nil t))
           (if (fboundp 'run-checks-package)
               (let* ((tdir (elpaish-recipe-test-dir recipe))
-                     (res (run-checks-package repo-dir :test-dir tdir :skip-checks skip))
+                     (res (run-checks-package repo-dir :test-dir tdir :skip-checks skip
+                                              :extra-load-path sibling-dirs))
                      (passed (plist-get res :passed))
                      (errs (plist-get res :errors)))
                 (unless passed
@@ -838,7 +855,7 @@ OUTPUT-DIR defaults to track directory under `elpaish-output-dir'."
        `(html nil
               (head nil
                     (meta ((charset . "utf-8")))
-                    (title nil "ELPAish: Tychoish Emacs Lisp Package Archives")
+                    (title nil "ELPAish: tychoish Emacs Lisp Package Archives")
                     (style nil "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:40px auto;max-width:960px;line-height:1.6;color:#24292f;padding:0 20px;} .track-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin:30px 0;} .card{border:1px solid #d0d7de;border-radius:6px;padding:20px;background:#f6f8fa;box-shadow:0 1px 3px rgba(0,0,0,0.05);} .card h2{margin-top:0;font-size:1.3em;} pre{background:#24292e;color:#f6f8fa;padding:16px;border-radius:6px;overflow-x:auto;} code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;} a{color:#0969da;text-decoration:none;} a:hover{text-decoration:underline;} .btn{display:inline-block;padding:8px 16px;background:#2da44e;color:#fff;border-radius:6px;font-weight:600;margin-top:10px;} .btn:hover{background:#2c974b;text-decoration:none;color:#fff;}"))
               (body nil
                     (h1 nil "ELPAish Emacs Package Archives")
@@ -846,15 +863,15 @@ OUTPUT-DIR defaults to track directory under `elpaish-output-dir'."
 
                     (div ((class . "track-grid"))
                          (div ((class . "card"))
-                              (h2 nil (a ((href . "elpaish/index.html")) "elpaish (Snapshots)"))
+                              (h2 nil (a ((href . "elpaish/index.html")) "elpaish (Snapshot)"))
                               (p nil "Continuous development snapshots built from the default branch head with pure UTC date versioning (" (code nil "YYYYMMDD.HHMMSS") ").")
                               (a ((class . "btn") (href . "elpaish/index.html")) "Browse Snapshots"))
                          (div ((class . "card"))
-                              (h2 nil (a ((href . "elpaish-stable/index.html")) "elpaish-stable (Releases)"))
+                              (h2 nil (a ((href . "elpaish-stable/index.html")) "elpaish-stable (Release)"))
                               (p nil "Official release builds strictly from clean semver Git tags (" (code nil "vX.Y.Z") "). Repositories without clean tags are omitted.")
                               (a ((class . "btn") (href . "elpaish-stable/index.html")) "Browse Stable"))
                          (div ((class . "card"))
-                              (h2 nil (a ((href . "elpaish-staging/index.html")) "elpaish-staging (Pre-release)"))
+                              (h2 nil (a ((href . "elpaish-staging/index.html")) "elpaish-staging (Testing)"))
                               (p nil "Staging release candidates (" (code nil "-rc") ", " (code nil "-pre") ") and " (code nil "git describe") " builds for integration testing.")
                               (a ((class . "btn") (href . "elpaish-staging/index.html")) "Browse Staging")))
 
@@ -881,6 +898,7 @@ OUTPUT-DIR defaults to track directory under `elpaish-output-dir'."
 MODE can be `all', `elpaish', `elpaish-stable', or `elpaish-staging'.
 Defaults to `elpaish-release-mode'. OUTPUT-DIR defaults to `elpaish-output-dir'."
   (interactive)
+  (clrhash elpaish--resolved-repo-path-cache)
   (let* ((effective-mode (or mode elpaish-release-mode))
          (target-root (or output-dir elpaish-output-dir))
          (tracks (if (eq effective-mode 'all)

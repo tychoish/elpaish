@@ -167,16 +167,22 @@
     (nreverse errs)))
 
 ;;;###autoload
-(cl-defun run-checks-package (&optional dir &key main-file test-dir skip-checks verbose)
+(cl-defun run-checks-package (&optional dir &key main-file test-dir skip-checks verbose
+                                        extra-load-path)
   "Run preflight quality checks for package located at DIR.
 MAIN-FILE explicitly overrides main file detection.
 TEST-DIR explicitly overrides test directory detection.
 SKIP-CHECKS can be a list of symbols (e.g. \\='(checkdoc package-lint)) or t to skip all.
 VERBOSE enables verbose log messages.
+EXTRA-LOAD-PATH is a list of additional directories (e.g. sibling packages'
+checkouts) to search when a file `require's another package — DIR itself is
+always added automatically, so same-package sibling files resolve without
+needing to be listed here.
 
 Returns a plist: (:passed BOOLEAN :errors LIST :warnings LIST :package STRING)."
   (let* ((package-dir (file-name-as-directory (expand-file-name (or dir default-directory))))
          (default-directory package-dir)
+         (load-path (append extra-load-path (cons package-dir load-path)))
          (pkg-files (if main-file
                         (list (expand-file-name main-file package-dir))
                       (run-checks--find-package-files package-dir)))
