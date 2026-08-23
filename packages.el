@@ -77,20 +77,6 @@
  :url "https://github.com/tychoish/sprite"
  :keywords '("processes" "tools"))
 
-;; 5. agent-shell-notifications
-(elpaish-register-package
- 'agent-shell-notifications
- (elpaish-recipe-path "agent-shell-notifications"
-                      "https://github.com/zackattackz/agent-shell-notifications.git")
- :branch "main"
- :files '("agent-shell-notifications.el"
-          "agent-shell-notifications-sound.el")
- :test-dir "test"
- :preflight-skip '(byte-compile ert package-lint)
- :summary "Audio and desktop alerts for long-running AI agent tasks"
- :url "https://github.com/zackattackz/agent-shell-notifications"
- :keywords '("tools" "notifications"))
-
 ;; 6. xtdlib
 (elpaish-register-package
  'xtdlib
