@@ -171,6 +171,20 @@ and/or strings making up the card's paragraph body."
                      "gpg --import < elpaish.pub.asc")
             pub-key-url pub-key-url)))
 
+(defun elpaish-website--package-keyring-snippet ()
+  "Return the `package-import-keyring' snippet shown on the landing page.
+Distinct from `elpaish-website--keyring-import-snippet': `package-install'
+checks signatures against Emacs's own `package-gnupghome-dir' keyring, not
+the user's regular GPG keyring, so the key needs to be imported there too
+for `package-check-signature' to actually verify anything."
+  (let ((binary-key-url (format "%s/elpaish-keyring.gpg" (string-remove-suffix "/" elpaish-base-url))))
+    (format (concat ";; Download the binary keyring and import it into `package.el's own keyring,\n"
+                     ";; then enable signature checking:\n"
+                     "(url-copy-file \"%s\" \"elpaish-keyring.gpg\" t)\n"
+                     "(package-import-keyring \"elpaish-keyring.gpg\")\n"
+                     "(setq package-check-signature t)")
+            binary-key-url)))
+
 ;;;###autoload
 (defun elpaish-generate-top-index (&optional output-dir)
   "Generate top-level static `index.html' landing page in OUTPUT-DIR."
@@ -198,6 +212,14 @@ and/or strings making up the card's paragraph body."
                     (h2 nil "GPG Keyring Verification")
                     (p nil "Packages and index files are GPG signed. Download and import the public key into your GPG keyring:")
                     (pre nil (code nil ,(elpaish-website--keyring-import-snippet)))
+                    (p nil "To have "
+                       (code nil "package-install")
+                       " itself verify signatures, import the key into "
+                       (code nil "package.el")
+                       "'s own keyring instead (a separate trust store from your regular GPG keyring) and turn on "
+                       (code nil "package-check-signature")
+                       ":")
+                    (pre nil (code nil ,(elpaish-website--package-keyring-snippet)))
                     (p nil "Keyring and certificate assets:")
                     (ul nil
                         (li nil (a ((href . "elpaish-keyring.gpg")) "elpaish-keyring.gpg") " — Binary public keyring")

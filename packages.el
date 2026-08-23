@@ -24,11 +24,6 @@
  (elpaish-recipe-path "agent-shell-queue"
                       "https://github.com/tychoish/agent-shell-queue.git")
  :branch "main"
- :files '("agent-shell-queue.el"
-          "agent-shell-queue-org.el"
-          "agent-shell-queue-db.el"
-          "agent-shell-queue-persistence.el"
-          "agent-shell-menu.el")
  :test-dir "test"
  :preflight-skip '(byte-compile ert package-lint)
  :summary "Emacs queue manager for AI agent tasks"
@@ -41,14 +36,6 @@
  (elpaish-recipe-path "magit-dash"
                       "https://github.com/tychoish/magit-dash.git")
  :branch "main"
- :files '("magit-dash.el"
-          "magit-dash-agent.el"
-          "magit-dash-gh.el"
-          "magit-dash-git.el"
-          "magit-dash-layout.el"
-          "magit-dash-menu.el"
-          "magit-dash-process.el"
-          "magit-dash-worktree.el")
  :test-dir "test"
  :preflight-skip '(ert package-lint)
  :summary "Status and management dashboard for Magit repositories and worktrees"
@@ -61,17 +48,6 @@
  (elpaish-recipe-path "sprite"
                       "https://github.com/tychoish/sprite.git")
  :branch "main"
- :files '("sprite.el"
-          "sprite-registry.el"
-          "sprite-monitor.el"
-          "sprite-manager.el"
-          "sprite-inspector.el"
-	  "sprite-direct.el"
-          "sprite-hud.el"
-          "sprite-history.el"
-          "sprite-filter.el"
-          "sprite-dashboard.el"
-          "sprite-custom.el")
  :test-dir "test"
  :preflight-skip '(ert package-lint)
  :summary "System process management, telemetry, and supervision interface"
@@ -84,12 +60,6 @@
  (elpaish-recipe-path "xtdlib"
                       "https://github.com/tychoish/xtdlib.el.git")
  :branch "main"
- :files '("xtdlib.el"
-          "xtd-s.el"
-          "xtd-f.el"
-          "xtd-ht.el"
-          "xtd-seq.el"
-          "xtd-sys.el")
  :test-dir "test"
  :preflight-skip '(ert package-lint)
  :summary "Comprehensive standard library extension for Emacs Lisp"
@@ -116,13 +86,10 @@
                       "https://github.com/tychoish/elpaish.git")
  :source-dir "pkg"
  :branch "main"
- :files '("elpaish.el"
-          "elpaish-recipes.el"
-          "elpaish-check.el"
-          "elpaish-signing-keys.el"
-          "elpaish-keyring.el"
-          "elpaish-css.el"
-          "elpaish-website.el")
+ ;; No `:files' needed — defaults to a "*.el" glob of `pkg/' at build time,
+ ;; automatically excluding `elpaish-keyring.el' since it is the main file
+ ;; of the separately-registered `elpaish-keyring' recipe sharing this
+ ;; source directory (see `elpaish--sibling-main-files').
  :test-dir "test"
  :preflight-skip '(package-lint)
  :summary "Multi-track signed ELPA package archive builder and server"

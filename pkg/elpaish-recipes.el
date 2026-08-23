@@ -114,7 +114,9 @@ recognizable package header comment."
 Looks for immediate subdirectories containing a `<dir-name>.el' file with a
 package header, and registers each with the appropriate `:source-dir'.
 BRANCH defaults to `elpaish-default-branch'. FILES overrides the default
-single-file `(\"<name>.el\")' pattern used for every discovered package."
+wildcard `(\"*.el\")' pattern used for every discovered package, so
+multi-file packages are picked up automatically at build time without
+enumerating every file here."
   (interactive "DMonorepo root directory: ")
   (let* ((expanded-root (expand-file-name root))
          (candidates (elpaish--discover-candidates expanded-root)))
@@ -127,7 +129,7 @@ single-file `(\"<name>.el\")' pattern used for every discovered package."
           expanded-root
           :branch (or branch elpaish-default-branch)
           :source-dir source-dir-rel
-          :files (or files (list (format "%s.el" name))))))
+          :files (or files '("*.el")))))
      candidates)
     (message "Discovered and registered %d monorepo package(s) under %s."
              (length candidates) expanded-root)

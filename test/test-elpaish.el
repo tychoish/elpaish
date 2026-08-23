@@ -32,7 +32,6 @@
           (elpaish-work-dir (expand-file-name "repos/" temp-dir))
           (elpaish-registry (make-hash-table :test 'equal))
           (elpaish-sign-packages nil)
-          (elpaish-force-rebuild nil)
           (elpaish-run-preflight nil))
      (unwind-protect
          (progn ,@body)
@@ -640,12 +639,14 @@
        (should (gethash "ext-pkg-2" elpaish-registry))
        (should (equal (elpaish-recipe-summary (gethash "ext-pkg-1" elpaish-registry)) "External 1"))))))
 
-(ert-deftest elpaish-test-snapshot-skip-unchanged-rebuild ()
-  "Test that snapshot builds are skipped if commit has not changed since last build."
+(ert-deftest elpaish-test-snapshot-rebuild-always-runs ()
+  "Test that snapshot builds always regenerate the artifact, even with an
+unchanged commit, while the derived version string stays pinned to the
+source's last commit time rather than the time of the build."
   (elpaish-test-with-temp-env
-   (let ((pkg-dir (expand-file-name "skip-rebuild-pkg" temp-dir)))
-     (elpaish-test-create-dummy-pkg pkg-dir "skip-rebuild-pkg" "1.0.0" "Skip Rebuild Test")
-     (elpaish-register-package 'skip-rebuild-pkg pkg-dir)
+   (let ((pkg-dir (expand-file-name "rebuild-pkg" temp-dir)))
+     (elpaish-test-create-dummy-pkg pkg-dir "rebuild-pkg" "1.0.0" "Rebuild Test")
+     (elpaish-register-package 'rebuild-pkg pkg-dir)
 
      ;; Mock git commands to simulate a clean repository with commit hash "abc1234"
      (cl-letf (((symbol-function 'magit-git-string)
@@ -663,7 +664,7 @@
                       (funcall #'file-exists-p path)))))
 
        ;; 1. First build
-       (let* ((recipe (gethash "skip-rebuild-pkg" elpaish-registry))
+       (let* ((recipe (gethash "rebuild-pkg" elpaish-registry))
               (dest1 (elpaish-build-package recipe 'elpaish))
               (ver1 (elpaish-recipe-built-version-elpaish recipe)))
          (should dest1)
@@ -673,11 +674,24 @@
          ;; Generate archive-contents
          (elpaish-generate-archive-contents 'elpaish)
 
-         ;; 2. Second build without commit change: should return existing dest and keep exact same version
+         ;; Change the implementation's own packaging output without touching the
+         ;; source commit: rebuilding must reflect the change instead of reusing
+         ;; the prior artifact, while the version string (tied to commit time)
+         ;; stays exactly the same.
+         (with-temp-file (expand-file-name "rebuild-pkg.el" pkg-dir)
+           (insert ";;; rebuild-pkg.el --- Rebuild Test -*- lexical-binding: t; -*-\n"
+                   ";; Version: 1.0.0\n"
+                   ";;; Commentary:\n;;; Code:\n"
+                   "(defvar rebuild-pkg-marker t)\n"
+                   ";;; rebuild-pkg.el ends here\n"))
+
          (let ((dest2 (elpaish-build-package recipe 'elpaish))
                (ver2 (elpaish-recipe-built-version-elpaish recipe)))
            (should (equal dest1 dest2))
-           (should (equal ver1 ver2))))))))
+           (should (equal ver1 ver2))
+           (with-temp-buffer
+             (insert-file-contents dest2)
+             (should (string-match-p "rebuild-pkg-marker" (buffer-string))))))))))
 
 (ert-deftest elpaish-test-css-render ()
   "Test CSS sexp stylesheet rendering."

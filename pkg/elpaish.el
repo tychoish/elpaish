@@ -61,11 +61,6 @@
   :type 'boolean
   :group 'elpaish)
 
-(defcustom elpaish-force-rebuild nil
-  "When non-nil, rebuild package artifacts even if the commit hash is unchanged."
-  :type 'boolean
-  :group 'elpaish)
-
 (defcustom elpaish-gpg-key nil
   "GPG key ID, fingerprint, or email used to sign packages.
 If nil, checks `ELPAISH_KEY_ID' or `ELPAISH_GPG_KEY' environment variables,
@@ -409,10 +404,30 @@ Returns normalized version string, or nil for `elpaish-stable' if no clean stabl
         (forward-line 1))
       (insert (format ";; Version: %s\n" version-str)))))
 
-(defun elpaish--collect-files (repo-dir patterns &optional pkg-name)
-  "Collect relative file paths in REPO-DIR matching PATTERNS, excluding tests and generated descriptor files."
+(defun elpaish--sibling-main-files (recipe)
+  "Return other registered recipes' main-file basenames sharing RECIPE's source directory.
+Lets a package's default `:files' pattern (e.g. \"*.el\") safely glob its
+whole source directory without also sweeping up a sibling package's entry
+point when two recipes are registered against the same directory."
+  (when recipe
+    (let ((own-path (elpaish--recipe-source-path recipe)))
+      (delq nil
+            (mapcar (lambda (other)
+                      (when (and (not (eq other recipe))
+                                 (equal (elpaish--recipe-source-path other) own-path))
+                        (let ((oname (elpaish-recipe-name other)))
+                          (if (string-suffix-p ".el" oname) oname (concat oname ".el")))))
+                    (hash-table-values elpaish-registry))))))
+
+(defun elpaish--collect-files (repo-dir patterns &optional pkg-name recipe)
+  "Collect relative file paths in REPO-DIR matching PATTERNS, excluding tests and generated descriptor files.
+When RECIPE is given, also excludes any sibling recipe's main file that
+shares RECIPE's source directory (see `elpaish--sibling-main-files'), so a
+package can default to a wildcard PATTERNS like \\='(\"*.el\") without
+needing to enumerate every file by hand."
   (let ((default-directory repo-dir)
-        (name-str (and pkg-name (if (symbolp pkg-name) (symbol-name pkg-name) pkg-name))))
+        (name-str (and pkg-name (if (symbolp pkg-name) (symbol-name pkg-name) pkg-name)))
+        (sibling-mains (elpaish--sibling-main-files recipe)))
     (thread-last (or patterns '("*.el"))
       (seq-mapcat #'file-expand-wildcards)
       (seq-filter #'file-regular-p)
@@ -426,7 +441,8 @@ Returns normalized version string, or nil for `elpaish-stable' if no clean stabl
                           (string-match-p "\\`tests/" f)
                           (string-prefix-p "test-" base)
                           (string-suffix-p "-test.el" base)
-                          (string-suffix-p "-tests.el" base)))))
+                          (string-suffix-p "-tests.el" base)
+                          (member base sibling-mains)))))
       (seq-uniq))))
 
 (cl-defun elpaish--generate-pkg-file (dest-file name &key version summary reqs url keywords)
@@ -757,12 +773,17 @@ Returns a plist with :summary, :reqs, :url, and :keywords."
                         (elpaish-recipe-keywords recipe)
                         '("tools")))))
 
-(cl-defun elpaish-build-package (recipe &optional track output-dir force)
+(cl-defun elpaish-build-package (recipe &optional track output-dir)
   "Build, package, sign, and record status for RECIPE on TRACK.
 TRACK is `elpaish', `elpaish-stable', or `elpaish-staging'.
 OUTPUT-DIR defaults to track directory under `elpaish-output-dir'.
-When FORCE is non-nil or `elpaish-force-rebuild' is non-nil, rebuild
-the package even if the commit has not changed since the last build."
+Always regenerates the artifact, even when the source commit is unchanged
+since the last build — elpaish's own packaging logic (file collection,
+descriptor generation, signing, etc.) can change between builds
+independently of the source repository, so a cached artifact from a prior
+build's code cannot be trusted to reflect the current implementation.
+Version numbers still track the source's last commit (see
+`elpaish-derive-version'), not the time of this build."
   (let* ((effective-track (elpaish-canonical-track (or track elpaish-release-mode)))
          (target-dir (or output-dir (elpaish-track-dir effective-track)))
          (repo-dir (elpaish--recipe-source-path recipe))
@@ -789,80 +810,43 @@ the package even if the commit has not changed since the last build."
 
       ;; 3. Build artifact
       (make-directory target-dir t)
-      (let* ((files (elpaish--collect-files repo-dir (elpaish-recipe-files recipe) name))
+      (let* ((files (elpaish--collect-files repo-dir (elpaish-recipe-files recipe) name recipe))
              (is-tar (> (length files) 1))
              (pkg-type (if is-tar 'tar 'single))
              (pkg-name-ver (format "%s-%s" name version-str))
              (dest-file (expand-file-name (format "%s.%s" pkg-name-ver (if is-tar "tar" "el"))
                                           target-dir))
-             (sig-file (concat dest-file ".sig"))
-             (existing-ac-entry (gethash name (elpaish-read-archive-contents target-dir)))
-             (existing-commit (when existing-ac-entry
-                                (let ((extras (and (> (length existing-ac-entry) 4)
-                                                   (aref existing-ac-entry 4))))
-                                  (cdr (assq :commit extras)))))
-             (existing-ver-list (when existing-ac-entry (aref existing-ac-entry 0)))
-             (existing-ver-str (when existing-ver-list (package-version-join existing-ver-list)))
-             (should-skip-rebuild
-              (and (not force)
-                   (not elpaish-force-rebuild)
-                   (file-exists-p dest-file)
-                   (or (not elpaish-sign-packages) (file-exists-p sig-file))
-                   (not (equal current-commit "uncommitted"))
-                   (or (equal (elpaish-recipe-built-hash recipe) current-commit)
-                       (equal existing-commit current-commit))
-                   (or (equal (elpaish-recipe-version-for-track recipe effective-track) version-str)
-                       (equal existing-ver-str version-str)))))
+             meta summary reqs url keywords)
+        (with-temp-buffer
+          (insert-file-contents main-file)
+          (elpaish--inject-version-header version-str)
+          (setq meta (elpaish--extract-buffer-metadata recipe))
+          (setq summary (plist-get meta :summary)
+                reqs (plist-get meta :reqs)
+                url (plist-get meta :url)
+                keywords (plist-get meta :keywords))
 
-        (if should-skip-rebuild
-            (progn
-              (setf (elpaish-recipe-version-for-track recipe effective-track) version-str)
-              (setf (elpaish-recipe-built-type recipe) pkg-type
-                    (elpaish-recipe-built-hash recipe) current-commit)
-              (unless (elpaish-recipe-summary recipe)
-                (with-temp-buffer
-                  (insert-file-contents main-file)
-                  (let ((meta (elpaish--extract-buffer-metadata recipe)))
-                    (setf (elpaish-recipe-summary recipe) (plist-get meta :summary)
-                          (elpaish-recipe-url recipe) (plist-get meta :url)
-                          (elpaish-recipe-keywords recipe) (plist-get meta :keywords)
-                          (elpaish-recipe-requires recipe) (plist-get meta :reqs)))))
-              (message "Skipping rebuild for %s version %s on %s (commit %s unchanged)"
-                       name version-str effective-track current-commit)
-              dest-file)
+          (if is-tar
+              (elpaish--create-tar-package repo-dir dest-file pkg-name-ver name files
+                                            :version version-str :summary summary
+                                            :reqs reqs :url url :keywords keywords)
+            (write-region (point-min) (point-max) dest-file nil 'silent)))
 
-          ;; Build artifact
-          (let (meta summary reqs url keywords)
-            (with-temp-buffer
-              (insert-file-contents main-file)
-              (elpaish--inject-version-header version-str)
-              (setq meta (elpaish--extract-buffer-metadata recipe))
-              (setq summary (plist-get meta :summary)
-                    reqs (plist-get meta :reqs)
-                    url (plist-get meta :url)
-                    keywords (plist-get meta :keywords))
+        ;; 4. Sign artifact
+        (elpaish--sign-file dest-file)
 
-              (if is-tar
-                  (elpaish--create-tar-package repo-dir dest-file pkg-name-ver name files
-                                                :version version-str :summary summary
-                                                :reqs reqs :url url :keywords keywords)
-                (write-region (point-min) (point-max) dest-file nil 'silent)))
+        ;; 5. Update recipe metadata & status
+        (setf (elpaish-recipe-version-for-track recipe effective-track) version-str)
 
-            ;; 4. Sign artifact
-            (elpaish--sign-file dest-file)
+        (setf (elpaish-recipe-built-type recipe) pkg-type
+              (elpaish-recipe-summary recipe) summary
+              (elpaish-recipe-url recipe) url
+              (elpaish-recipe-keywords recipe) keywords
+              (elpaish-recipe-requires recipe) reqs
+              (elpaish-recipe-built-hash recipe) current-commit)
 
-            ;; 5. Update recipe metadata & status
-            (setf (elpaish-recipe-version-for-track recipe effective-track) version-str)
-
-            (setf (elpaish-recipe-built-type recipe) pkg-type
-                  (elpaish-recipe-summary recipe) summary
-                  (elpaish-recipe-url recipe) url
-                  (elpaish-recipe-keywords recipe) keywords
-                  (elpaish-recipe-requires recipe) reqs
-                  (elpaish-recipe-built-hash recipe) current-commit)
-
-            (message "Successfully built %s version %s on %s" name version-str effective-track)
-            dest-file))))))
+        (message "Successfully built %s version %s on %s" name version-str effective-track)
+        dest-file))))
 
 ;;; Archive Contents Generation
 
@@ -909,11 +893,12 @@ the package even if the commit has not changed since the last build."
 ;;; Build Orchestration
 
 ;;;###autoload
-(cl-defun elpaish-build-all (&optional mode output-dir force)
+(cl-defun elpaish-build-all (&optional mode output-dir)
   "Build registered packages, generate indexes, and sign archives.
 MODE can be `all', `elpaish', `elpaish-stable', or `elpaish-staging'.
 Defaults to `elpaish-release-mode'. OUTPUT-DIR defaults to `elpaish-output-dir'.
-When FORCE is non-nil, force rebuilding all packages."
+Every registered package is rebuilt unconditionally on every call; see
+`elpaish-build-package'."
   (interactive)
   (clrhash elpaish--resolved-repo-path-cache)
   (let* ((effective-mode (or mode elpaish-release-mode))
@@ -926,7 +911,7 @@ When FORCE is non-nil, force rebuilding all packages."
       (let ((track-dir (elpaish-track-dir track target-root)))
         (make-directory track-dir t)
         (dolist (recipe (hash-table-values elpaish-registry))
-          (elpaish-build-package recipe track track-dir force))
+          (elpaish-build-package recipe track track-dir))
         (elpaish-generate-archive-contents track track-dir)
         (elpaish-generate-github-index track track-dir)))
 
