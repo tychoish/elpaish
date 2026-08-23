@@ -32,6 +32,7 @@
 
 (require 'elpaish)
 (require 'elpaish-recipes)
+(require 'elpaish-website)
 (require 'elpaish-check nil t)
 
 ;; Load external package definitions from top-level packages.el

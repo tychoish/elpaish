@@ -66,6 +66,7 @@
           "sprite-monitor.el"
           "sprite-manager.el"
           "sprite-inspector.el"
+	  "sprite-direct.el"
           "sprite-hud.el"
           "sprite-history.el"
           "sprite-filter.el"
@@ -119,7 +120,9 @@
           "elpaish-recipes.el"
           "elpaish-check.el"
           "elpaish-signing-keys.el"
-          "elpaish-keyring.el")
+          "elpaish-keyring.el"
+          "elpaish-css.el"
+          "elpaish-website.el")
  :test-dir "test"
  :preflight-skip '(package-lint)
  :summary "Multi-track signed ELPA package archive builder and server"

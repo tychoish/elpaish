@@ -22,6 +22,7 @@
 (require 'elpaish)
 (require 'elpaish-recipes)
 (require 'elpaish-check)
+(require 'elpaish-website)
 (require 'url)
 
 (defmacro elpaish-test-with-temp-env (&rest body)
@@ -615,7 +616,9 @@
 
      ;; Verify descriptor generation
      (let ((dest (expand-file-name "desc-pkg-pkg.el" temp-dir)))
-       (elpaish--generate-pkg-file dest "desc-pkg" "1.2.3" "Desc Summary" '((emacs "27.1")) "https://example.com" '("tools"))
+       (elpaish--generate-pkg-file dest "desc-pkg"
+                                   :version "1.2.3" :summary "Desc Summary"
+                                   :reqs '((emacs "27.1")) :url "https://example.com" :keywords '("tools"))
        (should (file-exists-p dest))
        (with-temp-buffer
          (insert-file-contents dest)
@@ -675,6 +678,96 @@
                (ver2 (elpaish-recipe-built-version-elpaish recipe)))
            (should (equal dest1 dest2))
            (should (equal ver1 ver2))))))))
+
+(ert-deftest elpaish-test-css-render ()
+  "Test CSS sexp stylesheet rendering."
+  (should (equal (elpaish-css-render '((body (color . "#fff") (margin . "0"))))
+                 "body{color:#fff;margin:0;}"))
+  (should (equal (elpaish-css-render '((".card" (border . "1px solid red"))))
+                 ".card{border:1px solid red;}"))
+  (should (equal (elpaish-css-render nil) ""))
+  ;; Both generated stylesheets should render non-empty CSS referencing shared design tokens
+  (let ((track-css (elpaish-css-render (elpaish-css-track-index-stylesheet)))
+        (top-css (elpaish-css-render (elpaish-css-top-index-stylesheet))))
+    (should (string-match-p (regexp-quote elpaish-css-color-link) track-css))
+    (should (string-match-p (regexp-quote elpaish-css-color-link) top-css))
+    (should (string-match-p (regexp-quote elpaish-css-font-mono) track-css))
+    (should (string-match-p "\\.pkg-name{" track-css))
+    (should (string-match-p "\\.btn{" top-css))))
+
+(ert-deftest elpaish-test-website-track-label-and-url ()
+  "Test track label and catalog URL formatting for generated pages."
+  (should (equal (elpaish-website--track-label 'elpaish) "snapshot"))
+  (should (equal (elpaish-website--track-label 'elpaish-stable) "stable"))
+  (should (equal (elpaish-website--track-label 'elpaish-staging) "staging"))
+  (let ((elpaish-base-url "https://example.com/archive/"))
+    (should (equal (elpaish-website--track-url 'elpaish) "https://example.com/archive/elpaish/"))))
+
+(ert-deftest elpaish-test-canonical-track-aliases ()
+  "Test track alias normalization, including symbols not covered by the default cases."
+  (should (eq (elpaish-canonical-track 'snapshot) 'elpaish))
+  (should (eq (elpaish-canonical-track 'unstable) 'elpaish))
+  (should (eq (elpaish-canonical-track 'stable) 'elpaish-stable))
+  (should (eq (elpaish-canonical-track 'pre) 'elpaish-staging))
+  (should (eq (elpaish-canonical-track 'staging) 'elpaish-staging))
+  (should (eq (elpaish-canonical-track 'all) 'all))
+  (should (eq (elpaish-canonical-track 'some-unknown-symbol) 'elpaish)))
+
+(ert-deftest elpaish-test-track-dir-resolution ()
+  "Test track directory path resolution under a root directory."
+  (let ((root "/tmp/elpaish-root/"))
+    (should (equal (elpaish-track-dir 'elpaish root) (expand-file-name "elpaish" root)))
+    (should (equal (elpaish-track-dir 'stable root) (expand-file-name "elpaish-stable" root)))
+    (should (equal (elpaish-track-dir 'all root) (file-name-as-directory root)))))
+
+(ert-deftest elpaish-test-recipe-version-for-track-setf ()
+  "Test the generalized-variable setter for per-track built versions."
+  (elpaish-test-with-temp-env
+   (let ((recipe (elpaish-register-package 'setf-pkg "/tmp/setf-pkg")))
+     (setf (elpaish-recipe-version-for-track recipe 'elpaish) "1.0.0")
+     (setf (elpaish-recipe-version-for-track recipe 'elpaish-stable) "1.0.0")
+     (setf (elpaish-recipe-version-for-track recipe 'elpaish-staging) "1.0.0.rc1")
+     (should (equal (elpaish-recipe-built-version-elpaish recipe) "1.0.0"))
+     (should (equal (elpaish-recipe-built-version-stable recipe) "1.0.0"))
+     (should (equal (elpaish-recipe-built-version-staging recipe) "1.0.0.rc1"))
+     (should (equal (elpaish-recipe-version-for-track recipe 'elpaish) "1.0.0")))))
+
+(ert-deftest elpaish-test-register-package-default-branch-customization ()
+  "Test that omitting :branch honors `elpaish-default-branch' rather than a hardcoded literal."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-default-branch "develop"))
+     (let ((recipe (elpaish-register-package 'branch-pkg "/tmp/branch-pkg")))
+       (should (equal (elpaish-recipe-branch recipe) "develop"))))))
+
+(ert-deftest elpaish-test-monorepo-discovery ()
+  "Test monorepo subpackage discovery and registration."
+  (elpaish-test-with-temp-env
+   (let ((root (expand-file-name "monorepo" temp-dir)))
+     (elpaish-test-create-dummy-pkg (expand-file-name "pkg-one" root) "pkg-one" "1.0.0" "Pkg One")
+     (elpaish-test-create-dummy-pkg (expand-file-name "pkg-two" root) "pkg-two" "1.0.0" "Pkg Two")
+     ;; A subdirectory without a recognizable package header comment is ignored
+     (make-directory (expand-file-name "not-a-package" root) t)
+     (with-temp-file (expand-file-name "not-a-package.el" (expand-file-name "not-a-package" root))
+       (insert ";; just a scratch file, no package header\n"))
+     (let ((candidates (elpaish-discover-recipes root)))
+       (should (= (length candidates) 2))
+       (should (gethash "pkg-one" elpaish-registry))
+       (should (gethash "pkg-two" elpaish-registry))
+       (should-not (gethash "not-a-package" elpaish-registry))
+       (should (equal (elpaish-recipe-source-dir (gethash "pkg-one" elpaish-registry)) "pkg-one"))))))
+
+(ert-deftest elpaish-test-recipe-path-local-and-remote-fallback ()
+  "Test local checkout search and remote URL fallback for `elpaish-recipe-path'."
+  (let* ((search-root (make-temp-file "elpaish-recipe-path-" t))
+         (elpaish-recipe-local-search-dirs (list search-root)))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "found-pkg" search-root) t)
+          (should (equal (elpaish-recipe-path "found-pkg" "https://example.com/found-pkg.git")
+                         (expand-file-name "found-pkg" search-root)))
+          (should (equal (elpaish-recipe-path "missing-pkg" "https://example.com/missing-pkg.git")
+                         "https://example.com/missing-pkg.git")))
+      (delete-directory search-root t))))
 
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here

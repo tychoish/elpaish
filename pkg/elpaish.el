@@ -31,7 +31,6 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'dom)
 (require 'epg)
 (require 'magit)
 (require 'map)
@@ -102,6 +101,11 @@ or `elpaish-staging' (pre-release tags and git describe)."
   :type 'string
   :group 'elpaish)
 
+(defcustom elpaish-github-repo-slug "tychoish/elpaish"
+  "Default \"owner/repo\" slug used by `elpaish-rotate-keys' for `gh secret set'."
+  :type 'string
+  :group 'elpaish)
+
 (defconst elpaish-tracks '(elpaish elpaish-stable elpaish-staging)
   "List of supported package archive tracks.")
 
@@ -146,11 +150,11 @@ or `elpaish-staging' (pre-release tags and git describe)."
   `(setf (elpaish-recipe-built-version-elpaish ,recipe) ,val))
 
 ;;;###autoload
-(cl-defun elpaish-register-package (name repo &key (branch "main") (files '("*.el"))
+(cl-defun elpaish-register-package (name repo &key branch (files '("*.el"))
                                               (source-dir ".")
                                               test-dir preflight-skip summary url keywords requires)
   "Register package NAME with REPO local directory path or remote Git URL.
-BRANCH defaults to \"main\" and FILES defaults to \\='(\"*.el\").
+BRANCH defaults to `elpaish-default-branch' and FILES defaults to \\='(\"*.el\").
 SOURCE-DIR is the subdirectory within REPO holding the package (default \".\"),
 for packages that live inside a monorepo or a nested \"lisp/\" folder.
 TEST-DIR, PREFLIGHT-SKIP, SUMMARY, URL, KEYWORDS, and REQUIRES provide metadata."
@@ -183,53 +187,6 @@ TEST-DIR, PREFLIGHT-SKIP, SUMMARY, URL, KEYWORDS, and REQUIRES provide metadata.
   (interactive)
   (clrhash elpaish-registry))
 
-;;; Monorepo Package Discovery
-
-(defun elpaish--package-header-p (file)
-  "Return non-nil if FILE looks like an Emacs Lisp package entry point."
-  (and (file-regular-p file)
-       (with-temp-buffer
-         (insert-file-contents file nil 0 4096)
-         (goto-char (point-min))
-         (re-search-forward "^;;; [^ ]+\\.el --- .+-\\*-.*-\\*-" nil t))))
-
-(defun elpaish--discover-candidates (root)
-  "Return a list of (SOURCE-DIR-REL . MAIN-FILE) for packages nested under ROOT.
-A subdirectory is a candidate when it contains a `<dir-name>.el' file with a
-recognizable package header comment."
-  (thread-last (directory-files root t "\\`[^.]")
-    (seq-filter #'file-directory-p)
-    (seq-map (lambda (dir)
-               (let* ((dir-name (file-name-nondirectory (directory-file-name dir)))
-                      (main-file (expand-file-name (format "%s.el" dir-name) dir)))
-                 (when (elpaish--package-header-p main-file)
-                   (cons (file-relative-name dir root) main-file)))))
-    (delq nil)))
-
-;;;###autoload
-(defun elpaish-discover-recipes (root &optional branch)
-  "Scan ROOT for monorepo subpackages and register a recipe for each.
-Looks for immediate subdirectories containing a `<dir-name>.el' file with a
-package header, and registers each with the appropriate `:source-dir'.
-BRANCH defaults to `elpaish-default-branch'."
-  (interactive "DMonorepo root directory: ")
-  (let* ((expanded-root (expand-file-name root))
-         (candidates (elpaish--discover-candidates expanded-root)))
-    (seq-do
-     (lambda (candidate)
-       (let* ((source-dir-rel (string-remove-suffix "/" (car candidate)))
-              (name (file-name-base (cdr candidate))))
-         (elpaish-register-package
-          (intern name)
-          expanded-root
-          :branch (or branch elpaish-default-branch)
-          :source-dir source-dir-rel
-          :files (list (format "%s.el" name)))))
-     candidates)
-    (message "Discovered and registered %d monorepo package(s) under %s."
-             (length candidates) expanded-root)
-    candidates))
-
 ;;; Track & Directory Resolution
 
 (defun elpaish-canonical-track (track)
@@ -257,6 +214,13 @@ BRANCH defaults to `elpaish-default-branch'."
     ('elpaish-staging (elpaish-recipe-built-version-staging recipe))
     (_ (elpaish-recipe-built-version recipe))))
 
+(gv-define-setter elpaish-recipe-version-for-track (val recipe track)
+  `(pcase (elpaish-canonical-track ,track)
+     ('elpaish (setf (elpaish-recipe-built-version-elpaish ,recipe) ,val))
+     ('elpaish-stable (setf (elpaish-recipe-built-version-stable ,recipe) ,val))
+     ('elpaish-staging (setf (elpaish-recipe-built-version-staging ,recipe) ,val))
+     (_ (setf (elpaish-recipe-built-version-elpaish ,recipe) ,val))))
+
 ;;; Git & Path Resolution
 (defvar elpaish--resolved-repo-path-cache (make-hash-table :test 'eq)
   "Cache of RECIPE -> resolved local repo directory for the current build run.
@@ -280,7 +244,7 @@ load-path entry for every other recipe's preflight check).")
         (expand-file-name repo-target)
       ;; Remote Git repository target
       (let* ((name (elpaish-recipe-name recipe))
-             (branch (or (elpaish-recipe-branch recipe) "main"))
+             (branch (or (elpaish-recipe-branch recipe) elpaish-default-branch))
              (pkg-dir (expand-file-name name elpaish-work-dir)))
         (make-directory elpaish-work-dir t)
         (if (file-exists-p (expand-file-name ".git" pkg-dir))
@@ -465,8 +429,9 @@ Returns normalized version string, or nil for `elpaish-stable' if no clean stabl
                           (string-suffix-p "-tests.el" base)))))
       (seq-uniq))))
 
-(defun elpaish--generate-pkg-file (dest-file name version-str summary reqs url keywords)
-  "Write `<pkg>-pkg.el' descriptor at DEST-FILE."
+(cl-defun elpaish--generate-pkg-file (dest-file name &key version summary reqs url keywords)
+  "Write `<pkg>-pkg.el' descriptor for NAME at DEST-FILE.
+VERSION, SUMMARY, REQS, URL, and KEYWORDS provide the descriptor metadata."
   (with-temp-file dest-file
     (insert ";; -*- no-byte-compile: t -*-\n")
     (let ((req-forms (mapcar (lambda (r)
@@ -477,14 +442,16 @@ Returns normalized version string, or nil for `elpaish-stable' if no clean stabl
           (extra-kws (append (when url `(:url ,url))
                              (when keywords `(:keywords ,@keywords)))))
       (insert (format "(define-package %S %S %S\n  '%S\n"
-                      name version-str (or summary "No description") req-forms))
+                      name version (or summary "No description") req-forms))
       (when extra-kws
         (insert (format "  %s" (mapconcat (lambda (x) (format "%S" x)) extra-kws " "))))
       (insert ")\n"))))
 
-(defun elpaish--create-tar-package (repo-dir dest-file pkg-name-ver files
-                                                  name version-str summary reqs url keywords)
-  "Create a tar package at `DEST-FILE' for `FILES' in `REPO-DIR' named `PKG-NAME-VER'."
+(cl-defun elpaish--create-tar-package (repo-dir dest-file pkg-name-ver name files
+                                                 &key version summary reqs url keywords)
+  "Create a tar package at DEST-FILE for FILES in REPO-DIR named PKG-NAME-VER.
+NAME is the package's base name. VERSION, SUMMARY, REQS, URL, and KEYWORDS
+are forwarded to `elpaish--generate-pkg-file' for the bundled descriptor."
   (let* ((temp-dir (make-temp-file "elpaish-pkg-" t))
          (pkg-subdir (expand-file-name pkg-name-ver temp-dir)))
     (unwind-protect
@@ -495,8 +462,9 @@ Returns normalized version string, or nil for `elpaish-stable' if no clean stabl
               (make-directory (file-name-directory dst) t)
               (copy-file (expand-file-name rel-file repo-dir) dst t)))
           ;; Generate <pkg>-pkg.el inside tarball root
-          (let ((pkg-file (expand-file-name (format "%s-pkg.el" name) pkg-subdir)))
-            (elpaish--generate-pkg-file pkg-file name version-str summary reqs url keywords))
+          (elpaish--generate-pkg-file (expand-file-name (format "%s-pkg.el" name) pkg-subdir) name
+                                       :version version :summary summary :reqs reqs
+                                       :url url :keywords keywords)
           (let ((default-directory temp-dir))
             (call-process "tar" nil nil nil "-cf" dest-file pkg-name-ver)))
       (delete-directory temp-dir t))))
@@ -705,7 +673,7 @@ Returns the detected signing key ID or nil."
 (cl-defun elpaish-rotate-keys (&key master-key-id repo-slug (output-dir elpaish-output-dir))
   "Rotate GPG signing subkey [S], sync with GitHub secrets, and export updated keyring.
 MASTER-KEY-ID defaults to the primary certification key.
-REPO-SLUG defaults to \"tychoish/elpaish\"."
+REPO-SLUG defaults to `elpaish-github-repo-slug'."
   (interactive)
   (unless (executable-find "gpg")
     (user-error "GPG binary not found in PATH"))
@@ -714,7 +682,7 @@ REPO-SLUG defaults to \"tychoish/elpaish\"."
                          (read-string "Primary / Master GPG Key ID or Fingerprint: " (elpaish--get-signing-key))
                        (elpaish--get-signing-key))
                      (user-error "No master key ID specified")))
-         (target-repo (or repo-slug "tychoish/elpaish"))
+         (target-repo (or repo-slug elpaish-github-repo-slug))
          (gpg-bin (executable-find "gpg"))
          (gh-bin (executable-find "gh")))
 
@@ -848,10 +816,7 @@ the package even if the commit has not changed since the last build."
 
         (if should-skip-rebuild
             (progn
-              (pcase effective-track
-                ('elpaish (setf (elpaish-recipe-built-version-elpaish recipe) version-str))
-                ('elpaish-stable (setf (elpaish-recipe-built-version-stable recipe) version-str))
-                ('elpaish-staging (setf (elpaish-recipe-built-version-staging recipe) version-str)))
+              (setf (elpaish-recipe-version-for-track recipe effective-track) version-str)
               (setf (elpaish-recipe-built-type recipe) pkg-type
                     (elpaish-recipe-built-hash recipe) current-commit)
               (unless (elpaish-recipe-summary recipe)
@@ -878,18 +843,16 @@ the package even if the commit has not changed since the last build."
                     keywords (plist-get meta :keywords))
 
               (if is-tar
-                  (elpaish--create-tar-package repo-dir dest-file pkg-name-ver files
-                                              name version-str summary reqs url keywords)
+                  (elpaish--create-tar-package repo-dir dest-file pkg-name-ver name files
+                                                :version version-str :summary summary
+                                                :reqs reqs :url url :keywords keywords)
                 (write-region (point-min) (point-max) dest-file nil 'silent)))
 
             ;; 4. Sign artifact
             (elpaish--sign-file dest-file)
 
             ;; 5. Update recipe metadata & status
-            (pcase effective-track
-              ('elpaish (setf (elpaish-recipe-built-version-elpaish recipe) version-str))
-              ('elpaish-stable (setf (elpaish-recipe-built-version-stable recipe) version-str))
-              ('elpaish-staging (setf (elpaish-recipe-built-version-staging recipe) version-str)))
+            (setf (elpaish-recipe-version-for-track recipe effective-track) version-str)
 
             (setf (elpaish-recipe-built-type recipe) pkg-type
                   (elpaish-recipe-summary recipe) summary
@@ -901,7 +864,7 @@ the package even if the commit has not changed since the last build."
             (message "Successfully built %s version %s on %s" name version-str effective-track)
             dest-file))))))
 
-;;; Archive Contents & Static HTML Generation
+;;; Archive Contents Generation
 
 (defun elpaish-generate-archive-contents (&optional track output-dir)
   "Generate `archive-contents' and its signature for TRACK in OUTPUT-DIR."
@@ -935,124 +898,14 @@ the package even if the commit has not changed since the last build."
     (elpaish--sign-file archive-file)
     archive-file))
 
-(defun elpaish-generate-github-index (&optional track output-dir title)
-  "Generate static `index.html' package catalog for TRACK in OUTPUT-DIR."
-  (let* ((effective-track (elpaish-canonical-track (or track elpaish-release-mode)))
-         (target-dir (or output-dir (elpaish-track-dir effective-track)))
-         (track-label (pcase effective-track
-                        ('elpaish "snapshot")
-                        ('elpaish-stable "stable")
-                        ('elpaish-staging "staging")
-                        (_ (symbol-name effective-track))))
-         (page-title (or title (format "ELPAish Repository — (%s)" track-label)))
-         (recipes (hash-table-values elpaish-registry))
-         (rows
-          (delq nil
-                (mapcar
-                 (lambda (recipe)
-                   (when-let* ((ver-str (elpaish-recipe-version-for-track recipe effective-track)))
-                     (let* ((name (elpaish-recipe-name recipe))
-                            (summary (or (elpaish-recipe-summary recipe) "No description"))
-                            (is-tar (eq (elpaish-recipe-built-type recipe) 'tar))
-                            (artifact (format "%s-%s.%s" name ver-str (if is-tar "tar" "el")))
-                            (sig-file (expand-file-name (concat artifact ".sig") target-dir))
-                            (repo-url (elpaish-recipe-url recipe))
-                            (icons
-                             (delq nil
-                                   (list
-                                    (when repo-url
-                                      `(a ((href . ,repo-url) (class . "icon-link") (title . "GitHub repository") (aria-label . "GitHub repository") (target . "_blank") (rel . "noopener"))
-                                          (i ((class . "nf nf-fa-github")))))
-                                    (if (file-exists-p sig-file)
-                                        `(a ((href . ,(concat artifact ".sig")) (class . "icon-link") (title . "GPG signature") (aria-label . "GPG signature"))
-                                            (i ((class . "nf nf-fa-key"))))
-                                      `(i ((class . "nf nf-fa-key icon-disabled") (title . "No signature available"))))))))
-                       `(tr nil
-                            (td ((class . "pkg-name")) (b nil ,name))
-                            (td ((class . "pkg-version")) (a ((href . ,artifact)) ,ver-str))
-                            (td ((class . "pkg-desc")) ,summary)
-                            (td ((class . "pkg-icons")) ,@icons)))))
-                 recipes))))
-    (make-directory target-dir t)
-    (with-temp-file (expand-file-name "index.html" target-dir)
-      (insert "<!DOCTYPE html>\n")
-      (dom-print
-       `(html nil
-              (head nil
-                    (meta ((charset . "utf-8")))
-                    (meta ((name . "viewport") (content . "width=device-width, initial-scale=1")))
-                    (title nil ,page-title)
-                    (link ((rel . "preconnect") (href . "https://fonts.googleapis.com")))
-                    (link ((rel . "preconnect") (href . "https://fonts.gstatic.com") (crossorigin . "")))
-                    (link ((rel . "stylesheet") (href . "https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap")))
-                    (link ((rel . "stylesheet") (href . "https://www.nerdfonts.com/assets/css/webfont.css")))
-                    (style nil "body{font-family:'Source Sans 3','Source Sans Pro',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:36px auto;max-width:1240px;font-size:18px;line-height:1.6;color:#000000;background:#ffffff;padding:0 28px;} .table-wrapper{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:24px;} table{border-collapse:collapse;width:100%;min-width:1020px;font-size:1em;border:1px solid #c6c6c6;} th,td{padding:14px 20px;border-bottom:1px solid #d7d7d7;text-align:left;vertical-align:middle;} th{background:#e5e5e5;color:#000000;font-weight:700;font-size:1.05em;border-bottom:2px solid #707070;} tr:hover{background:#eef2f8;} .pkg-name{font-weight:700;font-size:1.05em;white-space:nowrap!important;min-width:320px;width:320px;} .pkg-name b{white-space:nowrap!important;word-break:keep-all;font-weight:700;} .pkg-version{font-family:'Source Code Pro',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.95em;white-space:nowrap!important;min-width:200px;width:200px;} .pkg-desc{min-width:440px;font-size:1em;} .pkg-icons{white-space:nowrap!important;text-align:center;width:90px;font-size:1.2em;} .pkg-icons .icon-link{display:inline-block;margin:0 8px;color:#333333;} .pkg-icons .icon-link:hover{color:#0000aa;} .pkg-icons .icon-disabled{display:inline-block;margin:0 8px;color:#c6c6c6;} a{color:#0000aa;text-decoration:none;font-weight:600;} a:hover{color:#721045;text-decoration:underline;} code{font-family:'Source Code Pro',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.92em;background:#f2f2f2;color:#5317ac;padding:3px 8px;border-radius:4px;border:1px solid #d7d7d7;} .header{margin-bottom:28px;border-bottom:2px solid #707070;padding-bottom:18px;} h1{font-size:2.2em;font-weight:700;color:#000000;margin-top:0;margin-bottom:12px;} h2{font-size:1.6em;font-weight:700;color:#000000;margin-top:36px;margin-bottom:16px;}"))
-              (body nil
-                    (div ((class . "header"))
-                         (h1 nil ,page-title)
-                         (p nil "Track URL: " (code nil ,(format "https://tychoish.github.io/elpaish/%s/" effective-track)))
-                         (p nil (a ((href . "../")) "← Back to Archive Setup & Overview")))
-                    (h2 nil "Packages")
-                    ,(if (null rows)
-                         '(p nil "No packages published in this track.")
-                       `(div ((class . "table-wrapper"))
-                             (table nil
-                                    (tr nil
-                                        (th ((class . "pkg-name")) "Package")
-                                        (th ((class . "pkg-version")) "Version")
-                                        (th ((class . "pkg-desc")) "Description")
-                                        (th ((class . "pkg-icons")) "Links"))
-                                    ,@rows)))))))))
+;; `elpaish-generate-github-index' and `elpaish-generate-top-index' render the
+;; static GitHub Pages catalog and landing page; they live in
+;; `elpaish-website.el' (which requires this file) to keep HTML/CSS
+;; generation separate from archive building. Callers that invoke
+;; `elpaish-build-all' must load `elpaish-website' first.
+(declare-function elpaish-generate-github-index "elpaish-website" (&optional track output-dir title))
+(declare-function elpaish-generate-top-index "elpaish-website" (&optional output-dir))
 
-(defun elpaish-generate-top-index (&optional output-dir)
-  "Generate top-level static `index.html' landing page in OUTPUT-DIR."
-  (let ((target-dir (or output-dir elpaish-output-dir)))
-    (make-directory target-dir t)
-    (with-temp-file (expand-file-name "index.html" target-dir)
-      (insert "<!DOCTYPE html>\n")
-      (dom-print
-       `(html nil
-              (head nil
-                    (meta ((charset . "utf-8")))
-                    (meta ((name . "viewport") (content . "width=device-width, initial-scale=1")))
-                    (title nil "ELPAish: tychoish Emacs Lisp Package Archives")
-                    (link ((rel . "preconnect") (href . "https://fonts.googleapis.com")))
-                    (link ((rel . "preconnect") (href . "https://fonts.gstatic.com") (crossorigin . "")))
-                    (link ((rel . "stylesheet") (href . "https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600;700&family=Source+Sans+3:wght@400;600;700&display=swap")))
-                    (style nil "body{font-family:'Source Sans 3','Source Sans Pro',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:36px auto;max-width:1240px;font-size:18px;line-height:1.6;color:#000000;background:#ffffff;padding:0 28px;} h1{font-size:2.2em;font-weight:700;color:#000000;border-bottom:2px solid #707070;padding-bottom:14px;margin-top:0;margin-bottom:14px;} h2{font-size:1.6em;font-weight:700;color:#000000;margin-top:36px;margin-bottom:16px;} p{font-size:1.05em;margin:10px 0;} .track-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:24px;margin:28px 0;} .card{border:1px solid #c6c6c6;border-radius:8px;padding:24px;background:#f8f8f8;box-shadow:0 2px 6px rgba(0,0,0,0.06);} .card h2{font-size:1.45em;font-weight:700;margin-top:0;margin-bottom:12px;color:#002f5e;} .card p{font-size:1em;line-height:1.6;} pre{font-family:'Source Code Pro',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.95em;background:#f8f8f8;color:#000000;border:1px solid #c6c6c6;padding:18px 24px;border-radius:6px;overflow-x:auto;line-height:1.5;} code{font-family:'Source Code Pro',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.92em;background:#f2f2f2;color:#5317ac;padding:3px 8px;border-radius:4px;border:1px solid #d7d7d7;} pre code{background:transparent;color:inherit;padding:0;border:none;font-size:1em;} a{color:#0000aa;text-decoration:none;font-weight:600;} a:hover{color:#721045;text-decoration:underline;} .btn{display:inline-block;padding:10px 22px;font-size:1.02em;font-weight:700;background:#00538b;color:#ffffff;border-radius:5px;text-decoration:none;margin-top:10px;} .btn:hover{background:#003494;color:#ffffff;text-decoration:none;} ul{font-size:1.05em;padding-left:28px;} li{margin:8px 0;}"))
-              (body nil
-                    (h1 nil "ELPAish Emacs Package Archives")
-
-                    (div ((class . "track-grid"))
-                         (div ((class . "card"))
-                              (h2 nil (a ((href . "elpaish/")) "elpaish (Snapshots)"))
-                              (p nil "Continuous development snapshots built from the default branch head with pure UTC date versioning (" (code nil "YYYYMMDD.HHMMSS") ").")
-                              (a ((class . "btn") (href . "elpaish/")) "Browse Snapshots"))
-                         (div ((class . "card"))
-                              (h2 nil (a ((href . "elpaish-stable/")) "elpaish-stable (Releases)"))
-                              (p nil "Official release builds strictly from clean semver Git tags (" (code nil "vX.Y.Z") "). Repositories without clean tags are omitted.")
-                              (a ((class . "btn") (href . "elpaish-stable/")) "Browse Stable"))
-                         (div ((class . "card"))
-                              (h2 nil (a ((href . "elpaish-staging/")) "elpaish-staging (Pre-release)"))
-                              (p nil "Staging release candidates (" (code nil "-rc") ", " (code nil "-pre") ") and " (code nil "git describe") " builds for integration testing.")
-                              (a ((class . "btn") (href . "elpaish-staging/")) "Browse Staging")))
-
-                    (h2 nil "Emacs Configuration")
-                    (p nil "Add your preferred track to " (code nil "package-archives") " in your " (code nil "init.el") ":")
-                    (pre nil
-                         (code nil
-                               ";; Primary development snapshot track:\n(add-to-list 'package-archives '(\"elpaish\" . \"https://tychoish.github.io/elpaish/elpaish/\") t)\n\n;; Production stable release track:\n(add-to-list 'package-archives '(\"elpaish-stable\" . \"https://tychoish.github.io/elpaish/elpaish-stable/\") t)\n\n;; Pre-release / staging track:\n(add-to-list 'package-archives '(\"elpaish-staging\" . \"https://tychoish.github.io/elpaish/elpaish-staging/\") t)"))
-
-                    (h2 nil "GPG Keyring Verification")
-                    (p nil "Packages and index files are GPG signed. Download and import the public key into your GPG keyring:")
-                    (pre nil
-                         (code nil
-                               "# Download and import armored public key into GPG keyring:\ncurl -sSL https://tychoish.github.io/elpaish/elpaish.pub.asc | gpg --import\n\n# Or download key file directly:\ncurl -O https://tychoish.github.io/elpaish/elpaish.pub.asc\ngpg --import < elpaish.pub.asc"))
-                    (p nil "Keyring and certificate assets:")
-                    (ul nil
-                        (li nil (a ((href . "elpaish-keyring.gpg")) "elpaish-keyring.gpg") " — Binary public keyring")
-                        (li nil (a ((href . "elpaish.pub.asc")) "elpaish.pub.asc") " — Armored ASCII public key")
-                        (li nil (a ((href . "elpaish.rev.asc")) "elpaish.rev.asc") " — Published revocation certificates (if any)"))))))))
 ;;; Build Orchestration
 
 ;;;###autoload
@@ -1087,17 +940,25 @@ When FORCE is non-nil, force rebuilding all packages."
 
 ;;; Local Preview HTTP Server
 
+(defcustom elpaish-preview-server-port 8080
+  "Default TCP port for `elpaish-serve-local' when none is specified."
+  :type 'natnum
+  :group 'elpaish)
+
 ;;;###autoload
+(defconst elpaish--mime-types
+  '((".html" . "text/html; charset=utf-8")
+    (".el" . "text/plain; charset=utf-8")
+    (".sig" . "application/pgp-signature")
+    (".asc" . "application/pgp-keys")
+    (".gpg" . "application/pgp-keys")
+    (".tar" . "application/x-tar"))
+  "File suffix to MIME content-type mapping for `elpaish--http-mime-type'.")
+
 (defun elpaish--http-mime-type (path)
   "Return MIME content-type string for PATH."
-  (cond
-   ((string-suffix-p ".html" path) "text/html; charset=utf-8")
-   ((string-suffix-p ".el" path) "text/plain; charset=utf-8")
-   ((string-suffix-p ".sig" path) "application/pgp-signature")
-   ((string-suffix-p ".asc" path) "application/pgp-keys")
-   ((string-suffix-p ".gpg" path) "application/pgp-keys")
-   ((string-suffix-p ".tar" path) "application/x-tar")
-   (t "text/plain")))
+  (or (cdr (seq-find (lambda (entry) (string-suffix-p (car entry) path)) elpaish--mime-types))
+      "text/plain"))
 
 (defun elpaish--handle-http-request (request-str doc-root)
   "Process HTTP REQUEST-STR for document root DOC-ROOT.
@@ -1125,10 +986,11 @@ Returns a cons cell (HEADERS . BODY-BYTES)."
 
 ;;;###autoload
 (defun elpaish-serve-local (&optional port output-dir)
-  "Start a local HTTP server serving the generated `public/' directory at PORT (default 8080)."
+  "Start a local HTTP server serving the generated `public/' directory at PORT.
+PORT defaults to `elpaish-preview-server-port'."
   (interactive "P")
   (elpaish-stop-server)
-  (let* ((server-port (or port 8080))
+  (let* ((server-port (or port elpaish-preview-server-port))
          (doc-root (file-name-as-directory (or output-dir elpaish-output-dir))))
     (unless (file-directory-p doc-root)
       (make-directory doc-root t))

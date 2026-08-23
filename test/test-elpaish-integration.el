@@ -33,6 +33,7 @@
 (require 'ert)
 (require 'elpaish)
 (require 'elpaish-recipes)
+(require 'elpaish-website)
 
 (defcustom elpaish-run-integration-tests nil
   "When non-nil, enable execution of subprocess integration tests.

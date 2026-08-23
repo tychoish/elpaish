@@ -105,6 +105,15 @@ contain the word \"ELPAish\"."
   :type 'directory
   :group 'elpaish-signing-keys)
 
+(defcustom elpaish-signing-key-default-expiry "1y"
+  "Default expiry period passed to `--quick-add-key' when generating a
+signing subkey (see `elpaish-add-signing-subkey')."
+  :type 'string
+  :group 'elpaish-signing-keys)
+
+(defconst elpaish-signing-keys--ed25519-algorithm-id 22
+  "GnuPG public-key algorithm ID for EdDSA (Ed25519), per RFC 4880bis.")
+
 ;;; Verification (epg-based)
 
 (defun elpaish-verify-signing-key--report (label ok detail)
@@ -148,7 +157,7 @@ checks), and finally a substring search over secret key UIDs for
 
 (defun elpaish-verify-signing-key--ed25519-p (sub)
   "Return non-nil if `epg-sub-key' SUB uses the EdDSA (Ed25519) algorithm."
-  (eql (epg-sub-key-algorithm sub) 22))
+  (eql (epg-sub-key-algorithm sub) elpaish-signing-keys--ed25519-algorithm-id))
 
 (defun elpaish-verify-signing-key--passphraseless-sign-p (key-id)
   "Attempt a real detached signature with KEY-ID, no passphrase, via epg.
@@ -290,7 +299,8 @@ an unprotected master."
 ;;;###autoload
 (defun elpaish-add-signing-subkey (master-fpr &optional expiry)
   "Add a passphrase-less Ed25519 signing subkey [S] to MASTER-FPR.
-EXPIRY defaults to \"1y\". Returns the new subkey's fingerprint.
+EXPIRY defaults to `elpaish-signing-key-default-expiry'. Returns the new
+subkey's fingerprint.
 
 Tries the fully headless path first: an empty passphrase in loopback mode,
 which GnuPG stores as a genuinely unprotected key when MASTER-FPR has no
@@ -301,7 +311,7 @@ fast path fails, so this falls back to routing the two DISTINCT prompts
 Emacs's minibuffer via `elpaish-generate--ensure-emacs-pinentry'."
   (interactive "sMaster key fingerprint: ")
   (let* ((result (elpaish-generate--gpg-with-passphrase
-                  (list "--quick-add-key" master-fpr "ed25519" "sign" (or expiry "1y")) ""))
+                  (list "--quick-add-key" master-fpr "ed25519" "sign" (or expiry elpaish-signing-key-default-expiry)) ""))
          (fpr (elpaish-generate--extract-created-fpr (cdr result) "S")))
     (or fpr
         (progn
@@ -311,7 +321,7 @@ Emacs's minibuffer via `elpaish-generate--ensure-emacs-pinentry'."
           (let* ((output (with-temp-buffer
                             (call-process "gpg" nil t nil "--batch" "--status-fd" "1"
                                           "--quick-add-key" master-fpr "ed25519" "sign"
-                                          (or expiry "1y"))
+                                          (or expiry elpaish-signing-key-default-expiry))
                             (buffer-string)))
                  (new-fpr (elpaish-generate--extract-created-fpr output "S")))
             (if new-fpr
@@ -406,7 +416,8 @@ public key)."
 (defun elpaish-run-key-ceremony (identity &optional output-dir expiry)
   "Run the full ELPAish key ceremony for IDENTITY end to end.
 Generates the master key (prompts for its passphrase interactively — keep
-one), adds a passphrase-less EXPIRY (default \"1y\") signing subkey, copies
+one), adds a passphrase-less EXPIRY (default `elpaish-signing-key-default-expiry')
+signing subkey, copies
 the auto-generated revocation cert, exports all artifacts to OUTPUT-DIR
 \(default `elpaish-key-output-dir'), and runs `elpaish-verify-signing-key'.
 This mints real key material — confirm you mean to run it."

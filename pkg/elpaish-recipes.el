@@ -11,6 +11,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'elpaish)
 
 (defcustom elpaish-recipe-local-search-dirs '("~/src/")
@@ -49,26 +50,21 @@ hardcode where any particular maintainer's checkouts happen to live."
 
 (defun elpaish-find-packages-file (&optional file)
   "Locate package definitions FILE across current directory hierarchy.
-Defaults to `elpaish-packages-file'."
+Defaults to `elpaish-packages-file'. An absolute FILE is used as-is (each
+candidate root below is ignored by `expand-file-name' in that case)."
   (let* ((target (or file elpaish-packages-file))
-         (candidates
-          (delq nil
-		;; TODO refactor this as a list without conitionals and then filter nils
-                (list (and (file-name-absolute-p target) (file-exists-p target) target)
-                      (let ((p (expand-file-name target default-directory)))
-                        (and (file-exists-p p) p))
-                      (let ((p (expand-file-name target (expand-file-name ".." default-directory))))
-                        (and (file-exists-p p) p))
-                      (when-let* ((lib (locate-library "elpaish")))
-                        (let ((p (expand-file-name target (file-name-directory lib))))
-                          (and (file-exists-p p) p)))
-                      (when-let* ((lib (locate-library "elpaish")))
-                        (let ((p (expand-file-name (concat "../" target) (file-name-directory lib))))
-                          (and (file-exists-p p) p)))
-                      (and (boundp 'user-emacs-directory)
-                           (let ((p (expand-file-name target user-emacs-directory)))
-                             (and (file-exists-p p) p)))))))
-    (car candidates)))
+         (lib-dir (when-let* ((lib (locate-library "elpaish")))
+                    (file-name-directory lib)))
+         (roots (delq nil
+                      (list default-directory
+                            (expand-file-name ".." default-directory)
+                            lib-dir
+                            (and lib-dir (expand-file-name ".." lib-dir))
+                            (and (boundp 'user-emacs-directory) user-emacs-directory)))))
+    (seq-some (lambda (root)
+                (let ((p (expand-file-name target root)))
+                  (and (file-exists-p p) p)))
+              roots)))
 
 ;;;###autoload
 (defun elpaish-load-packages (&optional file)
@@ -86,36 +82,56 @@ Returns the number of registered recipes."
       (hash-table-count elpaish-registry))))
 
 ;;;###autoload
-(defun elpaish-recipes-register-all ()
-  "Load all package recipes from the active `packages.el' file."
-  (interactive)
-  ;; TODO this is redundant: remove one or make an alias
-  (elpaish-load-packages))
+(defalias 'elpaish-recipes-register-all 'elpaish-load-packages
+  "Load all package recipes from the active `packages.el' file.")
 
 ;;; Monorepo Package Discovery Tooling
 
+(defun elpaish--package-header-p (file)
+  "Return non-nil if FILE looks like an Emacs Lisp package entry point."
+  (and (file-regular-p file)
+       (with-temp-buffer
+         (insert-file-contents file nil 0 4096)
+         (goto-char (point-min))
+         (re-search-forward "^;;; [^ ]+\\.el --- .+-\\*-.*-\\*-" nil t))))
+
+(defun elpaish--discover-candidates (root)
+  "Return a list of (SOURCE-DIR-REL . MAIN-FILE) for packages nested under ROOT.
+A subdirectory is a candidate when it contains a `<dir-name>.el' file with a
+recognizable package header comment."
+  (thread-last (directory-files root t "\\`[^.]")
+    (seq-filter #'file-directory-p)
+    (seq-map (lambda (dir)
+               (let* ((dir-name (file-name-nondirectory (directory-file-name dir)))
+                      (main-file (expand-file-name (format "%s.el" dir-name) dir)))
+                 (when (elpaish--package-header-p main-file)
+                   (cons (file-relative-name dir root) main-file)))))
+    (delq nil)))
+
 ;;;###autoload
-(defun elpaish-discover-recipes (root-dir &optional patterns)
-  "Scan ROOT-DIR for subdirectories containing Emacs Lisp package headers.
-Registers a recipe for each discovered package with appropriate `:source-dir'."
-  (interactive "DDiscover packages in directory: ")
-  (let ((root (expand-file-name root-dir))
-        (count 0))
-    (dolist (subdir (directory-files root t "\\`[^.]"))
-      (when (file-directory-p subdir)
-        (let* ((dir-name (file-name-nondirectory subdir))
-               (main-el (expand-file-name (format "%s.el" dir-name) subdir)))
-          (when (file-exists-p main-el)
-            (let ((pkg-sym (intern dir-name)))
-              (elpaish-register-package
-               pkg-sym
-               root
-               :source-dir dir-name
-               :files (or patterns '("*.el"))
-               :summary (format "Package %s from %s" dir-name (file-name-nondirectory root)))
-              (setq count (1+ count)))))))
-    (message "Discovered and registered %d package recipes in %s" count root)
-    count))
+(cl-defun elpaish-discover-recipes (root &key branch files)
+  "Scan ROOT for monorepo subpackages and register a recipe for each.
+Looks for immediate subdirectories containing a `<dir-name>.el' file with a
+package header, and registers each with the appropriate `:source-dir'.
+BRANCH defaults to `elpaish-default-branch'. FILES overrides the default
+single-file `(\"<name>.el\")' pattern used for every discovered package."
+  (interactive "DMonorepo root directory: ")
+  (let* ((expanded-root (expand-file-name root))
+         (candidates (elpaish--discover-candidates expanded-root)))
+    (seq-do
+     (lambda (candidate)
+       (let* ((source-dir-rel (string-remove-suffix "/" (car candidate)))
+              (name (file-name-base (cdr candidate))))
+         (elpaish-register-package
+          (intern name)
+          expanded-root
+          :branch (or branch elpaish-default-branch)
+          :source-dir source-dir-rel
+          :files (or files (list (format "%s.el" name))))))
+     candidates)
+    (message "Discovered and registered %d monorepo package(s) under %s."
+             (length candidates) expanded-root)
+    candidates))
 
 (provide 'elpaish-recipes)
 ;;; elpaish-recipes.el ends here
