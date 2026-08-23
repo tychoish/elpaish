@@ -4,7 +4,7 @@
 ;; Keywords: tools, package, elpa, ci
 
 ;;; Commentary:
-;; Headless entry point for building ELPAish multi-track package archives.
+;; Headless entry point for building ELPAish package archives.
 ;; Invoked by GitHub Actions CI workflows or local batch runs.
 
 ;;; Code:
@@ -50,9 +50,9 @@
 ;; Initialize GPG signing from environment variables (ELPAISH_SIGNING_KEY)
 (elpaish-init-signing-from-env)
 
-(message "[elpaish] Building ELPAish multi-track repository into %s..." elpaish-output-dir)
+(message "[elpaish] Building ELPAish repository into %s..." elpaish-output-dir)
 (elpaish-build-all 'all elpaish-output-dir)
-(message "[elpaish] Multi-track build complete!")
+(message "[elpaish] Repository build complete!")
 
 (provide 'build-elpaish)
 ;;; build-elpaish.el ends here

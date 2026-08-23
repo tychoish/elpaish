@@ -82,7 +82,7 @@ jobs:
       - name: Run Consumer Subprocess Integration Tests
         env:
           ELPAISH_RUN_INTEGRATION_TESTS: "1"
-          ELPAISH_ARCHIVE_URL: ${{ needs.deploy.outputs.page_url }}elpaish/
+          ELPAISH_ARCHIVE_URL: ${{ needs.deploy.outputs.page_url }}snapshot/
         run: |
           emacs --batch -L pkg -L scripts -L test \
             -l test/test-elpaish-integration.el \

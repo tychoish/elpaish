@@ -1,4 +1,4 @@
-;;; test-elpaish.el --- ERT Tests for ELPAish multi-track builder -*- lexical-binding: t; no-byte-compile: t; -*-
+;;; test-elpaish.el --- ERT Tests for ELPAish package repository toolkit -*- lexical-binding: t; no-byte-compile: t; -*-
 
 ;; Author: tychoish
 ;; Keywords: test, elpa, package
@@ -143,7 +143,7 @@
        (should dest)
        (should (file-exists-p dest))
        (should (string-suffix-p ".el" dest))
-       (should (elpaish-recipe-built-version-elpaish recipe))
+       (should (elpaish-recipe-built-version-snapshot recipe))
        (with-temp-buffer
          (insert-file-contents dest)
          (should (search-forward ";; Version:" nil t)))))))
@@ -167,7 +167,7 @@
        (should (eq (elpaish-recipe-built-type recipe) 'tar))))))
 
 (ert-deftest elpaish-test-archive-contents-generation ()
-  "Test multi-track `archive-contents' generation."
+  "Test `archive-contents' generation across tracks."
   (elpaish-test-with-temp-env
    (let ((pkg1 (expand-file-name "pkg1" temp-dir))
          (pkg2 (expand-file-name "pkg2" temp-dir)))
@@ -205,9 +205,11 @@
      (elpaish-generate-github-index 'elpaish)
      (elpaish-generate-top-index)
 
-     (let ((track-index (expand-file-name "elpaish/index.html" elpaish-output-dir))
+     (let ((track-index (expand-file-name "snapshot/index.html" elpaish-output-dir))
+           (about-page (expand-file-name "about.html" elpaish-output-dir))
            (top-index (expand-file-name "index.html" elpaish-output-dir)))
        (should (file-exists-p track-index))
+       (should (file-exists-p about-page))
        (should (file-exists-p top-index))
        (with-temp-buffer
          (insert-file-contents track-index)
@@ -226,15 +228,25 @@
          (goto-char (point-min))
          (should (search-forward "pkg-name" nil t))
          (goto-char (point-min))
-         (should (search-forward "table-wrapper" nil t)))
+         (should (search-forward "table-wrapper" nil t))
+         (goto-char (point-min))
+         (should (search-forward "details" nil t))
+         (goto-char (point-min))
+         (should (search-forward "sortable" nil t)))
+       (with-temp-buffer
+         (insert-file-contents about-page)
+         (goto-char (point-min))
+         (should (search-forward "About ELPAish" nil t))
+         (goto-char (point-min))
+         (should (search-forward "Overview" nil t)))
        (with-temp-buffer
          (insert-file-contents top-index)
          (goto-char (point-min))
-         (should (search-forward "elpaish (Snapshots)" nil t))
+         (should (search-forward "Snapshot (Development)" nil t))
          (goto-char (point-min))
-         (should (search-forward "elpaish-stable (Releases)" nil t))
+         (should (search-forward "Stable (Releases)" nil t))
          (goto-char (point-min))
-         (should (search-forward "elpaish-staging (Pre-release)" nil t))
+         (should (search-forward "Staging (Pre-release)" nil t))
          (goto-char (point-min))
          (should (search-forward "Source Sans" nil t))
          (goto-char (point-min))
@@ -249,16 +261,14 @@
      (elpaish-generate-github-index 'elpaish)
      (elpaish-generate-top-index)
 
-     (let ((track-index (expand-file-name "elpaish/index.html" elpaish-output-dir))
+     (let ((track-index (expand-file-name "snapshot/index.html" elpaish-output-dir))
            (top-index (expand-file-name "index.html" elpaish-output-dir)))
        (with-temp-buffer
          (insert-file-contents track-index)
          (goto-char (point-min))
-         (should (search-forward "color:#000000;background:#ffffff" nil t))
+         (should (search-forward (format "color:%s;background:%s" elpaish-css-color-fg elpaish-css-color-bg) nil t))
          (goto-char (point-min))
-         (should (search-forward "color:#0000aa" nil t))
-         (goto-char (point-min))
-         (should (search-forward "color:#721045" nil t))
+         (should (search-forward (format "color:%s" elpaish-css-color-link) nil t))
          (goto-char (point-min))
          (should (search-forward "min-width:320px" nil t))
          (goto-char (point-min))
@@ -268,11 +278,11 @@
        (with-temp-buffer
          (insert-file-contents top-index)
          (goto-char (point-min))
-         (should (search-forward "color:#000000;background:#ffffff" nil t))
+         (should (search-forward (format "color:%s;background:%s" elpaish-css-color-fg elpaish-css-color-bg) nil t))
          (goto-char (point-min))
-         (should (search-forward "background:#00538b" nil t)))))))
-(ert-deftest elpaish-test-build-all-multi-track ()
-  "Test building all tracks with `elpaish-build-all`."
+         (should (search-forward (format "background:%s" elpaish-css-color-btn-bg) nil t)))))))
+(ert-deftest elpaish-test-build-all-tracks ()
+  "Test building all repository tracks with `elpaish-build-all`."
   (elpaish-test-with-temp-env
    (let ((pkg-dir (expand-file-name "all-pkg" temp-dir)))
      (elpaish-test-create-dummy-pkg pkg-dir "all-pkg" "1.0.0" "All Track Test")
@@ -281,13 +291,14 @@
      (elpaish-build-all 'all)
 
      ;; Snapshot track should exist
-     (should (file-exists-p (expand-file-name "elpaish/archive-contents" elpaish-output-dir)))
-     (should (file-exists-p (expand-file-name "elpaish/index.html" elpaish-output-dir)))
+     (should (file-exists-p (expand-file-name "snapshot/archive-contents" elpaish-output-dir)))
+     (should (file-exists-p (expand-file-name "snapshot/index.html" elpaish-output-dir)))
      ;; Staging track should exist
-     (should (file-exists-p (expand-file-name "elpaish-staging/archive-contents" elpaish-output-dir)))
-     (should (file-exists-p (expand-file-name "elpaish-staging/index.html" elpaish-output-dir)))
+     (should (file-exists-p (expand-file-name "staging/archive-contents" elpaish-output-dir)))
+     (should (file-exists-p (expand-file-name "staging/index.html" elpaish-output-dir)))
      ;; Top index should exist
-     (should (file-exists-p (expand-file-name "index.html" elpaish-output-dir))))))
+     (should (file-exists-p (expand-file-name "index.html" elpaish-output-dir)))
+     (should (file-exists-p (expand-file-name "about.html" elpaish-output-dir))))))
 
 (ert-deftest elpaish-test-preflight-gate-quarantine ()
   "Test that packages failing preflight validation are quarantined and omitted."
@@ -306,8 +317,7 @@
             (built (elpaish-build-package recipe 'elpaish)))
        ;; Build should fail and return nil due to preflight quarantine
        (should-not built)
-       (should-not (elpaish-recipe-built-version-elpaish recipe))))))
-
+       (should-not (elpaish-recipe-built-version-snapshot recipe))))))
 (ert-deftest elpaish-test-timer-controls ()
   "Test starting and stopping auto-build background timer."
   (unwind-protect
@@ -322,7 +332,7 @@
     (elpaish-stop-auto-build)))
 
 (ert-deftest elpaish-test-status-ui ()
-  "Test status buffer creation and multi-track column population."
+  "Test status buffer creation and stream column population."
   (elpaish-test-with-temp-env
    (let ((pkg-dir (expand-file-name "ui-pkg" temp-dir)))
      (elpaish-test-create-dummy-pkg pkg-dir "ui-pkg" "0.5.0" "UI Test")
@@ -352,7 +362,7 @@
            (should (process-live-p elpaish-server-process))
 
            ;; Verify HTTP request to preview server
-           (let ((url-buf (url-retrieve-synchronously (format "http://127.0.0.1:%d/elpaish/archive-contents" test-port) t t 5)))
+           (let ((url-buf (url-retrieve-synchronously (format "http://127.0.0.1:%d/snapshot/archive-contents" test-port) t t 5)))
              (should url-buf)
              (with-current-buffer url-buf
                (goto-char (point-min))
@@ -666,8 +676,7 @@ source's last commit time rather than the time of the build."
        ;; 1. First build
        (let* ((recipe (gethash "rebuild-pkg" elpaish-registry))
               (dest1 (elpaish-build-package recipe 'elpaish))
-              (ver1 (elpaish-recipe-built-version-elpaish recipe)))
-         (should dest1)
+              (ver1 (elpaish-recipe-built-version-snapshot recipe)))
          (should (file-exists-p dest1))
          (should ver1)
 
@@ -686,8 +695,7 @@ source's last commit time rather than the time of the build."
                    ";;; rebuild-pkg.el ends here\n"))
 
          (let ((dest2 (elpaish-build-package recipe 'elpaish))
-               (ver2 (elpaish-recipe-built-version-elpaish recipe)))
-           (should (equal dest1 dest2))
+               (ver2 (elpaish-recipe-built-version-snapshot recipe)))
            (should (equal ver1 ver2))
            (with-temp-buffer
              (insert-file-contents dest2)
@@ -711,41 +719,46 @@ source's last commit time rather than the time of the build."
 
 (ert-deftest elpaish-test-website-track-label-and-url ()
   "Test track label and catalog URL formatting for generated pages."
-  (should (equal (elpaish-website--track-label 'elpaish) "snapshot"))
-  (should (equal (elpaish-website--track-label 'elpaish-stable) "stable"))
-  (should (equal (elpaish-website--track-label 'elpaish-staging) "staging"))
+  (should (equal (elpaish-website--track-label 'snapshot) "snapshot"))
+  (should (equal (elpaish-website--track-label 'stable) "stable"))
+  (should (equal (elpaish-website--track-label 'staging) "staging"))
   (let ((elpaish-base-url "https://example.com/archive/"))
-    (should (equal (elpaish-website--track-url 'elpaish) "https://example.com/archive/elpaish/"))))
+    (should (equal (elpaish-website--track-url 'snapshot) "https://example.com/archive/snapshot/"))
+    (should (equal (elpaish-website--track-url 'stable) "https://example.com/archive/stable/"))
+    (should (equal (elpaish-website--track-url 'staging) "https://example.com/archive/staging/"))))
 
 (ert-deftest elpaish-test-canonical-track-aliases ()
   "Test track alias normalization, including symbols not covered by the default cases."
-  (should (eq (elpaish-canonical-track 'snapshot) 'elpaish))
-  (should (eq (elpaish-canonical-track 'unstable) 'elpaish))
-  (should (eq (elpaish-canonical-track 'stable) 'elpaish-stable))
-  (should (eq (elpaish-canonical-track 'pre) 'elpaish-staging))
-  (should (eq (elpaish-canonical-track 'staging) 'elpaish-staging))
+  (should (eq (elpaish-canonical-track 'snapshot) 'snapshot))
+  (should (eq (elpaish-canonical-track 'elpaish) 'snapshot))
+  (should (eq (elpaish-canonical-track 'unstable) 'snapshot))
+  (should (eq (elpaish-canonical-track 'stable) 'stable))
+  (should (eq (elpaish-canonical-track 'elpaish-stable) 'stable))
+  (should (eq (elpaish-canonical-track 'pre) 'staging))
+  (should (eq (elpaish-canonical-track 'staging) 'staging))
+  (should (eq (elpaish-canonical-track 'elpaish-staging) 'staging))
   (should (eq (elpaish-canonical-track 'all) 'all))
-  (should (eq (elpaish-canonical-track 'some-unknown-symbol) 'elpaish)))
+  (should (eq (elpaish-canonical-track 'some-unknown-symbol) 'snapshot)))
 
 (ert-deftest elpaish-test-track-dir-resolution ()
   "Test track directory path resolution under a root directory."
   (let ((root "/tmp/elpaish-root/"))
-    (should (equal (elpaish-track-dir 'elpaish root) (expand-file-name "elpaish" root)))
-    (should (equal (elpaish-track-dir 'stable root) (expand-file-name "elpaish-stable" root)))
+    (should (equal (elpaish-track-dir 'snapshot root) (expand-file-name "snapshot" root)))
+    (should (equal (elpaish-track-dir 'elpaish root) (expand-file-name "snapshot" root)))
+    (should (equal (elpaish-track-dir 'stable root) (expand-file-name "stable" root)))
+    (should (equal (elpaish-track-dir 'staging root) (expand-file-name "staging" root)))
     (should (equal (elpaish-track-dir 'all root) (file-name-as-directory root)))))
-
 (ert-deftest elpaish-test-recipe-version-for-track-setf ()
   "Test the generalized-variable setter for per-track built versions."
   (elpaish-test-with-temp-env
    (let ((recipe (elpaish-register-package 'setf-pkg "/tmp/setf-pkg")))
      (setf (elpaish-recipe-version-for-track recipe 'elpaish) "1.0.0")
      (setf (elpaish-recipe-version-for-track recipe 'elpaish-stable) "1.0.0")
-     (setf (elpaish-recipe-version-for-track recipe 'elpaish-staging) "1.0.0.rc1")
-     (should (equal (elpaish-recipe-built-version-elpaish recipe) "1.0.0"))
+     (setf (elpaish-recipe-version-for-track recipe 'staging) "1.0.0.rc1")
+     (should (equal (elpaish-recipe-built-version-snapshot recipe) "1.0.0"))
      (should (equal (elpaish-recipe-built-version-stable recipe) "1.0.0"))
      (should (equal (elpaish-recipe-built-version-staging recipe) "1.0.0.rc1"))
-     (should (equal (elpaish-recipe-version-for-track recipe 'elpaish) "1.0.0")))))
-
+     (should (equal (elpaish-recipe-version-for-track recipe 'snapshot) "1.0.0")))))
 (ert-deftest elpaish-test-register-package-default-branch-customization ()
   "Test that omitting :branch honors `elpaish-default-branch' rather than a hardcoded literal."
   (elpaish-test-with-temp-env
@@ -782,6 +795,71 @@ source's last commit time rather than the time of the build."
           (should (equal (elpaish-recipe-path "missing-pkg" "https://example.com/missing-pkg.git")
                          "https://example.com/missing-pkg.git")))
       (delete-directory search-root t))))
+
+(ert-deftest elpaish-test-disabled-tracks ()
+  "Test suppressing/disabling package builds on specific tracks."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "suppressed-pkg" temp-dir)))
+     (elpaish-test-create-dummy-pkg pkg-dir "suppressed-pkg" "1.0.0" "Suppressed Track Test")
+     (elpaish-register-package 'suppressed-pkg pkg-dir :disabled-tracks '(stable))
+     (let ((recipe (gethash "suppressed-pkg" elpaish-registry)))
+       (should (elpaish-recipe-disabled-for-track-p recipe 'stable))
+       (should-not (elpaish-recipe-disabled-for-track-p recipe 'snapshot))
+       (should-not (elpaish-recipe-disabled-for-track-p recipe 'staging))
+       ;; Build snapshot should succeed
+       (should (elpaish-build-package recipe 'snapshot))
+       ;; Build stable should be skipped
+       (should-not (elpaish-build-package recipe 'stable))))))
+
+(ert-deftest elpaish-test-bundle-readme-and-license ()
+  "Test that README and LICENSE files are bundled into packages."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "bundled-pkg" temp-dir)))
+     (elpaish-test-create-dummy-pkg pkg-dir "bundled-pkg" "1.0.0" "Bundled Doc Test")
+     ;; Write README.md and LICENSE
+     (with-temp-file (expand-file-name "README.md" pkg-dir)
+       (insert "# Bundled Package\nDocumentation here.\n"))
+     (with-temp-file (expand-file-name "LICENSE" pkg-dir)
+       (insert "GPL-3.0-or-later\n"))
+     (elpaish-register-package 'bundled-pkg pkg-dir :doc "https://example.com/doc")
+     (let* ((recipe (gethash "bundled-pkg" elpaish-registry))
+            (files (elpaish--collect-files pkg-dir (elpaish-recipe-files recipe) "bundled-pkg" recipe)))
+       (should (member "README.md" files))
+       (should (member "LICENSE" files))
+       (let ((artifact (elpaish-build-package recipe 'snapshot)))
+         (should (string-suffix-p ".tar" artifact)))))))
+
+(ert-deftest elpaish-test-multi-glob-packages-files ()
+  "Test loading package definitions from a list of globs."
+  (elpaish-test-with-temp-env
+   (let* ((recipes-dir (expand-file-name "recipes" temp-dir))
+          (file1 (expand-file-name "pkg1.el" recipes-dir))
+          (file2 (expand-file-name "pkg2.el" recipes-dir)))
+     (make-directory recipes-dir t)
+     (with-temp-file file1
+       (insert "(elpaish-register-package 'glob-pkg-1 \"/tmp/p1\" :summary \"Glob 1\")\n"))
+     (with-temp-file file2
+       (insert "(elpaish-register-package 'glob-pkg-2 \"/tmp/p2\" :summary \"Glob 2\")\n"))
+     (let ((elpaish-packages-files (list (expand-file-name "*.el" recipes-dir))))
+       (elpaish-load-packages)
+       (should (gethash "glob-pkg-1" elpaish-registry))
+       (should (gethash "glob-pkg-2" elpaish-registry))))))
+
+(ert-deftest elpaish-test-build-single-package ()
+  "Test `elpaish-build-single' command."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "single-build-pkg" temp-dir)))
+     (elpaish-test-create-dummy-pkg pkg-dir "single-build-pkg" "1.0.0" "Single Build Test")
+     (elpaish-register-package 'single-build-pkg pkg-dir)
+     (elpaish-build-single "single-build-pkg" 'snapshot)
+     (should (file-exists-p (expand-file-name "snapshot/archive-contents" elpaish-output-dir)))
+     (should (file-exists-p (expand-file-name "snapshot/index.html" elpaish-output-dir)))
+     (should (file-exists-p (expand-file-name "index.html" elpaish-output-dir))))))
+
+(ert-deftest elpaish-test-transient-menu-defined ()
+  "Test that transient menu `elpaish-menu' and alias `elpaish-dispatch' exist."
+  (should (fboundp 'elpaish-menu))
+  (should (fboundp 'elpaish-dispatch)))
 
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here

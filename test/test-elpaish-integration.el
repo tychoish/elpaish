@@ -97,11 +97,10 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
      ;; 3. Build repository
      (let ((elpaish-sign-packages nil)
            (elpaish-run-preflight nil))
-       (elpaish-build-all 'elpaish elpaish-output-dir))
+       (elpaish-build-all 'snapshot elpaish-output-dir))
 
      ;; 4. Run consumer installation in isolated emacs -Q subprocess
-     (let* ((archive-dir (expand-file-name "elpaish" elpaish-output-dir))
-            (default-directory consumer-home)
+     (let* ((archive-dir (elpaish-track-dir 'snapshot elpaish-output-dir))
             (sub-code
              (format "(progn
   (require (quote package))
@@ -162,12 +161,11 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
                    (elpaish-gpg-key fpr)
                    (elpaish-gpg-passphrase "")
                    (elpaish-run-preflight nil))
-               (elpaish-build-all 'elpaish elpaish-output-dir))
+               (elpaish-build-all 'snapshot elpaish-output-dir))
 
              ;; Export public key for consumer
              (let ((pub-key-file (expand-file-name "elpaish.pub.asc" elpaish-output-dir))
-                   (archive-dir (expand-file-name "elpaish" elpaish-output-dir)))
-               (should (file-exists-p (expand-file-name "archive-contents.sig" archive-dir)))
+                   (archive-dir (elpaish-track-dir 'snapshot elpaish-output-dir)))
 
                ;; Consumer subprocess imports public key and verifies signatures
                (let* ((default-directory consumer-home)
@@ -209,7 +207,7 @@ used to."
   (when-let* ((live-url (getenv "ELPAISH_ARCHIVE_URL")))
     (unless (string-empty-p live-url)
       (elpaish-integration-test-with-env
-       (let* ((base-url (replace-regexp-in-string "elpaish/\\'" "" live-url))
+         (let* ((base-url (replace-regexp-in-string "\\(?:elpaish\\|snapshot\\)/\\'" "" live-url))
               (keyring-file (expand-file-name "elpaish-keyring.gpg" temp-root)))
          (url-copy-file (concat base-url "elpaish-keyring.gpg") keyring-file t)
          (let* ((default-directory consumer-home)

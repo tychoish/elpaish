@@ -28,11 +28,17 @@ maintainer's personal directory layout into individual recipes."
   :type '(repeat directory)
   :group 'elpaish)
 
+(defcustom elpaish-packages-files '("packages.el")
+  "List of filenames or wildcard patterns from which to load package recipes.
+Each entry can be an absolute or relative path, or a glob pattern (e.g. \"packages.el\",
+\"recipes/*.el\", \"packages.d/*.el\")."
+  :type '(repeat string)
+  :group 'elpaish)
+
 (defcustom elpaish-packages-file "packages.el"
   "Filename or path of the top-level package definitions file."
   :type 'string
   :group 'elpaish)
-
 (defun elpaish-recipe-path (name remote-url)
   "Return the first existing local checkout of NAME, or REMOTE-URL.
 NAME is a bare directory name (e.g. \"xtdlib\"), not a full path — this
@@ -48,11 +54,18 @@ hardcode where any particular maintainer's checkouts happen to live."
                   roots)
         remote-url)))
 
-(defun elpaish-find-packages-file (&optional file)
-  "Locate package definitions FILE across current directory hierarchy.
-Defaults to `elpaish-packages-file'. An absolute FILE is used as-is (each
-candidate root below is ignored by `expand-file-name' in that case)."
-  (let* ((target (or file elpaish-packages-file))
+(defun elpaish-find-packages-files (&optional files)
+  "Locate all package definition files matching FILES or `elpaish-packages-files'.
+FILES may be a single file path/glob, a list of paths/globs, or nil (defaulting to
+`elpaish-packages-files' and `elpaish-packages-file').
+Expands wildcards across the current directory hierarchy and returns a deduplicated
+list of resolved existing file paths."
+  (let* ((patterns (cond
+                    ((null files) (or (and (boundp 'elpaish-packages-files) elpaish-packages-files)
+                                      (list elpaish-packages-file)))
+                    ((listp files) files)
+                    ((stringp files) (list files))
+                    (t (list (format "%s" files)))))
          (lib-dir (when-let* ((lib (locate-library "elpaish")))
                     (file-name-directory lib)))
          (roots (delq nil
@@ -60,25 +73,45 @@ candidate root below is ignored by `expand-file-name' in that case)."
                             (expand-file-name ".." default-directory)
                             lib-dir
                             (and lib-dir (expand-file-name ".." lib-dir))
-                            (and (boundp 'user-emacs-directory) user-emacs-directory)))))
-    (seq-some (lambda (root)
-                (let ((p (expand-file-name target root)))
-                  (and (file-exists-p p) p)))
-              roots)))
+                            (and (boundp 'user-emacs-directory) user-emacs-directory))))
+         (found nil))
+    (dolist (pattern patterns)
+      (if (file-name-absolute-p pattern)
+          (if (string-match-p "[*?]" pattern)
+              (setq found (append found (file-expand-wildcards pattern)))
+            (when (file-exists-p pattern)
+              (push pattern found)))
+        ;; Search across roots
+        (dolist (root roots)
+          (let ((target (expand-file-name pattern root)))
+            (if (string-match-p "[*?]" pattern)
+                (setq found (append found (file-expand-wildcards target)))
+              (when (file-exists-p target)
+                (push target found)))))))
+    (seq-uniq (delq nil found))))
+
+(defun elpaish-find-packages-file (&optional file)
+  "Locate a primary package definitions FILE across current directory hierarchy.
+Defaults to `elpaish-packages-file' or the first file found by `elpaish-find-packages-files'."
+  (car (elpaish-find-packages-files file)))
 
 ;;;###autoload
-(defun elpaish-load-packages (&optional file)
-  "Load package recipe definitions from FILE (defaults to `elpaish-packages-file').
+(defun elpaish-load-packages (&optional files)
+  "Load package recipe definitions from FILES (defaults to `elpaish-packages-files').
+FILES can be a single file/glob or a list of files/globs.
 Returns the number of registered recipes."
   (interactive)
-  (let ((resolved (elpaish-find-packages-file file)))
-    (if (and resolved (file-exists-p resolved))
+  (let ((resolved (elpaish-find-packages-files files)))
+    (if resolved
         (progn
-          (load resolved nil t)
+          (dolist (f resolved)
+            (load f nil t))
           (let ((count (hash-table-count elpaish-registry)))
-            (message "Loaded %d ELPAish package definitions from %s" count resolved)
+            (message "Loaded %d ELPAish package definition(s) from %s"
+                     count (mapconcat #'identity resolved ", "))
             count))
-      (message "No package definitions file found matching %s" (or file elpaish-packages-file))
+      (message "No package definitions file found matching %s"
+               (or files (and (boundp 'elpaish-packages-files) elpaish-packages-files) elpaish-packages-file))
       (hash-table-count elpaish-registry))))
 
 ;;;###autoload

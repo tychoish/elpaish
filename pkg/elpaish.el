@@ -1,14 +1,14 @@
-;;; elpaish.el --- Multi-track ELPA repository builder and CI automation -*- lexical-binding: t; -*-
+;;; elpaish.el --- ELPA package repository builder and CI automation toolkit -*- lexical-binding: t; -*-
 
 ;; Author: tychoish
 ;; Keywords: maintenance, tools, local, package, elpa
 ;; Package-Requires: ((emacs "27.1") (magit "3.0.0") (map "3.0") (seq "2.0"))
 
 ;;; Commentary:
-;; This package manages, builds, signs, and publishes a multi-track MELPA-style
-;; ELPA package repository hosted on GitHub Pages or local web servers.
+;; ELPAish is a toolkit for building (and a prototype application of) an
+;; Emacs Lisp package archive/repository hosted on GitHub Pages or web servers.
 ;;
-;; Architecture & Tracks:
+;; Release Streams:
 ;; - `elpaish`: Primary snapshot archive tracking the TIP of the default branch
 ;;   with pure date-based version strings (YYYYMMDD.HHMMSS).
 ;; - `elpaish-stable`: Official releases built strictly from clean semver Git tags
@@ -41,7 +41,7 @@
 (require 'timer)
 (require 'elpaish-check nil t)
 (require 'annotated-completing-read nil t)
-
+(require 'transient nil t)
 (defgroup elpaish nil
   "Multi-track ELPA package repository builder."
   :group 'development)
@@ -101,7 +101,7 @@ or `elpaish-staging' (pre-release tags and git describe)."
   :type 'string
   :group 'elpaish)
 
-(defconst elpaish-tracks '(elpaish elpaish-stable elpaish-staging)
+(defconst elpaish-tracks '(snapshot stable staging)
   "List of supported package archive tracks.")
 
 ;;; Registry Data Structure
@@ -115,16 +115,24 @@ or `elpaish-staging' (pre-release tags and git describe)."
   (source-dir "." :type string :documentation "Subdirectory within REPO holding the package source.")
   (test-dir nil :type (choice null string) :documentation "Optional custom test directory.")
   (preflight-skip nil :type (choice boolean list) :documentation "Checks to skip in preflight.")
+  (disabled-tracks nil :type list :documentation "List of track symbols where this package is suppressed/disabled.")
   (summary nil :type (choice null string) :documentation "Package summary description.")
   (url nil :type (choice null string) :documentation "Upstream homepage or repository URL.")
+  (doc nil :type (choice null string) :documentation "Documentation URL or path.")
   (keywords nil :type list :documentation "List of keywords.")
   (requires nil :type list :documentation "Declared dependencies ((dep min-ver) ...).")
-  (built-version-elpaish nil :type (choice null string) :documentation "Last built version for elpaish track.")
+  (built-version-snapshot nil :type (choice null string) :documentation "Last built version for snapshot track.")
   (built-version-stable nil :type (choice null string) :documentation "Last built version for stable track.")
   (built-version-staging nil :type (choice null string) :documentation "Last built version for staging track.")
   (built-hash nil :type (choice null string) :documentation "Git commit hash when last built.")
   (built-type 'single :type symbol :documentation "Package archive type ('single or 'tar)."))
 
+(defun elpaish-recipe-built-version-elpaish (recipe)
+  "Compatibility accessor for `elpaish-recipe-built-version-snapshot'."
+  (elpaish-recipe-built-version-snapshot recipe))
+
+(gv-define-setter elpaish-recipe-built-version-elpaish (val recipe)
+  `(setf (elpaish-recipe-built-version-snapshot ,recipe) ,val))
 (defvar elpaish-registry (make-hash-table :test 'equal)
   "Registry storing package recipes keyed by package name string.")
 
@@ -137,24 +145,40 @@ or `elpaish-staging' (pre-release tags and git describe)."
 ;; Compatibility accessors for single built-version references
 (defun elpaish-recipe-built-version (recipe)
   "Return most recent built version for RECIPE across tracks."
-  (or (elpaish-recipe-built-version-elpaish recipe)
+  (or (elpaish-recipe-built-version-snapshot recipe)
       (elpaish-recipe-built-version-stable recipe)
       (elpaish-recipe-built-version-staging recipe)))
 
 (gv-define-setter elpaish-recipe-built-version (val recipe)
-  `(setf (elpaish-recipe-built-version-elpaish ,recipe) ,val))
+  `(setf (elpaish-recipe-built-version-snapshot ,recipe) ,val))
 
 ;;;###autoload
 (cl-defun elpaish-register-package (name repo &key branch (files '("*.el"))
                                               (source-dir ".")
-                                              test-dir preflight-skip summary url keywords requires)
+                                              test-dir preflight-skip summary url doc
+                                              keywords requires disabled-tracks
+                                              suppress-tracks disabled-streams exclude-tracks
+                                              docs-url)
   "Register package NAME with REPO local directory path or remote Git URL.
 BRANCH defaults to `elpaish-default-branch' and FILES defaults to \\='(\"*.el\").
 SOURCE-DIR is the subdirectory within REPO holding the package (default \".\"),
 for packages that live inside a monorepo or a nested \"lisp/\" folder.
+DISABLED-TRACKS (or SUPPRESS-TRACKS / DISABLED-STREAMS) is a list of track symbols
+where this package should be suppressed/omitted from build.
+DOC (or DOCS-URL) is an optional URL or path to documentation.
 TEST-DIR, PREFLIGHT-SKIP, SUMMARY, URL, KEYWORDS, and REQUIRES provide metadata."
   (let* ((raw-name (if (symbolp name) (symbol-name name) (string-trim name)))
          (name-str (string-remove-suffix ".el" raw-name))
+         (dis-tracks (seq-uniq
+                      (mapcar #'elpaish-canonical-track
+                              (delq nil (append (when (listp disabled-tracks) disabled-tracks)
+                                                (when (symbolp disabled-tracks) (list disabled-tracks))
+                                                (when (listp suppress-tracks) suppress-tracks)
+                                                (when (symbolp suppress-tracks) (list suppress-tracks))
+                                                (when (listp disabled-streams) disabled-streams)
+                                                (when (symbolp disabled-streams) (list disabled-streams))
+                                                (when (listp exclude-tracks) exclude-tracks)
+                                                (when (symbolp exclude-tracks) (list exclude-tracks)))))))
          (recipe (elpaish-recipe-create
                   :name name-str
                   :repo (if (and (stringp repo) (not (string-match-p "\\`https?://" repo)) (not (string-match-p "\\`git@" repo)))
@@ -165,17 +189,25 @@ TEST-DIR, PREFLIGHT-SKIP, SUMMARY, URL, KEYWORDS, and REQUIRES provide metadata.
                   :source-dir (or source-dir ".")
                   :test-dir test-dir
                   :preflight-skip preflight-skip
+                  :disabled-tracks dis-tracks
                   :summary (or summary "No description")
                   :url url
+                  :doc (or doc docs-url)
                   :keywords (or keywords '("tools"))
                   :requires requires
-                  :built-version-elpaish nil
+                  :built-version-snapshot nil
                   :built-version-stable nil
                   :built-version-staging nil
                   :built-hash nil
                   :built-type 'single)))
     (puthash name-str recipe elpaish-registry)
     recipe))
+
+(defun elpaish-recipe-disabled-for-track-p (recipe track)
+  "Return non-nil if RECIPE is disabled/suppressed on TRACK."
+  (let ((canon (elpaish-canonical-track track))
+        (dis (elpaish-recipe-disabled-tracks recipe)))
+    (and dis (memq canon (mapcar #'elpaish-canonical-track dis)))))
 
 (defun elpaish-clear-registry ()
   "Clear all registered recipes from the registry."
@@ -185,13 +217,13 @@ TEST-DIR, PREFLIGHT-SKIP, SUMMARY, URL, KEYWORDS, and REQUIRES provide metadata.
 ;;; Track & Directory Resolution
 
 (defun elpaish-canonical-track (track)
-  "Return canonical track symbol for TRACK (`elpaish', `elpaish-stable', `elpaish-staging')."
+  "Return canonical track symbol for TRACK (`snapshot', `stable', `staging', or `all')."
   (pcase track
-    ((or 'elpaish 'snapshot 'unstable) 'elpaish)
-    ((or 'elpaish-stable 'stable) 'elpaish-stable)
-    ((or 'elpaish-staging 'staging 'pre) 'elpaish-staging)
+    ((or 'snapshot 'elpaish 'unstable) 'snapshot)
+    ((or 'stable 'elpaish-stable 'release) 'stable)
+    ((or 'staging 'elpaish-staging 'pre 'beta 'rc) 'staging)
     ('all 'all)
-    (_ 'elpaish)))
+    (_ 'snapshot)))
 
 (defun elpaish-track-dir (track &optional root-dir)
   "Return destination directory for TRACK under ROOT-DIR (or `elpaish-output-dir')."
@@ -204,17 +236,18 @@ TEST-DIR, PREFLIGHT-SKIP, SUMMARY, URL, KEYWORDS, and REQUIRES provide metadata.
 (defun elpaish-recipe-version-for-track (recipe track)
   "Return stored built version string for RECIPE on TRACK."
   (pcase (elpaish-canonical-track track)
-    ('elpaish (elpaish-recipe-built-version-elpaish recipe))
-    ('elpaish-stable (elpaish-recipe-built-version-stable recipe))
-    ('elpaish-staging (elpaish-recipe-built-version-staging recipe))
+    ('snapshot (or (elpaish-recipe-built-version-snapshot recipe)
+                   (elpaish-recipe-built-version-elpaish recipe)))
+    ('stable (elpaish-recipe-built-version-stable recipe))
+    ('staging (elpaish-recipe-built-version-staging recipe))
     (_ (elpaish-recipe-built-version recipe))))
 
 (gv-define-setter elpaish-recipe-version-for-track (val recipe track)
   `(pcase (elpaish-canonical-track ,track)
-     ('elpaish (setf (elpaish-recipe-built-version-elpaish ,recipe) ,val))
-     ('elpaish-stable (setf (elpaish-recipe-built-version-stable ,recipe) ,val))
-     ('elpaish-staging (setf (elpaish-recipe-built-version-staging ,recipe) ,val))
-     (_ (setf (elpaish-recipe-built-version-elpaish ,recipe) ,val))))
+     ('snapshot (setf (elpaish-recipe-built-version-snapshot ,recipe) ,val))
+     ('stable (setf (elpaish-recipe-built-version-stable ,recipe) ,val))
+     ('staging (setf (elpaish-recipe-built-version-staging ,recipe) ,val))
+     (_ (setf (elpaish-recipe-built-version-snapshot ,recipe) ,val))))
 
 ;;; Git & Path Resolution
 (defvar elpaish--resolved-repo-path-cache (make-hash-table :test 'eq)
@@ -378,11 +411,11 @@ Returns normalized version string, or nil for `elpaish-stable' if no clean stabl
          (source-dir-rel (elpaish--recipe-source-dir-relative recipe))
          (canon (elpaish-canonical-track track))
          (raw-ver (pcase canon
-                    ('elpaish
+                    ('snapshot
                      (elpaish--get-snapshot-version repo-dir source-dir-rel))
-                    ('elpaish-stable
+                    ('stable
                      (elpaish--get-stable-version repo-dir))
-                    ('elpaish-staging
+                    ('staging
                      (elpaish--get-staging-version repo-dir))
                     (_
                      (elpaish--get-snapshot-version repo-dir)))))
@@ -419,17 +452,32 @@ point when two recipes are registered against the same directory."
                           (if (string-suffix-p ".el" oname) oname (concat oname ".el")))))
                     (hash-table-values elpaish-registry))))))
 
+(defconst elpaish-bundled-doc-patterns
+  '("README" "README.*" "readme" "readme.*"
+    "LICENSE" "LICENSE.*" "license" "license.*"
+    "COPYING" "COPYING.*" "copying" "copying.*"
+    "UNLICENSE" "UNLICENSE.*")
+  "Wildcard patterns for documentation and licensing files bundled into packages.")
+
 (defun elpaish--collect-files (repo-dir patterns &optional pkg-name recipe)
-  "Collect relative file paths in REPO-DIR matching PATTERNS, excluding tests and generated descriptor files.
+  "Collect relative file paths in REPO-DIR matching PATTERNS, plus README and LICENSE files.
+Excludes tests and generated descriptor files.
 When RECIPE is given, also excludes any sibling recipe's main file that
-shares RECIPE's source directory (see `elpaish--sibling-main-files'), so a
-package can default to a wildcard PATTERNS like \\='(\"*.el\") without
-needing to enumerate every file by hand."
-  (let ((default-directory repo-dir)
-        (name-str (and pkg-name (if (symbolp pkg-name) (symbol-name pkg-name) pkg-name)))
-        (sibling-mains (elpaish--sibling-main-files recipe)))
-    (thread-last (or patterns '("*.el"))
-      (seq-mapcat #'file-expand-wildcards)
+shares RECIPE's source directory."
+  (let* ((default-directory repo-dir)
+         (name-str (and pkg-name (if (symbolp pkg-name) (symbol-name pkg-name) pkg-name)))
+         (sibling-mains (elpaish--sibling-main-files recipe))
+         (user-patterns (or patterns '("*.el")))
+         (explicit-files
+          (seq-mapcat
+           (lambda (pat)
+             (if (string-match-p "[*?]" pat)
+                 (file-expand-wildcards pat)
+               (when (file-exists-p pat) (list pat))))
+           user-patterns))
+         (doc-files
+          (seq-mapcat #'file-expand-wildcards elpaish-bundled-doc-patterns)))
+    (thread-last (append explicit-files doc-files)
       (seq-filter #'file-regular-p)
       (seq-remove (lambda (f)
                     (let ((base (file-name-nondirectory f)))
@@ -773,9 +821,54 @@ Returns a plist with :summary, :reqs, :url, and :keywords."
                         (elpaish-recipe-keywords recipe)
                         '("tools")))))
 
+(defcustom elpaish-build-buffer-name "*elpaish-build*"
+  "Buffer name used for ELPAish package build and compilation output."
+  :type 'string
+  :group 'elpaish)
+
+(defun elpaish--log (format-string &rest args)
+  "Log message to `elpaish-build-buffer-name' and via `message'."
+  (let ((msg (apply #'format format-string args))
+        (time-str (format-time-string "%Y-%m-%d %H:%M:%S")))
+    (when-let* ((buf (get-buffer elpaish-build-buffer-name)))
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (insert (format "[%s] %s\n" time-str msg))
+          (dolist (win (get-buffer-window-list buf nil t))
+            (set-window-point win (point-max))))))
+    (message "%s" msg)))
+
+(defmacro elpaish-with-build-buffer (title &rest body)
+  "Execute BODY, directing build logs and results into `elpaish-build-buffer-name'.
+TITLE is a string describing the build operation."
+  (declare (indent 1))
+  `(let* ((buf (get-buffer-create elpaish-build-buffer-name))
+          (start-time (current-time))
+          (op-title ,title))
+     (with-current-buffer buf
+       (let ((inhibit-read-only t))
+         (erase-buffer)
+         (compilation-mode)
+         (setq-local default-directory (expand-file-name elpaish-output-dir))
+         (insert (propertize (format "=== ELPAish Build: %s ===\nStarted: %s\n\n"
+                                     op-title
+                                     (format-time-string "%Y-%m-%d %H:%M:%S" start-time))
+                             'face 'bold))))
+     (display-buffer buf)
+     (unwind-protect
+         (prog1 (progn ,@body)
+           (with-current-buffer buf
+             (let ((inhibit-read-only t)
+                   (elapsed (float-time (time-subtract (current-time) start-time))))
+               (goto-char (point-max))
+               (insert (propertize (format "\n=== Build Finished in %.2fs ===\n" elapsed)
+                                   'face 'bold-italic)))))
+       nil)))
+
 (cl-defun elpaish-build-package (recipe &optional track output-dir)
   "Build, package, sign, and record status for RECIPE on TRACK.
-TRACK is `elpaish', `elpaish-stable', or `elpaish-staging'.
+TRACK is `snapshot', `stable', or `staging'.
 OUTPUT-DIR defaults to track directory under `elpaish-output-dir'.
 Always regenerates the artifact, even when the source commit is unchanged
 since the last build — elpaish's own packaging logic (file collection,
@@ -793,21 +886,25 @@ Version numbers still track the source's last commit (see
          (main-file (expand-file-name main-file-name repo-dir))
          (current-commit (elpaish--current-hash repo-dir source-dir-rel)))
 
+    ;; Check if package is disabled for this track
+    (when (elpaish-recipe-disabled-for-track-p recipe effective-track)
+      (elpaish--log "Omitting %s from %s: Package is suppressed for this track." name effective-track)
+      (cl-return-from elpaish-build-package nil))
+
     (unless (file-exists-p main-file)
       (error "Main file %s not found in %s" main-file-name repo-dir))
 
     ;; 1. Preflight Validation Gate
     (unless (elpaish-preflight-package recipe)
-      (message "Skipping %s due to preflight quarantine." name)
+      (elpaish--log "Skipping %s due to preflight quarantine." name)
       (cl-return-from elpaish-build-package nil))
 
     ;; 2. Derive Version
     (let ((version-str (elpaish-derive-version recipe effective-track)))
       (unless version-str
-        (when (eq effective-track 'elpaish-stable)
-          (message "Omitting %s from elpaish-stable: No clean semver Git tag." name))
+        (when (eq effective-track 'stable)
+          (elpaish--log "Omitting %s from stable: No clean semver Git tag." name))
         (cl-return-from elpaish-build-package nil))
-
       ;; 3. Build artifact
       (make-directory target-dir t)
       (let* ((files (elpaish--collect-files repo-dir (elpaish-recipe-files recipe) name recipe))
@@ -845,7 +942,7 @@ Version numbers still track the source's last commit (see
               (elpaish-recipe-requires recipe) reqs
               (elpaish-recipe-built-hash recipe) current-commit)
 
-        (message "Successfully built %s version %s on %s" name version-str effective-track)
+        (elpaish--log "Successfully built %s version %s on %s" name version-str effective-track)
         dest-file))))
 
 ;;; Archive Contents Generation
@@ -860,20 +957,23 @@ Version numbers still track the source's last commit (see
           (delq nil
                 (mapcar
                  (lambda (recipe)
-                   (when-let* ((ver-str (elpaish-recipe-version-for-track recipe effective-track)))
-                     (let* ((name (intern (elpaish-recipe-name recipe)))
-                            (ver (version-to-list ver-str))
-                            (summary (or (elpaish-recipe-summary recipe) "No description"))
-                            (pkg-type (or (elpaish-recipe-built-type recipe) 'single))
-                            (reqs (elpaish-recipe-requires recipe))
-                            (url (elpaish-recipe-url recipe))
-                            (keywords (elpaish-recipe-keywords recipe))
-                            (commit (elpaish-recipe-built-hash recipe))
-                            (extras (delq nil
-                                          (list (when url (cons :url url))
-                                                (when commit (cons :commit commit))
-                                                (when keywords (cons :keywords keywords))))))
-                       `(,name . [,ver ,reqs ,summary ,pkg-type ,extras]))))
+                   (unless (elpaish-recipe-disabled-for-track-p recipe effective-track)
+                     (when-let* ((ver-str (elpaish-recipe-version-for-track recipe effective-track)))
+                       (let* ((name (intern (elpaish-recipe-name recipe)))
+                              (ver (version-to-list ver-str))
+                              (summary (or (elpaish-recipe-summary recipe) "No description"))
+                              (pkg-type (or (elpaish-recipe-built-type recipe) 'single))
+                              (reqs (elpaish-recipe-requires recipe))
+                              (url (elpaish-recipe-url recipe))
+                              (doc (elpaish-recipe-doc recipe))
+                              (keywords (elpaish-recipe-keywords recipe))
+                              (commit (elpaish-recipe-built-hash recipe))
+                              (extras (delq nil
+                                            (list (when url (cons :url url))
+                                                  (when doc (cons :doc doc))
+                                                  (when commit (cons :commit commit))
+                                                  (when keywords (cons :keywords keywords))))))
+                         `(,name . [,ver ,reqs ,summary ,pkg-type ,extras])))))
                  recipes))))
     (make-directory target-dir t)
     (with-temp-file archive-file
@@ -895,7 +995,7 @@ Version numbers still track the source's last commit (see
 ;;;###autoload
 (cl-defun elpaish-build-all (&optional mode output-dir)
   "Build registered packages, generate indexes, and sign archives.
-MODE can be `all', `elpaish', `elpaish-stable', or `elpaish-staging'.
+MODE can be `all', `snapshot', `stable', or `staging'.
 Defaults to `elpaish-release-mode'. OUTPUT-DIR defaults to `elpaish-output-dir'.
 Every registered package is rebuilt unconditionally on every call; see
 `elpaish-build-package'."
@@ -906,22 +1006,98 @@ Every registered package is rebuilt unconditionally on every call; see
          (tracks (if (eq effective-mode 'all)
                      elpaish-tracks
                    (list (elpaish-canonical-track effective-mode)))))
-    (make-directory target-root t)
-    (dolist (track tracks)
-      (let ((track-dir (elpaish-track-dir track target-root)))
-        (make-directory track-dir t)
-        (dolist (recipe (hash-table-values elpaish-registry))
-          (elpaish-build-package recipe track track-dir))
-        (elpaish-generate-archive-contents track track-dir)
-        (elpaish-generate-github-index track track-dir)))
+    (elpaish-with-build-buffer (format "Build All (%s)" effective-mode)
+      (make-directory target-root t)
+      (dolist (track tracks)
+        (let ((track-dir (elpaish-track-dir track target-root)))
+          (make-directory track-dir t)
+          (dolist (recipe (hash-table-values elpaish-registry))
+            (elpaish-build-package recipe track track-dir))
+          (elpaish-generate-archive-contents track track-dir)
+          (elpaish-generate-github-index track track-dir)))
 
-    ;; Generate top-level landing page and public keyrings
-    (elpaish-generate-top-index target-root)
-    (elpaish-export-keyring target-root)
+      ;; Generate top-level landing page and public keyrings
+      (elpaish-generate-top-index target-root)
+      (elpaish-export-keyring target-root)
 
-    (message "ELPAish repository successfully generated at %s" target-root)
-    (when (eq major-mode 'elpaish-status-mode)
-      (elpaish-status-refresh))))
+      (elpaish--log "ELPAish repository successfully generated at %s" target-root)
+      (when (eq major-mode 'elpaish-status-mode)
+        (elpaish-status-refresh)))))
+
+;;;###autoload
+(defun elpaish-build-single (recipe-or-name &optional track output-dir)
+  "Interactively build and sign a single package RECIPE-OR-NAME for TRACK."
+  (interactive
+   (let* ((names (sort (hash-table-keys elpaish-registry) #'string<))
+          (table (mapcar (lambda (n)
+                           (let* ((r (gethash n elpaish-registry))
+                                  (summary (if r (elpaish-recipe-summary r) "")))
+                             (cons n summary)))
+                         names))
+          (picked (if (and (fboundp 'annotated-completing-read) table)
+                      (annotated-completing-read table :prompt "Build ELPAish package: " :require-match t)
+                    (completing-read "Build ELPAish package: " names nil t)))
+          (track-choice (if (fboundp 'annotated-completing-read)
+                            (annotated-completing-read
+                             '(("all" . "Build across all tracks (snapshot, stable, staging)")
+                               ("snapshot" . "Snapshot / development track")
+                               ("stable" . "Clean semver release track")
+                               ("staging" . "Pre-release / RC track"))
+                             :prompt "Track: " :default "all" :require-match t)
+                          (completing-read "Track (all/snapshot/stable/staging, default all): "
+                                           '("all" "snapshot" "stable" "staging") nil t nil nil "all"))))
+     (list (gethash picked elpaish-registry) (intern track-choice))))
+  (let* ((recipe (if (stringp recipe-or-name)
+                     (gethash recipe-or-name elpaish-registry)
+                   recipe-or-name))
+         (effective-track (or track 'all)))
+    (unless recipe
+      (user-error "Recipe %s not found in registry" recipe-or-name))
+    (elpaish-with-build-buffer (format "%s (%s)" (elpaish-recipe-name recipe) effective-track)
+      (let* ((target-root (or output-dir elpaish-output-dir))
+             (tracks (if (eq effective-track 'all)
+                         elpaish-tracks
+                       (list (elpaish-canonical-track effective-track)))))
+        (dolist (tr tracks)
+          (let ((track-dir (elpaish-track-dir tr target-root)))
+            (make-directory track-dir t)
+            (elpaish-build-package recipe tr track-dir)
+            (elpaish-generate-archive-contents tr track-dir)
+            (elpaish-generate-github-index tr track-dir)))
+        (elpaish-generate-top-index target-root)
+        (when (eq major-mode 'elpaish-status-mode)
+          (elpaish-status-refresh))
+        (elpaish--log "Single build complete for %s on %s."
+                      (elpaish-recipe-name recipe) effective-track)))))
+
+;;;###autoload
+(defun elpaish-preflight-single (recipe-or-name)
+  "Run preflight quality gates on a single package RECIPE-OR-NAME."
+  (interactive
+   (let* ((names (sort (hash-table-keys elpaish-registry) #'string<))
+          (picked (if (and (fboundp 'annotated-completing-read) names)
+                      (annotated-completing-read (mapcar (lambda (n) (cons n "registered recipe")) names)
+                                                 :prompt "Preflight package: " :require-match t)
+                    (completing-read "Preflight package: " names nil t))))
+     (list (gethash picked elpaish-registry))))
+  (let ((recipe (if (stringp recipe-or-name)
+                    (gethash recipe-or-name elpaish-registry)
+                  recipe-or-name)))
+    (unless recipe
+      (user-error "Recipe not found"))
+    (if (elpaish-preflight-package recipe)
+        (message "✓ Preflight passed for %s" (elpaish-recipe-name recipe))
+      (message "✗ Preflight failed for %s" (elpaish-recipe-name recipe)))))
+
+;;;###autoload
+(defun elpaish-view-build-log ()
+  "Switch to the ELPAish build compilation log buffer."
+  (interactive)
+  (let ((buf (get-buffer-create elpaish-build-buffer-name)))
+    (with-current-buffer buf
+      (unless (derived-mode-p 'compilation-mode)
+        (compilation-mode)))
+    (display-buffer buf)))
 
 ;;; Local Preview HTTP Server
 
@@ -1051,18 +1227,20 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
     (setq elpaish-timer nil)
     (message "ELPA auto-build timer stopped.")))
 
-;;; UI: Tabulated List Registry View
-
 (defvar elpaish-status-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "g") #'elpaish-status-refresh)
     (define-key map (kbd "b") #'elpaish-status-build-at-point)
+    (define-key map (kbd "B") #'elpaish-build-single)
     (define-key map (kbd "a") #'elpaish-build-all)
     (define-key map (kbd "p") #'elpaish-status-preflight-at-point)
     (define-key map (kbd "P") #'elpaish-status-preflight-all)
+    (define-key map (kbd "l") #'elpaish-view-build-log)
     (define-key map (kbd "s") #'elpaish-setup-signing)
     (define-key map (kbd "r") #'elpaish-rotate-keys)
     (define-key map (kbd "w") #'elpaish-serve-local)
+    (define-key map (kbd "?") #'elpaish-menu)
+    (define-key map (kbd "m") #'elpaish-menu)
     map)
   "Keymap for `elpaish-status-mode'.")
 
@@ -1071,7 +1249,7 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
   (setq tabulated-list-format
         [("Package Name" 24 t)
          ("Path / Repository" 30 t)
-         ("Snapshot (elpaish)" 18 t)
+         ("Snapshot" 18 t)
          ("Stable" 10 t)
          ("Staging" 14 t)
          ("Hash" 9 nil)
@@ -1094,7 +1272,9 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
                                        (elpaish--commit-delta repo-dir (elpaish-recipe-built-hash recipe)
                                                                (elpaish--recipe-source-dir-relative recipe))
                                      "Uncloned"))
-                            (snap-ver (or (elpaish-recipe-built-version-elpaish recipe) "—"))
+                            (snap-ver (or (elpaish-recipe-built-version-snapshot recipe)
+                                          (elpaish-recipe-built-version-elpaish recipe)
+                                          "—"))
                             (stab-ver (or (elpaish-recipe-built-version-stable recipe) "—"))
                             (stage-ver (or (elpaish-recipe-built-version-staging recipe) "—")))
                        (list name
@@ -1162,6 +1342,32 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
   (interactive)
   (require 'elpaish-check)
   (elpaish-check-all))
+
+;;;###autoload
+(transient-define-prefix elpaish-menu ()
+  "Transient dispatch menu for ELPAish package repository management."
+  [:description "ELPAish Repository Builder"
+   ["Build Actions"
+    ("b" "Build single package" elpaish-build-single)
+    ("a" "Build all packages (all tracks)" (lambda () (interactive) (elpaish-build-all 'all)))
+    ("s" "Build snapshot track" (lambda () (interactive) (elpaish-build-all 'snapshot)))
+    ("r" "Build stable track" (lambda () (interactive) (elpaish-build-all 'stable)))
+    ("t" "Build staging track" (lambda () (interactive) (elpaish-build-all 'staging)))]
+   ["Quality & Inspection"
+    ("p" "Preflight single package" elpaish-preflight-single)
+    ("P" "Preflight all packages" elpaish-status-preflight-all)
+    ("v" "Status overview" elpaish-status)
+    ("c" "Run quality check suite" elpaish-run-checks)
+    ("l" "View build log" elpaish-view-build-log)]
+   ["Keyring & Operations"
+    ("k" "Export GPG keyring" elpaish-export-keyring)
+    ("K" "Rotate GPG signing keys" elpaish-rotate-keys)
+    ("R" "Reload package recipes" (lambda () (interactive) (elpaish-load-packages) (message "Reloaded package recipes.")))
+    ("w" "Start local preview server" elpaish-serve-local)
+    ("W" "Stop preview server" elpaish-stop-server)]])
+
+(defalias 'elpaish-dispatch 'elpaish-menu
+  "Alias for `elpaish-menu'.")
 
 (provide 'elpaish)
 ;;; elpaish.el ends here
