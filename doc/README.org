@@ -1,0 +1,28 @@
+#+TITLE: ELPAish Documentation & Tutorials
+#+AUTHOR: tychoish
+#+DATE: [2026-08-23 Sun]
+#+OPTIONS: toc:2 num:nil
+
+* Documentation Index
+:PROPERTIES:
+:CUSTOM_ID: index
+:END:
+
+Welcome to the ELPAish documentation guide. ELPAish is a toolkit for
+building (and a prototype application of) an Emacs Lisp package
+archive/repository, with automated recipe discovery, release streams,
+GPG signing, and static HTML catalog generation.
+
+** Available Tutorials
+
+- [[file:tutorial-setup-and-host-repository.org][Tutorial: Setup and Host Your Own Package Repository]]
+  Comprehensive walkthrough for configuring packages, setting up output
+  streams, previewing locally, and publishing via GitHub Pages.
+
+- [[file:tutorial-setup-signing-infrastructure.org][Tutorial: Setup Your Own Package Signing Infrastructure]]
+  Detailed guide for managing keys through Emacs and ELPAish tools,
+  exporting public keyrings, and verifying with GPG CLI commands.
+
+- [[file:tutorial-rotate-signing-key.org][Tutorial: Rotate Your Package Signing Key]]
+  Instructions for routine subkey rotation and emergency revocation directly
+  within Emacs with zero disruption to downstream users.

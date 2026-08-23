@@ -1,0 +1,224 @@
+#+TITLE: Tutorial: How to Setup Your Own ELPAish Package Signing Infrastructure
+#+AUTHOR: tychoish
+#+DATE: [2026-08-23 Sun]
+#+OPTIONS: toc:2 num:nil
+
+* Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+
+Security and provenance in Emacs package management are guaranteed by
+GPG cryptographic signatures. ELPAish is a toolkit for building (and a
+prototype application of) an Emacs Lisp package archive/repository. It
+includes built-in key ceremony, verification, and keyring management
+tools designed for secure headless CI/CD operations:
+
+- *Master Key (Certification)*: Kept securely in your local Emacs
+  keyring or hardware token. Used strictly for issuing and revoking
+  subkeys.
+- *Dedicated Signing Subkey (Signing)*: Created as a dedicated Ed25519
+  signing subkey configured for passphrase-less signing in automated CI
+  runners.
+- *Public Keyrings*: Exported by ELPAish as binary
+  (=elpaish-keyring.gpg=) and ASCII-armored (=elpaish.pub.asc=) trust
+  anchors for downstream Emacs consumers.
+
+* Step 1: Run the Key Ceremony Directly in Emacs
+:PROPERTIES:
+:CUSTOM_ID: step-1-key-ceremony
+:END:
+
+ELPAish provides automated key management commands so you can perform
+the entire setup directly inside Emacs without error-prone shell
+scripting.
+
+** One-Step Ceremony: =elpaish-run-key-ceremony=
+
+To generate a complete key hierarchy from scratch:
+
+#+begin_src elisp
+(require 'elpaish-signing-keys)
+
+;; Runs full key ceremony and exports all artifacts
+(elpaish-run-key-ceremony
+ "My ELPA Archive Signing Key <elpa@example.com>"
+ "~/keys/elpaish/"   ; Target directory for key artifacts
+ "1y")               ; Subkey expiration
+#+end_src
+
+Interactively, run =M-x elpaish-run-key-ceremony= and answer the
+prompts.
+
+This single command automatically:
+1. Generates an Ed25519 primary certification key.
+2. Creates a dedicated Ed25519 signing subkey without a passphrase so
+   headless CI runners can sign artifacts in loopback mode.
+3. Locates and preserves GnuPG's auto-generated revocation certificate
+   (=public.key.rev=).
+4. Exports maintainer and CI artifacts into your output directory:
+   - =master.priv.asc= (Primary master certification key)
+   - =ci-signing-key.priv.asc= (Dedicated signing subkey for CI)
+   - =public.key.asc= (Armored public key)
+   - =public.keyring.gpg= (Binary public keyring)
+   - =public.key.rev= (Revocation certificate)
+5. Executes automated verification (=elpaish-verify-signing-key=).
+
+** Granular Step-by-Step Emacs Workflow
+
+If you already have an existing master key or prefer step-by-step
+control within Emacs:
+
+#+begin_src elisp
+(require 'elpaish-signing-keys)
+
+;; 1. Generate master certification key
+(defvar my-master-fpr
+  (elpaish-generate-master-key "My ELPA Key <elpa@example.com>"))
+
+;; 2. Add dedicated signing subkey
+(elpaish-add-signing-subkey my-master-fpr "1y")
+
+;; 3. Copy revocation certificate
+(elpaish-copy-revocation-cert my-master-fpr "~/keys/elpaish/")
+
+;; 4. Export key artifacts
+(elpaish-export-key-material my-master-fpr "~/keys/elpaish/")
+#+end_src
+
+* Step 2: Verify Key Material from Emacs and Shell
+:PROPERTIES:
+:CUSTOM_ID: step-2-verify-keys
+:END:
+
+** In Emacs: Automated Preflight Verification
+
+Run =M-x elpaish-verify-signing-key= or evaluate:
+
+#+begin_src elisp
+(elpaish-verify-signing-key my-master-fpr)
+#+end_src
+
+ELPAish checks:
+- A sign-capable Ed25519 subkey exists under the primary key.
+- The signing subkey is not expired.
+- The subkey produces detached signatures in loopback mode with no
+  passphrase prompts (the exact mechanism required by headless CI).
+
+** In Shell: GPG CLI Verification Commands
+
+To independently inspect and verify your keys with GnuPG shell
+commands:
+
+1. List secret keys and confirm key capabilities:
+
+#+begin_src sh
+gpg --list-secret-keys --keyid-format LONG "elpa@example.com"
+#+end_src
+
+Verify that the primary key has =[C]= (Certify) and the subkey has
+=[S]= (Sign):
+
+#+begin_example
+sec   ed25519/9A8B7C6D5E4F3210 2026-08-23 [C] [expires: 2028-08-23]
+      Key fingerprint = ABCD 1234 EF56 7890 ABCD  1234 9A8B 7C6D 5E4F 3210
+uid                 [ultimate] My ELPA Archive Signing Key <elpa@example.com>
+ssb   ed25519/1122334455667788 2026-08-23 [S] [expires: 2027-08-23]
+#+end_example
+
+2. Test loopback detached signature generation:
+
+#+begin_src sh
+echo "Test payload" | gpg --batch --pinentry-mode loopback \
+    --default-key "1122334455667788!" --detach-sign > /tmp/test.sig
+
+echo "Test payload" | gpg --verify /tmp/test.sig -
+#+end_src
+
+Expected verification output:
+#+begin_example
+gpg: Good signature from "My ELPA Archive Signing Key <elpa@example.com>"
+#+end_example
+
+* Step 3: Export Public Keyrings for the Archive
+:PROPERTIES:
+:CUSTOM_ID: step-3-export-keyrings
+:END:
+
+** In Emacs: Export Keyrings
+
+Export the public key material into your repository's public output
+directory:
+
+#+begin_src elisp
+(require 'elpaish)
+
+;; Exports elpaish-keyring.gpg and elpaish.pub.asc
+(elpaish-export-keyring "public/" my-master-fpr)
+#+end_src
+
+** In Shell: Verify Public Keyring Files
+
+Verify the exported files using =gpg=:
+
+#+begin_src sh
+# Inspect the binary keyring
+gpg --show-keys public/elpaish-keyring.gpg
+
+# Inspect the armored public key
+gpg --show-keys public/elpaish.pub.asc
+#+end_src
+
+* Step 4: Configure Headless CI Signing
+:PROPERTIES:
+:CUSTOM_ID: step-4-ci-signing
+:END:
+
+** Store the CI Signing Secret
+
+Upload the exported subkey (=ci-signing-key.priv.asc=) to GitHub
+Actions secrets:
+
+#+begin_src sh
+gh secret set ELPAISH_SIGNING_KEY < ~/keys/elpaish/ci-signing-key.priv.asc
+gh secret set ELPAISH_GPG_PASSPHRASE --body ""
+#+end_src
+
+** Configure ELPAish Build Script
+
+In your repository's =scripts/build.el=, initialize signing from the
+environment:
+
+#+begin_src elisp
+(require 'elpaish)
+(require 'elpaish-recipes)
+(require 'elpaish-website)
+
+(elpaish-load-packages "packages.el")
+
+;; Detects ELPAISH_SIGNING_KEY and imports it into an ephemeral keyring
+(elpaish-init-signing-from-env)
+
+;; Builds package archives and automatically generates .sig signature files
+(elpaish-build-all 'all "public/")
+#+end_src
+
+* Step 5: Verify Package Signatures in Emacs
+:PROPERTIES:
+:CUSTOM_ID: step-5-consumer-verification
+:END:
+
+Instruct downstream Emacs users to enable signature checking:
+
+#+begin_src elisp
+;; Download and import the archive's public keyring into package.el's store
+(url-copy-file "https://username.github.io/my-elpa/elpaish-keyring.gpg"
+               (expand-file-name "elpaish-keyring.gpg" temporary-file-directory) t)
+(package-import-keyring (expand-file-name "elpaish-keyring.gpg" temporary-file-directory))
+
+;; Enable strict cryptographic signature checking
+(setq package-check-signature t)
+
+;; Add your package archive stream
+(add-to-list 'package-archives '("my-elpa" . "https://username.github.io/my-elpa/snapshot/") t)
+#+end_src

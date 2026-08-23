@@ -1,0 +1,241 @@
+#+TITLE: Tutorial: How to Setup and Host Your Own ELPAish Package Repository
+#+AUTHOR: tychoish
+#+DATE: [2026-08-23 Sun]
+#+OPTIONS: toc:2 num:nil
+
+* Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+
+ELPAish is a toolkit for building (and a prototype application of) an
+Emacs Lisp package archive/repository. It orchestrates packaging,
+version derivation, cryptographic GPG signing, and static HTML catalog
+generation across three repository streams:
+
+- *Snapshot* (development builds tracking Git branch tips with UTC timestamps)
+- *Stable* (production releases derived strictly from clean semver tags)
+- *Staging* (pre-releases, release candidates, and =git describe= builds)
+
+This tutorial walks through creating a package repository from scratch,
+configuring package recipes, building archive artifacts, previewing the
+result locally, and hosting the output via GitHub Pages or any static
+web server.
+
+* Prerequisites
+:PROPERTIES:
+:CUSTOM_ID: prerequisites
+:END:
+
+Ensure the following tools and packages are available:
+
+- Emacs 27.1 or newer (Emacs 29+ recommended)
+- Git (for resolving commit hashes and tags)
+- GnuPG (=gpg= and =gpg-connect-agent=)
+- =tar= (for multi-file archive generation)
+- The =elpaish= package loaded in your Emacs session
+
+* Step 1: Initialize Your Repository Structure
+:PROPERTIES:
+:CUSTOM_ID: step-1-repo-structure
+:END:
+
+A standard ELPAish repository layout looks like this:
+
+#+begin_example
+my-elpa/
+├── packages.el           # Package registration recipes
+├── scripts/
+│   └── build.el          # Batch build runner script
+├── public/               # Generated static repository output
+│   ├── index.html        # Landing page
+│   ├── snapshot/         # Snapshot package archive
+│   ├── stable/           # Stable package archive
+│   └── staging/          # Staging package archive
+└── .github/
+    └── workflows/
+        └── pages.yml     # Automated build & deploy CI
+#+end_example
+
+Create the workspace directory and initialize a Git repository:
+
+#+begin_src sh
+mkdir -p my-elpa/scripts
+cd my-elpa
+git init
+#+end_src
+
+* Step 2: Register Package Recipes in packages.el
+:PROPERTIES:
+:CUSTOM_ID: step-2-register-recipes
+:END:
+
+Create a =packages.el= file at the repository root. Package recipes can
+reference local checkouts or remote Git URLs.
+
+#+begin_src elisp
+;;; packages.el --- Package recipes for my ELPAish repository -*- lexical-binding: t; -*-
+
+(require 'elpaish)
+(require 'elpaish-recipes)
+
+;; Single-file package from local path or remote Git repo
+(elpaish-register-package
+ 'magit-todos
+ "https://github.com/alphapapa/magit-todos.git"
+ :branch "master"
+ :files '("magit-todos.el")
+ :summary "Show source files' TODOs in Magit status"
+ :url "https://github.com/alphapapa/magit-todos"
+ :keywords '("convenience" "git" "tools"))
+
+;; Multi-file package bundling all elisp files, README, and LICENSE
+(elpaish-register-package
+ 'my-custom-mode
+ "~/src/my-custom-mode"
+ :branch "main"
+ :files '("*.el" "lisp/*.el")
+ :summary "Custom editing mode"
+ :url "https://github.com/example/my-custom-mode"
+ :doc "https://example.com/docs/my-custom-mode")
+
+;; Suppress a package from specific streams (e.g. stable if experimental)
+(elpaish-register-package
+ 'experimental-tool
+ "https://github.com/example/experimental-tool.git"
+ :branch "main"
+ :disabled-tracks '(stable)
+ :summary "Experimental tooling for developers")
+#+end_src
+
+* Step 3: Configure Output and Directory Settings
+:PROPERTIES:
+:CUSTOM_ID: step-3-configure-settings
+:END:
+
+In your configuration or build script, customize the output paths and
+repository URLs:
+
+#+begin_src elisp
+(setq elpaish-output-dir (expand-file-name "public/" default-directory))
+(setq elpaish-base-url "https://username.github.io/my-elpa/")
+(setq elpaish-release-mode 'all)
+#+end_src
+
+* Step 4: Build Package Archives Interactively or in Batch
+:PROPERTIES:
+:CUSTOM_ID: step-4-build-archives
+:END:
+
+** Interactive Build Operations
+
+ELPAish provides dedicated commands with dedicated compilation buffer
+logging:
+
+- =M-x elpaish-menu= (or =C-c t e= if configured): Open the transient
+  dispatch menu.
+- =M-x elpaish-build-all=: Build all registered packages across all
+  tracks (=snapshot=, =stable=, =staging=).
+- =M-x elpaish-build-single=: Interactively pick one package to build.
+- =M-x elpaish-status=: Open the tabulated-list UI (=*elpaish-status*=).
+
+** Batch Build Script
+
+Create =scripts/build.el= for headless CI runners:
+
+#+begin_src elisp
+;;; build.el --- Headless ELPAish build script -*- lexical-binding: t; -*-
+
+(require 'elpaish)
+(require 'elpaish-recipes)
+(require 'elpaish-website)
+
+(elpaish-load-packages "packages.el")
+(elpaish-init-signing-from-env)
+
+(let ((out-dir (or (getenv "ELPAISH_OUTPUT_DIR")
+                   (expand-file-name "public/" default-directory))))
+  (message "Building ELPAish repository into %s..." out-dir)
+  (elpaish-build-all 'all out-dir)
+  (message "Build complete!"))
+#+end_src
+
+Run the build script:
+
+#+begin_src sh
+emacs --batch -L pkg -l scripts/build.el
+#+end_src
+
+* Step 5: Test and Preview Locally
+:PROPERTIES:
+:CUSTOM_ID: step-5-test-local-preview
+:END:
+
+Start the built-in preview server:
+
+#+begin_src elisp
+(elpaish-serve-local 8080)
+#+end_src
+
+Open http://127.0.0.1:8080/ in your browser.
+
+To install a package in a fresh test session:
+
+#+begin_src elisp
+(setq package-check-signature nil)
+(add-to-list 'package-archives '("local-elpa" . "http://127.0.0.1:8080/snapshot/") t)
+(package-refresh-contents)
+(package-install 'magit-todos)
+#+end_src
+
+* Step 6: Deploy to GitHub Pages
+:PROPERTIES:
+:CUSTOM_ID: step-6-deploy-pages
+:END:
+
+Create =.github/workflows/pages.yml= to automate building and publishing
+the static =public/= directory to GitHub Pages whenever commits land on
+=main= or every 6 hours via schedule:
+
+#+begin_src yaml
+name: Deploy Package Repository
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: silex/emacs:30.2-ci
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Build Archives
+        env:
+          ELPAISH_OUTPUT_DIR: public/
+          ELPAISH_SIGNING_KEY: ${{ secrets.ELPAISH_SIGNING_KEY }}
+          ELPAISH_GPG_PASSPHRASE: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
+        run: emacs --batch -L pkg -l scripts/build.el
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public/
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/deploy-pages@v4
+#+end_src

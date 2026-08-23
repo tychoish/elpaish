@@ -1,0 +1,150 @@
+#+TITLE: Tutorial: How to Rotate Your ELPAish Package Signing Key
+#+AUTHOR: tychoish
+#+DATE: [2026-08-23 Sun]
+#+OPTIONS: toc:2 num:nil
+
+* Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+
+Regular cryptographic key rotation limits the exposure window if a CI
+secret or worker instance is ever compromised. ELPAish is a toolkit for
+building (and a prototype application of) an Emacs Lisp package
+archive/repository. Because ELPAish separates your master certification
+key from operational signing subkeys, rotating your signing key
+requires *zero changes* for downstream package consumers—the master
+certification key and the public keyring anchor remain unchanged.
+
+* Automated Key Rotation in Emacs
+:PROPERTIES:
+:CUSTOM_ID: automated-rotation-emacs
+:END:
+
+ELPAish provides the command =elpaish-rotate-keys= to perform the
+entire rotation lifecycle from inside Emacs:
+
+1. Creates a fresh Ed25519 signing subkey on your master key.
+2. Verifies the new subkey's loopback signing capability.
+3. Automatically updates GitHub Actions secret =ELPAISH_SIGNING_KEY= via
+   the =gh= CLI tool.
+4. Re-exports updated public keyrings (=elpaish-keyring.gpg= and
+   =elpaish.pub.asc=) to your output directory.
+
+** Interactive Usage
+
+Run =M-x elpaish-rotate-keys= in Emacs (or press =K= in the
+=M-x elpaish-menu= transient dispatch menu).
+
+** Programmatic Elisp Usage
+
+#+begin_src elisp
+(require 'elpaish)
+(require 'elpaish-signing-keys)
+
+(elpaish-rotate-keys
+ :master-key-id "9A8B7C6D5E4F3210"
+ :repo-slug "username/my-elpa"
+ :output-dir (expand-file-name "public/" default-directory))
+#+end_src
+
+* Granular Emacs Key Management Workflow
+:PROPERTIES:
+:CUSTOM_ID: granular-rotation-emacs
+:END:
+
+If you prefer to execute rotation steps individually inside Emacs:
+
+** Step 1: Add a New Signing Subkey
+
+#+begin_src elisp
+(require 'elpaish-signing-keys)
+
+;; Adds a fresh passphrase-less Ed25519 subkey valid for 1 year
+(defvar new-subkey-fpr
+  (elpaish-add-signing-subkey "9A8B7C6D5E4F3210" "1y"))
+#+end_src
+
+** Step 2: Verify the New Subkey in Emacs
+
+#+begin_src elisp
+(elpaish-verify-signing-key "9A8B7C6D5E4F3210")
+#+end_src
+
+** Step 3: Export Updated Key Material
+
+#+begin_src elisp
+;; Re-export maintainer and CI artifacts
+(elpaish-export-key-material "9A8B7C6D5E4F3210" "~/keys/elpaish/")
+
+;; Re-export public keyrings into the repository
+(elpaish-export-keyring "public/" "9A8B7C6D5E4F3210")
+#+end_src
+
+* Verification with GnuPG Shell Commands
+:PROPERTIES:
+:CUSTOM_ID: shell-verification
+:END:
+
+After rotating keys through Emacs, use shell commands to verify that
+GnuPG and the published files reflect the rotation:
+
+** 1. Verify Subkey List and Status
+
+#+begin_src sh
+gpg --list-secret-keys --keyid-format LONG 9A8B7C6D5E4F3210
+#+end_src
+
+Verify that the new signing subkey appears with =[S]=:
+
+#+begin_example
+sec   ed25519/9A8B7C6D5E4F3210 2026-08-23 [C] [expires: 2028-08-23]
+      Key fingerprint = ABCD 1234 EF56 7890 ABCD  1234 9A8B 7C6D 5E4F 3210
+uid                 [ultimate] My ELPA Archive Signing Key <elpa@example.com>
+ssb   ed25519/A1B2C3D4E5F60718 2026-08-23 [S] [expires: 2027-08-23]
+#+end_example
+
+** 2. Verify Detached Signature with New Subkey
+
+#+begin_src sh
+echo "Validation string" | gpg --batch --pinentry-mode loopback \
+    --default-key "A1B2C3D4E5F60718!" --detach-sign > /tmp/check.sig
+
+echo "Validation string" | gpg --verify /tmp/check.sig -
+#+end_src
+
+** 3. Verify Updated Public Keyring
+
+#+begin_src sh
+gpg --show-keys public/elpaish-keyring.gpg
+#+end_src
+
+Confirm both the primary key and the new subkey are present in the
+exported binary keyring.
+
+* Emergency Key Revocation
+:PROPERTIES:
+:CUSTOM_ID: emergency-revocation
+:END:
+
+If a signing key or CI environment is ever compromised, publish a
+revocation certificate immediately through Emacs:
+
+** In Emacs: Execute Revocation
+
+#+begin_src elisp
+(require 'elpaish)
+
+;; Publishes public/elpaish.rev.asc and regenerates public/elpaish-keyring.gpg
+(elpaish-revoke-key "COMPROMISED_KEY_ID" "public/")
+#+end_src
+
+** In Shell: Verify Revocation Certificate
+
+#+begin_src sh
+# Check that the revocation certificate is valid and formatted
+gpg --show-keys public/elpaish.rev.asc
+#+end_src
+
+Commit and deploy the updated =public/= directory to immediately notify
+downstream consumers.
