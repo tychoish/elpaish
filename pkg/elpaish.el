@@ -32,19 +32,23 @@
 
 (require 'cl-lib)
 (require 'epg)
-(require 'htmlize nil t)
 (require 'map)
 (require 'package)
 (require 'seq)
 (require 'subr-x)
 (require 'tabulated-list)
 (require 'timer)
+(require 'compile)
+
+(require 'htmlize nil t)
 (require 'elpaish-check nil t)
 (require 'annotated-completing-read nil t)
 (require 'transient nil t)
+
 (defgroup elpaish nil
   "ELPA package repository builder."
   :group 'development)
+
 (defcustom elpaish-output-dir (expand-file-name "public/" default-directory)
   "Root directory where package archives, keys, and indexes are written."
   :type 'directory
@@ -130,6 +134,7 @@ or `elpaish-staging' (pre-release tags and git describe)."
 (defalias 'elpaish-recipe-repo 'elpaish-recipe-repository-path)
 (defalias 'elpaish-recipe-source-dir 'elpaish-recipe-source-directory-path)
 (defalias 'elpaish-recipe-test-dir 'elpaish-recipe-test-directory-path)
+
 (defun elpaish-recipe-built-version-elpaish (recipe)
   "Compatibility accessor for `elpaish-recipe-built-version-snapshot'."
   (elpaish-recipe-built-version-snapshot recipe))
@@ -759,6 +764,7 @@ Returns the detected signing key ID or nil."
         (call-process gpg-bin nil nil nil "--batch" "--yes" "--output" binary-ring "--export" key)
         (call-process gpg-bin nil nil nil "--batch" "--yes" "--armor" "--output" armor-pub "--export" key)
         (message "Exported public keyrings to %s and %s" binary-ring armor-pub)))))
+
 ;;;###autoload
 (cl-defun elpaish-rotate-keys (&key master-key-id repo-slug (output-dir elpaish-output-dir))
   "Rotate GPG signing subkey [S], sync with GitHub secrets, and export updated keyring.
@@ -1422,23 +1428,23 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
    ["Build Actions"
     ("b" "Build single package" elpaish-build-single)
     ("a" "Build all packages (all streams)" (lambda () (interactive) (elpaish-build-all 'all)))
-    ("s" "Build snapshot stream" (lambda () (interactive) (elpaish-build-all 'snapshot)))
-    ("r" "Build stable stream" (lambda () (interactive) (elpaish-build-all 'stable)))
-    ("t" "Build staging stream" (lambda () (interactive) (elpaish-build-all 'staging)))]
+    ("rd" "Build snapshot stream" (lambda () (interactive) (elpaish-build-all 'snapshot)))
+    ("rlts" "Build stable stream" (lambda () (interactive) (elpaish-build-all 'stable)))
+    ("rrc" "Build staging stream" (lambda () (interactive) (elpaish-build-all 'staging)))]
    ["Quality & Inspection"
-    ("p" "Preflight single package" elpaish-preflight-single)
-    ("P" "Preflight all packages" elpaish-status-preflight-all)
+    ("po" "Preflight single package" elpaish-preflight-single)
+    ("pa" "Preflight all packages" elpaish-status-preflight-all)
     ("v" "Status overview" elpaish-status)
     ("c" "Run quality check suite" elpaish-run-checks)
     ("l" "View build log" elpaish-view-build-log)]
    ["Website & Preview"
     ("g" "Rebuild website only" elpaish-build-website)
-    ("w" "Start local preview server" elpaish-serve-local)
-    ("W" "Stop preview server" elpaish-stop-server)
-    ("R" "Reload package recipes" (lambda () (interactive) (elpaish-load-packages) (message "Reloaded package recipes.")))]
+    ("wo" "Start local preview server" elpaish-serve-local)
+    ("wc" "Stop preview server" elpaish-stop-server)
+    ("rr" "Reload package recipes" (lambda () (interactive) (elpaish-load-packages) (message "Reloaded package recipes.")))]
    ["Keyring & Operations"
     ("k" "Export GPG keyring" elpaish-export-keyring)
-    ("K" "Rotate GPG signing keys" elpaish-rotate-keys)]])
+    ("TKO" "Rotate GPG signing keys" elpaish-rotate-keys)]])
 (defalias 'elpaish-dispatch 'elpaish-menu
   "Alias for `elpaish-menu'.")
 
