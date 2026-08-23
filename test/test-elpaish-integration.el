@@ -193,33 +193,56 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
                  (should (string-match-p "SIGNED_CONSUMER_SUCCESS" output-str)))))))))))
 
 (ert-deftest elpaish-integration-test-live-deployment ()
-  "Test installing package from live deployed ELPAish Pages URL when available."
+  "Test installing package from live deployed ELPAish Pages URL when available.
+Registers the standard GNU/NonGNU/MELPA archives alongside the live ELPAish
+one, matching how a real consumer's `package-archives' is actually
+configured, so transitive dependencies (e.g. `elpaish' itself depends on
+`magit') can resolve instead of failing on a bare single-archive setup.
+Also imports the real published keyring before refreshing contents: the
+live archive is genuinely GPG signed in production (unlike the other,
+locally-built fixtures in this file), and `package-check-signature' set to
+`allow-unsigned' only tolerates a MISSING signature — when a `.sig' file
+is present but its key is unknown, `package.el' signals `bad-signature'
+regardless (see `package--check-signature-content' in package.el), so a
+consumer without the key installed would fail here exactly as this test
+used to."
   (when-let* ((live-url (getenv "ELPAISH_ARCHIVE_URL")))
     (unless (string-empty-p live-url)
       (elpaish-integration-test-with-env
-       (let* ((default-directory consumer-home)
-              (sub-code
-               (format "(progn
+       (let* ((base-url (replace-regexp-in-string "elpaish/\\'" "" live-url))
+              (keyring-file (expand-file-name "elpaish-keyring.gpg" temp-root)))
+         (url-copy-file (concat base-url "elpaish-keyring.gpg") keyring-file t)
+         (let* ((default-directory consumer-home)
+                (sub-code
+                 (format "(progn
   (require (quote package))
   (setq package-user-dir \"%s/elpa\")
-  (setq package-archives (list (cons \"elpaish-live\" \"%s\")))
+  (setq package-archives
+        (list (cons \"gnu\" \"https://elpa.gnu.org/packages/\")
+              (cons \"nongnu\" \"https://elpa.nongnu.org/nongnu/\")
+              (cons \"melpa\" \"https://melpa.org/packages/\")
+              (cons \"elpaish-live\" \"%s\")))
   (setq package-check-signature (quote allow-unsigned))
   (package-initialize)
+  (package-import-keyring \"%s\")
   (package-refresh-contents)
-  (unless package-archive-contents
-    (error \"No packages found in live archive\"))
-  (let ((first-pkg (car (car package-archive-contents))))
+  (let* ((live-entries
+          (seq-filter (lambda (e) (equal (package-desc-archive (cadr e)) \"elpaish-live\"))
+                      package-archive-contents))
+         (first-pkg (car (car live-entries))))
+    (unless first-pkg
+      (error \"No packages found in live elpaish archive\"))
     (package-install first-pkg)
     (require first-pkg)
     (message \"LIVE_CONSUMER_SUCCESS for %%S\" first-pkg)))"
-                       consumer-home live-url))
-              (output-buf (generate-new-buffer " *live-sub-output*"))
-              (process-environment (cons (concat "HOME=" consumer-home) process-environment))
-              (exit-code (call-process "emacs" nil output-buf nil "-Q" "--batch" "--eval" sub-code))
-              (output-str (with-current-buffer output-buf (buffer-string))))
-         (kill-buffer output-buf)
-         (should (equal exit-code 0))
-         (should (string-match-p "LIVE_CONSUMER_SUCCESS" output-str)))))))
+                         consumer-home live-url keyring-file))
+                (output-buf (generate-new-buffer " *live-sub-output*"))
+                (process-environment (cons (concat "HOME=" consumer-home) process-environment))
+                (exit-code (call-process "emacs" nil output-buf nil "-Q" "--batch" "--eval" sub-code))
+                (output-str (with-current-buffer output-buf (buffer-string))))
+           (kill-buffer output-buf)
+           (should (equal exit-code 0))
+           (should (string-match-p "LIVE_CONSUMER_SUCCESS" output-str))))))))
 
 ;;;###autoload
 (defun elpaish-run-integration-tests-suite ()

@@ -46,7 +46,12 @@
 (defun elpaish-website--icon-cell (recipe artifact target-dir)
   "Return dom nodes for RECIPE's repository link and signature badge.
 ARTIFACT is the package archive filename; TARGET-DIR is the directory it
-was written to, used to check whether a `.sig' file exists alongside it."
+was written to, used to check whether a `.sig' file exists alongside it.
+Each `i' node is given an empty string child so `dom-print' emits a real
+`</i>' close tag instead of a void-style self-close (`<i ... />'): `i' is
+not an HTML5 void element, so browsers ignore the trailing slash and treat
+it as an unclosed formatting element, which then swallows and duplicates
+all following markup via the HTML5 adoption-agency algorithm."
   (let ((repo-url (elpaish-recipe-url recipe))
         (sig-file (expand-file-name (concat artifact ".sig") target-dir)))
     (delq nil
@@ -54,12 +59,12 @@ was written to, used to check whether a `.sig' file exists alongside it."
            (when repo-url
              `(a ((href . ,repo-url) (class . "icon-link") (title . "GitHub repository")
                   (aria-label . "GitHub repository") (target . "_blank") (rel . "noopener"))
-                 (i ((class . "nf nf-fa-github")))))
+                 (i ((class . "nf nf-fa-github")) "")))
            (if (file-exists-p sig-file)
                `(a ((href . ,(concat artifact ".sig")) (class . "icon-link") (title . "GPG signature")
                     (aria-label . "GPG signature"))
-                   (i ((class . "nf nf-fa-key"))))
-             `(i ((class . "nf nf-fa-key icon-disabled") (title . "No signature available"))))))))
+                   (i ((class . "nf nf-fa-key")) ""))
+             `(i ((class . "nf nf-fa-key icon-disabled") (title . "No signature available")) ""))))))
 
 (defun elpaish-website--package-row (recipe track target-dir)
   "Return an HTML `tr' dom node cataloging RECIPE's build on TRACK.
