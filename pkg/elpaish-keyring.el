@@ -24,28 +24,19 @@
   :type 'string
   :group 'elpaish)
 
-(defconst elpaish-keyring--public-key-ascii
-  "-----BEGIN PGP PUBLIC KEY BLOCK-----
-Comment: ELPAish Package Archive Public Key Anchor
-
-mDMEZ5E...
------END PGP PUBLIC KEY BLOCK-----"
-  "ASCII-armored public key anchor for ELPAish package verification.")
-
 ;;;###autoload
-(defun elpaish-keyring-setup (&optional track)
-  "Configure `package-archives' to include ELPAish archive TRACK.
-TRACK can be `elpaish' (snapshots, default), `elpaish-stable' (releases),
-or `elpaish-staging' (staging builds)."
+(defun elpaish-keyring-setup (&optional stream)
+  "Configure `package-archives' to include ELPAish archive STREAM.
+STREAM can be `snapshot' (default), `stable', or `staging'."
   (interactive
-   (list (intern (completing-read "Select ELPAish track: "
-                                  '("elpaish" "elpaish-stable" "elpaish-staging")
-                                  nil t nil nil "elpaish"))))
-  (let* ((selected-track (or track 'elpaish))
-         (track-name (symbol-name selected-track))
-         (archive-url (format "%s/%s/" (string-remove-suffix "/" elpaish-base-url) track-name)))
-    (add-to-list 'package-archives (cons track-name archive-url) t)
-    (message "Added %s (%s) to `package-archives'." track-name archive-url)))
+   (list (intern (completing-read "Select ELPAish stream: "
+                                  '("snapshot" "stable" "staging")
+                                  nil t nil nil "snapshot"))))
+  (let* ((selected-stream (or stream 'snapshot))
+         (stream-name (symbol-name (elpaish-canonical-stream selected-stream)))
+         (archive-url (format "%s/%s/" (string-remove-suffix "/" elpaish-base-url) stream-name)))
+    (add-to-list 'package-archives (cons stream-name archive-url) t)
+    (message "Added %s (%s) to `package-archives'." stream-name archive-url)))
 
 ;;;###autoload
 (defun elpaish-keyring-install-key ()

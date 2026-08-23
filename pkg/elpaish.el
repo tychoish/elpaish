@@ -2,7 +2,7 @@
 
 ;; Author: tychoish
 ;; Keywords: maintenance, tools, local, package, elpa
-;; Package-Requires: ((emacs "27.1") (magit "3.0.0") (map "3.0") (seq "2.0"))
+;; Package-Requires: ((emacs "27.1") (htmlize "1.34") (map "3.0") (seq "2.0"))
 
 ;;; Commentary:
 ;; ELPAish is a toolkit for building (and a prototype application of) an
@@ -32,7 +32,7 @@
 
 (require 'cl-lib)
 (require 'epg)
-(require 'magit)
+(require 'htmlize nil t)
 (require 'map)
 (require 'package)
 (require 'seq)
@@ -43,9 +43,8 @@
 (require 'annotated-completing-read nil t)
 (require 'transient nil t)
 (defgroup elpaish nil
-  "Multi-track ELPA package repository builder."
+  "ELPA package repository builder."
   :group 'development)
-
 (defcustom elpaish-output-dir (expand-file-name "public/" default-directory)
   "Root directory where package archives, keys, and indexes are written."
   :type 'directory
@@ -101,32 +100,36 @@ or `elpaish-staging' (pre-release tags and git describe)."
   :type 'string
   :group 'elpaish)
 
-(defconst elpaish-tracks '(snapshot stable staging)
-  "List of supported package archive tracks.")
+(defconst elpaish-streams '(snapshot stable staging)
+  "List of supported package archive release streams.")
 
 ;;; Registry Data Structure
 
 (cl-defstruct (elpaish-recipe (:constructor elpaish-recipe-create))
   "Structure representing an ELPA package build recipe."
   (name nil :type string :documentation "Package name.")
-  (repo nil :type string :documentation "Local directory path or Git URL.")
+  (repository-path nil :type string :documentation "Local directory path or Git URL.")
   (branch "main" :type string :documentation "Git branch to track.")
   (files '("*.el") :type list :documentation "List of file patterns to include.")
-  (source-dir "." :type string :documentation "Subdirectory within REPO holding the package source.")
-  (test-dir nil :type (choice null string) :documentation "Optional custom test directory.")
+  (source-directory-path "." :type string :documentation "Subdirectory within REPOSITORY-PATH holding the package source.")
+  (test-directory-path nil :type (choice null string) :documentation "Optional custom test directory path.")
   (preflight-skip nil :type (choice boolean list) :documentation "Checks to skip in preflight.")
-  (disabled-tracks nil :type list :documentation "List of track symbols where this package is suppressed/disabled.")
+  (disabled-streams nil :type list :documentation "List of stream symbols where this package is suppressed/disabled.")
   (summary nil :type (choice null string) :documentation "Package summary description.")
   (url nil :type (choice null string) :documentation "Upstream homepage or repository URL.")
   (doc nil :type (choice null string) :documentation "Documentation URL or path.")
   (keywords nil :type list :documentation "List of keywords.")
   (requires nil :type list :documentation "Declared dependencies ((dep min-ver) ...).")
-  (built-version-snapshot nil :type (choice null string) :documentation "Last built version for snapshot track.")
-  (built-version-stable nil :type (choice null string) :documentation "Last built version for stable track.")
-  (built-version-staging nil :type (choice null string) :documentation "Last built version for staging track.")
+  (built-version-snapshot nil :type (choice null string) :documentation "Last built version for snapshot stream.")
+  (built-version-stable nil :type (choice null string) :documentation "Last built version for stable stream.")
+  (built-version-staging nil :type (choice null string) :documentation "Last built version for staging stream.")
   (built-hash nil :type (choice null string) :documentation "Git commit hash when last built.")
   (built-type 'single :type symbol :documentation "Package archive type ('single or 'tar)."))
 
+;; Compatibility accessors for legacy property names
+(defalias 'elpaish-recipe-repo 'elpaish-recipe-repository-path)
+(defalias 'elpaish-recipe-source-dir 'elpaish-recipe-source-directory-path)
+(defalias 'elpaish-recipe-test-dir 'elpaish-recipe-test-directory-path)
 (defun elpaish-recipe-built-version-elpaish (recipe)
   "Compatibility accessor for `elpaish-recipe-built-version-snapshot'."
   (elpaish-recipe-built-version-snapshot recipe))
@@ -144,7 +147,7 @@ or `elpaish-staging' (pre-release tags and git describe)."
 
 ;; Compatibility accessors for single built-version references
 (defun elpaish-recipe-built-version (recipe)
-  "Return most recent built version for RECIPE across tracks."
+  "Return most recent built version for RECIPE across streams."
   (or (elpaish-recipe-built-version-snapshot recipe)
       (elpaish-recipe-built-version-stable recipe)
       (elpaish-recipe-built-version-staging recipe)))
@@ -153,43 +156,54 @@ or `elpaish-staging' (pre-release tags and git describe)."
   `(setf (elpaish-recipe-built-version-snapshot ,recipe) ,val))
 
 ;;;###autoload
-(cl-defun elpaish-register-package (name repo &key branch (files '("*.el"))
-                                              (source-dir ".")
-                                              test-dir preflight-skip summary url doc
-                                              keywords requires disabled-tracks
-                                              suppress-tracks disabled-streams exclude-tracks
-                                              docs-url)
-  "Register package NAME with REPO local directory path or remote Git URL.
+(cl-defun elpaish-register-package (name
+				    repository-path
+				    &key branch
+				    (files '("*.el"))
+                                    source-directory-path
+                                    test-directory-path
+                                    source-dir
+                                    test-dir
+				    preflight-skip
+				    summary
+				    url
+				    doc
+                                    keywords
+				    requires
+				    disabled-streams
+                                    suppress-streams
+                                    docs-url)
+  "Register package NAME with REPOSITORY-PATH (local directory path or remote Git URL).
 BRANCH defaults to `elpaish-default-branch' and FILES defaults to \\='(\"*.el\").
-SOURCE-DIR is the subdirectory within REPO holding the package (default \".\"),
-for packages that live inside a monorepo or a nested \"lisp/\" folder.
-DISABLED-TRACKS (or SUPPRESS-TRACKS / DISABLED-STREAMS) is a list of track symbols
-where this package should be suppressed/omitted from build.
-DOC (or DOCS-URL) is an optional URL or path to documentation.
-TEST-DIR, PREFLIGHT-SKIP, SUMMARY, URL, KEYWORDS, and REQUIRES provide metadata."
+SOURCE-DIRECTORY-PATH is the subdirectory within REPOSITORY-PATH holding the package
+(default \".\"), for packages that live inside a monorepo or nested \"lisp/\" folder.
+TEST-DIRECTORY-PATH is an optional custom test directory path.
+DISABLED-STREAMS is a list of stream symbols where this package is suppressed.
+DOC is an optional URL or path to documentation.
+SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
   (let* ((raw-name (if (symbolp name) (symbol-name name) (string-trim name)))
          (name-str (string-remove-suffix ".el" raw-name))
-         (dis-tracks (seq-uniq
-                      (mapcar #'elpaish-canonical-track
-                              (delq nil (append (when (listp disabled-tracks) disabled-tracks)
-                                                (when (symbolp disabled-tracks) (list disabled-tracks))
-                                                (when (listp suppress-tracks) suppress-tracks)
-                                                (when (symbolp suppress-tracks) (list suppress-tracks))
-                                                (when (listp disabled-streams) disabled-streams)
-                                                (when (symbolp disabled-streams) (list disabled-streams))
-                                                (when (listp exclude-tracks) exclude-tracks)
-                                                (when (symbolp exclude-tracks) (list exclude-tracks)))))))
+         (effective-source (or source-directory-path source-dir "."))
+         (effective-test (or test-directory-path test-dir))
+         (raw-disabled (append (when (listp disabled-streams) disabled-streams)
+                               (when (symbolp disabled-streams) (list disabled-streams))
+                               (when (listp suppress-streams) suppress-streams)
+                               (when (symbolp suppress-streams) (list suppress-streams))))
+         (dis-streams (seq-uniq (mapcar #'elpaish-canonical-stream (delq nil raw-disabled))))
+         (repo-target (if (and (stringp repository-path)
+                               (not (string-match-p "\\`https?://" repository-path))
+                               (not (string-match-p "\\`git@" repository-path)))
+                          (expand-file-name repository-path)
+                        repository-path))
          (recipe (elpaish-recipe-create
                   :name name-str
-                  :repo (if (and (stringp repo) (not (string-match-p "\\`https?://" repo)) (not (string-match-p "\\`git@" repo)))
-                            (expand-file-name repo)
-                          repo)
+                  :repository-path repo-target
                   :branch (or branch elpaish-default-branch)
                   :files (or files '("*.el"))
-                  :source-dir (or source-dir ".")
-                  :test-dir test-dir
+                  :source-directory-path effective-source
+                  :test-directory-path effective-test
                   :preflight-skip preflight-skip
-                  :disabled-tracks dis-tracks
+                  :disabled-streams dis-streams
                   :summary (or summary "No description")
                   :url url
                   :doc (or doc docs-url)
@@ -203,53 +217,55 @@ TEST-DIR, PREFLIGHT-SKIP, SUMMARY, URL, KEYWORDS, and REQUIRES provide metadata.
     (puthash name-str recipe elpaish-registry)
     recipe))
 
-(defun elpaish-recipe-disabled-for-track-p (recipe track)
-  "Return non-nil if RECIPE is disabled/suppressed on TRACK."
-  (let ((canon (elpaish-canonical-track track))
-        (dis (elpaish-recipe-disabled-tracks recipe)))
-    (and dis (memq canon (mapcar #'elpaish-canonical-track dis)))))
+(defun elpaish-recipe-disabled-for-stream-p (recipe stream)
+  "Return non-nil if RECIPE is disabled/suppressed on STREAM."
+  (let ((canon (elpaish-canonical-stream stream))
+        (dis (elpaish-recipe-disabled-streams recipe)))
+    (and dis (memq canon (mapcar #'elpaish-canonical-stream dis)))))
 
 (defun elpaish-clear-registry ()
   "Clear all registered recipes from the registry."
   (interactive)
   (clrhash elpaish-registry))
 
-;;; Track & Directory Resolution
+;;; Stream & Directory Resolution
 
-(defun elpaish-canonical-track (track)
-  "Return canonical track symbol for TRACK (`snapshot', `stable', `staging', or `all')."
-  (pcase track
+(defun elpaish-canonical-stream (stream)
+  "Return canonical stream symbol for STREAM (`snapshot', `stable', `staging', or `all')."
+  (pcase stream
     ((or 'snapshot 'elpaish 'unstable) 'snapshot)
     ((or 'stable 'elpaish-stable 'release) 'stable)
     ((or 'staging 'elpaish-staging 'pre 'beta 'rc) 'staging)
     ('all 'all)
     (_ 'snapshot)))
 
-(defun elpaish-track-dir (track &optional root-dir)
-  "Return destination directory for TRACK under ROOT-DIR (or `elpaish-output-dir')."
-  (let ((base (file-name-as-directory (or root-dir elpaish-output-dir)))
-        (canon (elpaish-canonical-track track)))
+
+(defun elpaish-stream-dir (stream &optional root-directory-path)
+  "Return destination directory for STREAM under ROOT-DIRECTORY-PATH (or `elpaish-output-dir')."
+  (let ((base (file-name-as-directory (or root-directory-path elpaish-output-dir)))
+        (canon (elpaish-canonical-stream stream)))
     (if (eq canon 'all)
         base
       (expand-file-name (symbol-name canon) base))))
 
-(defun elpaish-recipe-version-for-track (recipe track)
-  "Return stored built version string for RECIPE on TRACK."
-  (pcase (elpaish-canonical-track track)
+
+(defun elpaish-recipe-version-for-stream (recipe stream)
+  "Return stored built version string for RECIPE on STREAM."
+  (pcase (elpaish-canonical-stream stream)
     ('snapshot (or (elpaish-recipe-built-version-snapshot recipe)
                    (elpaish-recipe-built-version-elpaish recipe)))
     ('stable (elpaish-recipe-built-version-stable recipe))
     ('staging (elpaish-recipe-built-version-staging recipe))
     (_ (elpaish-recipe-built-version recipe))))
 
-(gv-define-setter elpaish-recipe-version-for-track (val recipe track)
-  `(pcase (elpaish-canonical-track ,track)
+(gv-define-setter elpaish-recipe-version-for-stream (val recipe stream)
+  `(pcase (elpaish-canonical-stream ,stream)
      ('snapshot (setf (elpaish-recipe-built-version-snapshot ,recipe) ,val))
      ('stable (setf (elpaish-recipe-built-version-stable ,recipe) ,val))
      ('staging (setf (elpaish-recipe-built-version-staging ,recipe) ,val))
      (_ (setf (elpaish-recipe-built-version-snapshot ,recipe) ,val))))
 
-;;; Git & Path Resolution
+
 (defvar elpaish--resolved-repo-path-cache (make-hash-table :test 'eq)
   "Cache of RECIPE -> resolved local repo directory for the current build run.
 Avoids redundant `git fetch'/clone operations when the same recipe's path
@@ -297,41 +313,54 @@ load-path entry for every other recipe's preflight check).")
         (expand-file-name rel repo-dir)
       repo-dir)))
 
+(defun elpaish--git-string (dir &rest args)
+  "Execute Git command ARGS in DIR silently into a temporary buffer without popping UI windows.
+Returns trimmed stdout string on exit 0, or nil on failure."
+  (let ((default-directory (if (and dir (file-directory-p dir))
+                               (file-name-as-directory (expand-file-name dir))
+                             default-directory)))
+    (with-temp-buffer
+      (let ((exit (apply #'call-process "git" nil (list t nil) nil args)))
+        (when (and (numberp exit) (zerop exit))
+          (string-trim (buffer-string)))))))
+
+(defun elpaish--git-lines (dir &rest args)
+  "Execute Git command ARGS in DIR silently.
+Returns list of non-empty output lines on success, or nil on failure."
+  (when-let* ((str (apply #'elpaish--git-string dir args)))
+    (split-string str "\n" t)))
+
 (defun elpaish--current-hash (repo-dir &optional source-dir-rel)
   "Get current HEAD hash in REPO-DIR, optionally scoped to SOURCE-DIR-REL."
-  (let ((default-directory repo-dir))
-    (or (if (and source-dir-rel (file-directory-p (expand-file-name ".git" repo-dir)))
-            (magit-git-string "log" "-1" "--format=%H" "--" source-dir-rel)
-          (magit-git-string "rev-parse" "HEAD"))
-        "uncommitted")))
+  (or (if (and source-dir-rel (file-directory-p (expand-file-name ".git" repo-dir)))
+          (elpaish--git-string repo-dir "log" "-1" "--format=%H" "--" source-dir-rel)
+        (elpaish--git-string repo-dir "rev-parse" "HEAD"))
+      "uncommitted"))
 
 (defun elpaish--commit-delta (repo-dir built-hash &optional source-dir-rel)
   "Calculate commit count between BUILT-HASH and HEAD in REPO-DIR.
 When SOURCE-DIR-REL is non-nil, scope the count to that subtree."
-  (let ((default-directory repo-dir))
-    (if (seq-contains-p '(nil "" "uncommitted") built-hash)
-        "New"
-      (or (if source-dir-rel
-              (magit-git-string "rev-list" "--count" (concat built-hash "..HEAD") "--" source-dir-rel)
-            (magit-git-string "rev-list" "--count" (concat built-hash "..HEAD")))
-          "0"))))
+  (if (seq-contains-p '(nil "" "uncommitted") built-hash)
+      "New"
+    (or (if source-dir-rel
+            (elpaish--git-string repo-dir "rev-list" "--count" (concat built-hash "..HEAD") "--" source-dir-rel)
+          (elpaish--git-string repo-dir "rev-list" "--count" (concat built-hash "..HEAD")))
+        "0")))
 
-;;; Track Version Derivation Engine
+;;; Release Stream Version Derivation Engine
 
 (defun elpaish--get-snapshot-version (repo-dir &optional source-dir-rel)
   "Return pure UTC date version string (YYYYMMDD.HHMMSS) for REPO-DIR.
 When SOURCE-DIR-REL is non-nil, scope the Git log query to that subtree so
 that unrelated monorepo packages do not bump each other's snapshot version.
 Derives deterministic UTC date strings from Git commit timestamps."
-  (let ((default-directory repo-dir))
-    (or (and (file-directory-p (expand-file-name ".git" repo-dir))
-             (when-let* ((epoch-str (if source-dir-rel
-                                        (magit-git-string "log" "-1" "--format=%ct" "--" source-dir-rel)
-                                      (magit-git-string "log" "-1" "--format=%ct"))))
-               (unless (string-empty-p (string-trim epoch-str))
-                 (format-time-string "%Y%m%d.%H%M%S" (seconds-to-time (string-to-number epoch-str)) t))))
-        (format-time-string "%Y%m%d.%H%M%S" nil t))))
-
+  (or (and (file-directory-p (expand-file-name ".git" repo-dir))
+           (when-let* ((epoch-str (if source-dir-rel
+                                      (elpaish--git-string repo-dir "log" "-1" "--format=%ct" "--" source-dir-rel)
+                                    (elpaish--git-string repo-dir "log" "-1" "--format=%ct"))))
+             (unless (string-empty-p (string-trim epoch-str))
+               (format-time-string "%Y%m%d.%H%M%S" (seconds-to-time (string-to-number epoch-str)) t))))
+      (format-time-string "%Y%m%d.%H%M%S" nil t)))
 (defun elpaish--stable-tag-p (tag)
   "Return non-nil if TAG is a clean semver release tag (excluding pre-releases)."
   (and (stringp tag)
@@ -346,14 +375,11 @@ Derives deterministic UTC date strings from Git commit timestamps."
 
 (defun elpaish--get-stable-version (repo-dir)
   "Return highest clean stable semver tag version in REPO-DIR, or nil if none."
-  (let* ((default-directory repo-dir))
-    (when (file-directory-p (expand-file-name ".git" repo-dir))
-      (let* ((raw-tags-str (or (magit-git-string "tag" "-l" "--sort=-v:refname") ""))
-             (all-tags (split-string raw-tags-str "\n" t))
-             (stable-tags (seq-filter #'elpaish--stable-tag-p all-tags)))
-        (when stable-tags
-          (elpaish--clean-semver-string (car stable-tags)))))))
-
+  (when (file-directory-p (expand-file-name ".git" repo-dir))
+    (let* ((all-tags (or (elpaish--git-lines repo-dir "tag" "-l" "--sort=-v:refname") nil))
+           (stable-tags (seq-filter #'elpaish--stable-tag-p all-tags)))
+      (when stable-tags
+        (elpaish--clean-semver-string (car stable-tags))))))
 (defun elpaish--normalize-staging-version (raw-ver)
   "Normalize RAW-VER string so it parses cleanly into a valid `version-to-list'."
   (let ((clean (if (string-prefix-p "v" raw-ver) (substring raw-ver 1) raw-ver)))
@@ -381,8 +407,7 @@ Derives deterministic UTC date strings from Git commit timestamps."
       (cl-return-from elpaish--get-staging-version
         (format "0.0.0.%s" (elpaish--get-snapshot-version repo-dir))))
     ;; 1. Check if any pre-release tags exist
-    (let* ((raw-tags-str (or (magit-git-string "tag" "-l" "--sort=-v:refname") ""))
-           (all-tags (split-string raw-tags-str "\n" t))
+    (let* ((all-tags (or (elpaish--git-lines repo-dir "tag" "-l" "--sort=-v:refname") nil))
            (pre-tags (seq-filter (lambda (tg)
                                    (and (string-match-p "\\`v?[0-9]" tg)
                                         (string-match-p "[-._]\\(?:rc\\|pre\\|beta\\|alpha\\)" tg)))
@@ -390,8 +415,8 @@ Derives deterministic UTC date strings from Git commit timestamps."
       (if pre-tags
           (elpaish--normalize-staging-version (car pre-tags))
         ;; 2. Fall back to git describe or commit count
-        (let ((desc (or (magit-git-string "describe" "--tags" "--always" "--long")
-                        (magit-git-string "describe" "--always"))))
+        (let ((desc (or (elpaish--git-string repo-dir "describe" "--tags" "--always" "--long")
+                        (elpaish--git-string repo-dir "describe" "--always"))))
           (cond
            ((and desc (string-match "\\`v?\\([0-9]+\\.[0-9]+\\(?:\\.[0-9]+\\)*\\)-\\([0-9]+\\)-g\\([0-9a-fA-F]+\\)\\'" desc))
             (let ((tag-part (match-string 1 desc))
@@ -399,17 +424,18 @@ Derives deterministic UTC date strings from Git commit timestamps."
               (if (string= commits-ahead "0")
                   (elpaish--clean-semver-string tag-part)
                 (format "%s.%s" tag-part commits-ahead))))
+           ((and desc (string-match "\\`v?\\([0-9]+\\.[0-9]+\\(?:\\.[0-9]+\\)*\\)\\'" desc))
+            (match-string 1 desc))
            (t
-            (let ((count (or (magit-git-string "rev-list" "--count" "HEAD") "1")))
+            (let ((count (or (elpaish--git-string repo-dir "rev-list" "--count" "HEAD") "1")))
               (format "0.0.0.%s" count)))))))))
 
-(defun elpaish-derive-version (recipe track)
-  "Derive the package version string for RECIPE on TRACK.
-TRACK is one of `elpaish', `elpaish-stable', or `elpaish-staging'.
-Returns normalized version string, or nil for `elpaish-stable' if no clean stable tag is present."
+(defun elpaish-derive-version (recipe &optional stream)
+  "Derive the package version string for RECIPE on STREAM (`snapshot', `stable', or `staging').
+Returns normalized version string, or nil for `stable' if no clean stable tag is present."
   (let* ((repo-dir (elpaish--resolve-repo-path recipe))
          (source-dir-rel (elpaish--recipe-source-dir-relative recipe))
-         (canon (elpaish-canonical-track track))
+         (canon (elpaish-canonical-stream (or stream 'snapshot)))
          (raw-ver (pcase canon
                     ('snapshot
                      (elpaish--get-snapshot-version repo-dir source-dir-rel))
@@ -825,6 +851,18 @@ Returns a plist with :summary, :reqs, :url, and :keywords."
   "Buffer name used for ELPAish package build and compilation output."
   :type 'string
   :group 'elpaish)
+(defun elpaish--write-sha256-file (file-path)
+  "Generate a `<file-path>.sha256' checksum file containing `<hash>  <basename>\\n'."
+  (when (and file-path (file-exists-p file-path))
+    (let ((hash (with-temp-buffer
+                  (set-buffer-multibyte nil)
+                  (insert-file-contents-literally file-path)
+                  (secure-hash 'sha256 (current-buffer))))
+          (base (file-name-nondirectory file-path))
+          (sha-file (concat file-path ".sha256")))
+      (with-temp-file sha-file
+        (insert (format "%s  %s\n" hash base)))
+      sha-file)))
 
 (defun elpaish--log (format-string &rest args)
   "Log message to `elpaish-build-buffer-name' and via `message'."
@@ -839,6 +877,26 @@ Returns a plist with :summary, :reqs, :url, and :keywords."
             (set-window-point win (point-max))))))
     (message "%s" msg)))
 
+(defvar elpaish-build-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map compilation-mode-map)
+    (define-key map (kbd "g") #'elpaish-build-recompile)
+    (define-key map (kbd "r") #'elpaish-build-recompile)
+    map)
+  "Keymap for `elpaish-build-mode'.")
+
+;;;###autoload
+(defun elpaish-build-recompile (&optional _ignore-auto _noconfirm)
+  "Re-run `elpaish-build-all' from the build compilation buffer."
+  (interactive)
+  (elpaish-build-all))
+
+;;;###autoload
+(define-derived-mode elpaish-build-mode compilation-mode "ELPAish-Build"
+  "Major mode for ELPAish package build and compilation logs.
+\\{elpaish-build-mode-map}"
+  (setq-local revert-buffer-function #'elpaish-build-recompile))
+
 (defmacro elpaish-with-build-buffer (title &rest body)
   "Execute BODY, directing build logs and results into `elpaish-build-buffer-name'.
 TITLE is a string describing the build operation."
@@ -849,7 +907,8 @@ TITLE is a string describing the build operation."
      (with-current-buffer buf
        (let ((inhibit-read-only t))
          (erase-buffer)
-         (compilation-mode)
+         (unless (eq major-mode 'elpaish-build-mode)
+           (elpaish-build-mode))
          (setq-local default-directory (expand-file-name elpaish-output-dir))
          (insert (propertize (format "=== ELPAish Build: %s ===\nStarted: %s\n\n"
                                      op-title
@@ -866,10 +925,10 @@ TITLE is a string describing the build operation."
                                    'face 'bold-italic)))))
        nil)))
 
-(cl-defun elpaish-build-package (recipe &optional track output-dir)
-  "Build, package, sign, and record status for RECIPE on TRACK.
-TRACK is `snapshot', `stable', or `staging'.
-OUTPUT-DIR defaults to track directory under `elpaish-output-dir'.
+(cl-defun elpaish-build-package (recipe &optional stream output-directory-path)
+  "Build, package, sign, and record status for RECIPE on STREAM.
+STREAM is `snapshot', `stable', or `staging'.
+OUTPUT-DIRECTORY-PATH defaults to stream directory under `elpaish-output-dir'.
 Always regenerates the artifact, even when the source commit is unchanged
 since the last build — elpaish's own packaging logic (file collection,
 descriptor generation, signing, etc.) can change between builds
@@ -877,8 +936,8 @@ independently of the source repository, so a cached artifact from a prior
 build's code cannot be trusted to reflect the current implementation.
 Version numbers still track the source's last commit (see
 `elpaish-derive-version'), not the time of this build."
-  (let* ((effective-track (elpaish-canonical-track (or track elpaish-release-mode)))
-         (target-dir (or output-dir (elpaish-track-dir effective-track)))
+  (let* ((effective-stream (elpaish-canonical-stream (or stream elpaish-release-mode)))
+         (target-dir (or output-directory-path (elpaish-stream-dir effective-stream)))
          (repo-dir (elpaish--recipe-source-path recipe))
          (source-dir-rel (elpaish--recipe-source-dir-relative recipe))
          (name (elpaish-recipe-name recipe))
@@ -886,9 +945,9 @@ Version numbers still track the source's last commit (see
          (main-file (expand-file-name main-file-name repo-dir))
          (current-commit (elpaish--current-hash repo-dir source-dir-rel)))
 
-    ;; Check if package is disabled for this track
-    (when (elpaish-recipe-disabled-for-track-p recipe effective-track)
-      (elpaish--log "Omitting %s from %s: Package is suppressed for this track." name effective-track)
+    ;; Check if package is disabled for this stream
+    (when (elpaish-recipe-disabled-for-stream-p recipe effective-stream)
+      (elpaish--log "Omitting %s from %s: Package is suppressed for this stream." name effective-stream)
       (cl-return-from elpaish-build-package nil))
 
     (unless (file-exists-p main-file)
@@ -900,9 +959,9 @@ Version numbers still track the source's last commit (see
       (cl-return-from elpaish-build-package nil))
 
     ;; 2. Derive Version
-    (let ((version-str (elpaish-derive-version recipe effective-track)))
+    (let ((version-str (elpaish-derive-version recipe effective-stream)))
       (unless version-str
-        (when (eq effective-track 'stable)
+        (when (eq effective-stream 'stable)
           (elpaish--log "Omitting %s from stable: No clean semver Git tag." name))
         (cl-return-from elpaish-build-package nil))
       ;; 3. Build artifact
@@ -929,11 +988,11 @@ Version numbers still track the source's last commit (see
                                             :reqs reqs :url url :keywords keywords)
             (write-region (point-min) (point-max) dest-file nil 'silent)))
 
-        ;; 4. Sign artifact
+        ;; 4. Sign artifact and write SHA256 checksum file
         (elpaish--sign-file dest-file)
-
+        (elpaish--write-sha256-file dest-file)
         ;; 5. Update recipe metadata & status
-        (setf (elpaish-recipe-version-for-track recipe effective-track) version-str)
+        (setf (elpaish-recipe-version-for-stream recipe effective-stream) version-str)
 
         (setf (elpaish-recipe-built-type recipe) pkg-type
               (elpaish-recipe-summary recipe) summary
@@ -942,23 +1001,23 @@ Version numbers still track the source's last commit (see
               (elpaish-recipe-requires recipe) reqs
               (elpaish-recipe-built-hash recipe) current-commit)
 
-        (elpaish--log "Successfully built %s version %s on %s" name version-str effective-track)
+        (elpaish--log "Successfully built %s version %s on %s" name version-str effective-stream)
         dest-file))))
 
 ;;; Archive Contents Generation
 
-(defun elpaish-generate-archive-contents (&optional track output-dir)
-  "Generate `archive-contents' and its signature for TRACK in OUTPUT-DIR."
-  (let* ((effective-track (elpaish-canonical-track (or track elpaish-release-mode)))
-         (target-dir (or output-dir (elpaish-track-dir effective-track)))
+(defun elpaish-generate-archive-contents (&optional stream output-directory-path)
+  "Generate `archive-contents' and its signature for STREAM in OUTPUT-DIRECTORY-PATH."
+  (let* ((effective-stream (elpaish-canonical-stream (or stream elpaish-release-mode)))
+         (target-dir (or output-directory-path (elpaish-stream-dir effective-stream)))
          (archive-file (expand-file-name "archive-contents" target-dir))
          (recipes (hash-table-values elpaish-registry))
          (entries
           (delq nil
                 (mapcar
                  (lambda (recipe)
-                   (unless (elpaish-recipe-disabled-for-track-p recipe effective-track)
-                     (when-let* ((ver-str (elpaish-recipe-version-for-track recipe effective-track)))
+                   (unless (elpaish-recipe-disabled-for-stream-p recipe effective-stream)
+                     (when-let* ((ver-str (elpaish-recipe-version-for-stream recipe effective-stream)))
                        (let* ((name (intern (elpaish-recipe-name recipe)))
                               (ver (version-to-list ver-str))
                               (summary (or (elpaish-recipe-summary recipe) "No description"))
@@ -980,53 +1039,57 @@ Version numbers still track the source's last commit (see
       (insert ";; -*- no-byte-compile: t -*-\n")
       (pp `(1 ,@entries) (current-buffer)))
     (elpaish--sign-file archive-file)
+    (elpaish--write-sha256-file archive-file)
     archive-file))
 
-;; `elpaish-generate-github-index' and `elpaish-generate-top-index' render the
-;; static GitHub Pages catalog and landing page; they live in
-;; `elpaish-website.el' (which requires this file) to keep HTML/CSS
-;; generation separate from archive building. Callers that invoke
-;; `elpaish-build-all' must load `elpaish-website' first.
-(declare-function elpaish-generate-github-index "elpaish-website" (&optional track output-dir title))
+(declare-function elpaish-generate-stream-index "elpaish-website" (&optional stream output-dir title))
+(declare-function elpaish-generate-github-index "elpaish-website" (&optional stream output-dir title))
 (declare-function elpaish-generate-top-index "elpaish-website" (&optional output-dir))
 
 ;;; Build Orchestration
 
 ;;;###autoload
-(cl-defun elpaish-build-all (&optional mode output-dir)
+(cl-defun elpaish-build-all (&optional mode output-directory-path)
   "Build registered packages, generate indexes, and sign archives.
 MODE can be `all', `snapshot', `stable', or `staging'.
-Defaults to `elpaish-release-mode'. OUTPUT-DIR defaults to `elpaish-output-dir'.
+Defaults to `elpaish-release-mode'. OUTPUT-DIRECTORY-PATH defaults to `elpaish-output-dir'.
 Every registered package is rebuilt unconditionally on every call; see
 `elpaish-build-package'."
   (interactive)
   (clrhash elpaish--resolved-repo-path-cache)
   (let* ((effective-mode (or mode elpaish-release-mode))
-         (target-root (or output-dir elpaish-output-dir))
-         (tracks (if (eq effective-mode 'all)
-                     elpaish-tracks
-                   (list (elpaish-canonical-track effective-mode)))))
+         (target-root (or output-directory-path elpaish-output-dir))
+         (streams (if (eq effective-mode 'all)
+                      elpaish-streams
+                    (list (elpaish-canonical-stream effective-mode))))
+         (server-was-running (process-live-p elpaish-server-process))
+         (server-port (and server-was-running (process-contact elpaish-server-process :service))))
     (elpaish-with-build-buffer (format "Build All (%s)" effective-mode)
       (make-directory target-root t)
-      (dolist (track tracks)
-        (let ((track-dir (elpaish-track-dir track target-root)))
-          (make-directory track-dir t)
+      (dolist (stream streams)
+        (let ((stream-dir (elpaish-stream-dir stream target-root)))
+          (make-directory stream-dir t)
           (dolist (recipe (hash-table-values elpaish-registry))
-            (elpaish-build-package recipe track track-dir))
-          (elpaish-generate-archive-contents track track-dir)
-          (elpaish-generate-github-index track track-dir)))
+            (elpaish-build-package recipe stream stream-dir))
+          (elpaish-generate-archive-contents stream stream-dir)
+          (elpaish-generate-stream-index stream stream-dir)))
 
       ;; Generate top-level landing page and public keyrings
       (elpaish-generate-top-index target-root)
       (elpaish-export-keyring target-root)
+
+      ;; If preview server was running before build, ensure it remains active
+      (when server-was-running
+        (unless (process-live-p elpaish-server-process)
+          (elpaish-serve-local server-port target-root)))
 
       (elpaish--log "ELPAish repository successfully generated at %s" target-root)
       (when (eq major-mode 'elpaish-status-mode)
         (elpaish-status-refresh)))))
 
 ;;;###autoload
-(defun elpaish-build-single (recipe-or-name &optional track output-dir)
-  "Interactively build and sign a single package RECIPE-OR-NAME for TRACK."
+(defun elpaish-build-single (recipe-or-name &optional stream output-directory-path)
+  "Interactively build and sign a single package RECIPE-OR-NAME for STREAM."
   (interactive
    (let* ((names (sort (hash-table-keys elpaish-registry) #'string<))
           (table (mapcar (lambda (n)
@@ -1037,38 +1100,48 @@ Every registered package is rebuilt unconditionally on every call; see
           (picked (if (and (fboundp 'annotated-completing-read) table)
                       (annotated-completing-read table :prompt "Build ELPAish package: " :require-match t)
                     (completing-read "Build ELPAish package: " names nil t)))
-          (track-choice (if (fboundp 'annotated-completing-read)
-                            (annotated-completing-read
-                             '(("all" . "Build across all tracks (snapshot, stable, staging)")
-                               ("snapshot" . "Snapshot / development track")
-                               ("stable" . "Clean semver release track")
-                               ("staging" . "Pre-release / RC track"))
-                             :prompt "Track: " :default "all" :require-match t)
-                          (completing-read "Track (all/snapshot/stable/staging, default all): "
-                                           '("all" "snapshot" "stable" "staging") nil t nil nil "all"))))
-     (list (gethash picked elpaish-registry) (intern track-choice))))
-  (let* ((recipe (if (stringp recipe-or-name)
-                     (gethash recipe-or-name elpaish-registry)
-                   recipe-or-name))
-         (effective-track (or track 'all)))
+          (stream-choice (if (fboundp 'annotated-completing-read)
+                             (annotated-completing-read
+                              '(("all" . "Build across all release streams (snapshot, stable, staging)")
+                                ("snapshot" . "Snapshot / development release stream")
+                                ("stable" . "Clean semver release stream")
+                                ("staging" . "Pre-release / RC release stream"))
+                              :prompt "Release stream: " :default "all" :require-match t)
+                           (completing-read "Release stream (all/snapshot/stable/staging, default all): "
+                                            '("all" "snapshot" "stable" "staging") nil t nil nil "all"))))
+     (list (gethash picked elpaish-registry) (intern stream-choice))))
+  (let* ((recipe (cond
+                  ((elpaish-recipe-p recipe-or-name) recipe-or-name)
+                  ((symbolp recipe-or-name) (gethash (symbol-name recipe-or-name) elpaish-registry))
+                  ((stringp recipe-or-name) (gethash recipe-or-name elpaish-registry))
+                  (t nil)))
+         (effective-stream (or stream 'all))
+         (target-root (or output-directory-path elpaish-output-dir))
+         (server-was-running (process-live-p elpaish-server-process))
+         (server-port (and server-was-running (process-contact elpaish-server-process :service))))
     (unless recipe
       (user-error "Recipe %s not found in registry" recipe-or-name))
-    (elpaish-with-build-buffer (format "%s (%s)" (elpaish-recipe-name recipe) effective-track)
-      (let* ((target-root (or output-dir elpaish-output-dir))
-             (tracks (if (eq effective-track 'all)
-                         elpaish-tracks
-                       (list (elpaish-canonical-track effective-track)))))
-        (dolist (tr tracks)
-          (let ((track-dir (elpaish-track-dir tr target-root)))
-            (make-directory track-dir t)
-            (elpaish-build-package recipe tr track-dir)
-            (elpaish-generate-archive-contents tr track-dir)
-            (elpaish-generate-github-index tr track-dir)))
+    (elpaish-with-build-buffer (format "%s (%s)" (elpaish-recipe-name recipe) effective-stream)
+      (let ((streams (if (eq effective-stream 'all)
+                         elpaish-streams
+                       (list (elpaish-canonical-stream effective-stream)))))
+        (dolist (st streams)
+          (let ((stream-dir (elpaish-stream-dir st target-root)))
+            (make-directory stream-dir t)
+            (elpaish-build-package recipe st stream-dir)
+            (elpaish-generate-archive-contents st stream-dir)
+            (elpaish-generate-stream-index st stream-dir)))
         (elpaish-generate-top-index target-root)
+
+        ;; If preview server was running before build, ensure it remains active
+        (when server-was-running
+          (unless (process-live-p elpaish-server-process)
+            (elpaish-serve-local server-port target-root)))
+
         (when (eq major-mode 'elpaish-status-mode)
           (elpaish-status-refresh))
         (elpaish--log "Single build complete for %s on %s."
-                      (elpaish-recipe-name recipe) effective-track)))))
+                      (elpaish-recipe-name recipe) effective-stream)))))
 
 ;;;###autoload
 (defun elpaish-preflight-single (recipe-or-name)
@@ -1080,9 +1153,11 @@ Every registered package is rebuilt unconditionally on every call; see
                                                  :prompt "Preflight package: " :require-match t)
                     (completing-read "Preflight package: " names nil t))))
      (list (gethash picked elpaish-registry))))
-  (let ((recipe (if (stringp recipe-or-name)
-                    (gethash recipe-or-name elpaish-registry)
-                  recipe-or-name)))
+  (let ((recipe (cond
+                 ((elpaish-recipe-p recipe-or-name) recipe-or-name)
+                 ((symbolp recipe-or-name) (gethash (symbol-name recipe-or-name) elpaish-registry))
+                 ((stringp recipe-or-name) (gethash recipe-or-name elpaish-registry))
+                 (t nil))))
     (unless recipe
       (user-error "Recipe not found"))
     (if (elpaish-preflight-package recipe)
@@ -1096,12 +1171,11 @@ Every registered package is rebuilt unconditionally on every call; see
   (let ((buf (get-buffer-create elpaish-build-buffer-name)))
     (with-current-buffer buf
       (unless (derived-mode-p 'compilation-mode)
-        (compilation-mode)))
+        (elpaish-build-mode)))
     (display-buffer buf)))
-
 ;;; Local Preview HTTP Server
 
-(defcustom elpaish-preview-server-port 8080
+(defcustom elpaish-preview-server-port 9001
   "Default TCP port for `elpaish-serve-local' when none is specified."
   :type 'natnum
   :group 'elpaish)
@@ -1286,22 +1360,20 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
                                      curr-hash
                                      (format "+%s" delta))))))))
   (tabulated-list-print t))
-
 ;;;###autoload
 (defun elpaish-status-build-at-point ()
-  "Build the package at point across all tracks."
+  "Build the package at point across all release streams."
   (interactive)
   (if-let* ((name (tabulated-list-get-id))
             (recipe (gethash name elpaish-registry)))
       (progn
-        (dolist (track elpaish-tracks)
-          (elpaish-build-package recipe track)
-          (elpaish-generate-archive-contents track)
-          (elpaish-generate-github-index track))
+        (dolist (stream elpaish-streams)
+          (elpaish-build-package recipe stream)
+          (elpaish-generate-archive-contents stream)
+          (elpaish-generate-stream-index stream))
         (elpaish-generate-top-index)
-        (elpaish-status-refresh)
-        (message "Rebuilt %s across all tracks." name))
-    (user-error "No recipe found at point")))
+        (elpaish-status-refresh))
+    (user-error "No recipe at point")))
 
 ;;;###autoload
 (defun elpaish-status-preflight-at-point ()
@@ -1349,23 +1421,24 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
   [:description "ELPAish Repository Builder"
    ["Build Actions"
     ("b" "Build single package" elpaish-build-single)
-    ("a" "Build all packages (all tracks)" (lambda () (interactive) (elpaish-build-all 'all)))
-    ("s" "Build snapshot track" (lambda () (interactive) (elpaish-build-all 'snapshot)))
-    ("r" "Build stable track" (lambda () (interactive) (elpaish-build-all 'stable)))
-    ("t" "Build staging track" (lambda () (interactive) (elpaish-build-all 'staging)))]
+    ("a" "Build all packages (all streams)" (lambda () (interactive) (elpaish-build-all 'all)))
+    ("s" "Build snapshot stream" (lambda () (interactive) (elpaish-build-all 'snapshot)))
+    ("r" "Build stable stream" (lambda () (interactive) (elpaish-build-all 'stable)))
+    ("t" "Build staging stream" (lambda () (interactive) (elpaish-build-all 'staging)))]
    ["Quality & Inspection"
     ("p" "Preflight single package" elpaish-preflight-single)
     ("P" "Preflight all packages" elpaish-status-preflight-all)
     ("v" "Status overview" elpaish-status)
     ("c" "Run quality check suite" elpaish-run-checks)
     ("l" "View build log" elpaish-view-build-log)]
+   ["Website & Preview"
+    ("g" "Rebuild website only" elpaish-build-website)
+    ("w" "Start local preview server" elpaish-serve-local)
+    ("W" "Stop preview server" elpaish-stop-server)
+    ("R" "Reload package recipes" (lambda () (interactive) (elpaish-load-packages) (message "Reloaded package recipes.")))]
    ["Keyring & Operations"
     ("k" "Export GPG keyring" elpaish-export-keyring)
-    ("K" "Rotate GPG signing keys" elpaish-rotate-keys)
-    ("R" "Reload package recipes" (lambda () (interactive) (elpaish-load-packages) (message "Reloaded package recipes.")))
-    ("w" "Start local preview server" elpaish-serve-local)
-    ("W" "Stop preview server" elpaish-stop-server)]])
-
+    ("K" "Rotate GPG signing keys" elpaish-rotate-keys)]])
 (defalias 'elpaish-dispatch 'elpaish-menu
   "Alias for `elpaish-menu'.")
 

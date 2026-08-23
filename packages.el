@@ -12,6 +12,7 @@
                       "https://github.com/tychoish/annotated-completing-read.git")
  :branch "main"
  :files '("annotated-completing-read.el")
+ :preflight-skip '(ert)
  :test-dir "test"
  :summary "Annotated completing-read interface with aligned annotations"
  :url "https://github.com/tychoish/annotated-completing-read"

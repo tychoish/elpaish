@@ -152,17 +152,20 @@
     (cons (nreverse errs) (nreverse warns))))
 
 (defun elpaish-check--ert (test-files pkg-name verbose extra-load-path)
-  "Run ERT on TEST-FILES for PKG-NAME with EXTRA-LOAD-PATH. Returns list of error strings."
+  "Run ERT on TEST-FILES for PKG-NAME with EXTRA-LOAD-PATH silently without popping up buffers.
+Returns list of error strings."
   (when verbose (message "[elpaish-check] 5. Running ERT tests (%d files)..." (length test-files)))
-  (let ((errs nil))
-    (when (fboundp 'ert-delete-all-tests)
-      (ert-delete-all-tests))
+  (let ((errs nil)
+        (orig-registry (when (boundp 'ert--test-registry)
+                         (copy-hash-table ert--test-registry))))
     (dolist (tf test-files)
       (condition-case err
           (let ((load-path (append extra-load-path load-path)))
             (load tf nil t)
-            (let* ((stats (ert (format "%s.*" pkg-name)))
-                   (failed (ert-stats-completed-unexpected stats)))
+            (let* ((selector (format "\\`%s" (regexp-quote pkg-name)))
+                   (stats (ert-run-tests (ert-select-tests selector t)
+                                         (lambda (_event-type &rest _args) nil)))
+                   (failed (if stats (ert-stats-completed-unexpected stats) 0)))
               (when (> failed 0)
                 (push (format "ERT: %d test(s) failed in %s" failed (file-name-nondirectory tf)) errs))))
         (error
@@ -170,6 +173,8 @@
                        (file-name-nondirectory tf)
                        (error-message-string err))
                errs))))
+    (when (and orig-registry (boundp 'ert--test-registry))
+      (setq ert--test-registry orig-registry))
     (nreverse errs)))
 ;;;###autoload
 (cl-defun elpaish-check-package (&optional dir &key main-file test-dir skip-checks verbose

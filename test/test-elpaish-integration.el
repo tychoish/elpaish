@@ -53,12 +53,16 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
           (elpaish-output-dir (expand-file-name "public/" temp-root))
           (elpaish-work-dir (expand-file-name "repos/" temp-root))
           (elpaish-registry (make-hash-table :test 'equal))
+          (elpaish--resolved-repo-path-cache (make-hash-table :test 'eq))
+          (elpaish-server-process nil)
           (consumer-home (expand-file-name "consumer/" temp-root)))
      (make-directory consumer-home t)
      (unwind-protect
          (progn ,@body)
        (when (process-live-p elpaish-server-process)
          (elpaish-stop-server))
+       (clrhash elpaish-registry)
+       (clrhash elpaish--resolved-repo-path-cache)
        (delete-directory temp-root t))))
 
 (defun elpaish-integration--create-fixture-pkg (dir name version summary &optional reqs)
@@ -100,7 +104,7 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
        (elpaish-build-all 'snapshot elpaish-output-dir))
 
      ;; 4. Run consumer installation in isolated emacs -Q subprocess
-     (let* ((archive-dir (elpaish-track-dir 'snapshot elpaish-output-dir))
+     (let* ((archive-dir (elpaish-stream-dir 'snapshot elpaish-output-dir))
             (sub-code
              (format "(progn
   (require (quote package))
@@ -165,7 +169,7 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
 
              ;; Export public key for consumer
              (let ((pub-key-file (expand-file-name "elpaish.pub.asc" elpaish-output-dir))
-                   (archive-dir (elpaish-track-dir 'snapshot elpaish-output-dir)))
+                   (archive-dir (elpaish-stream-dir 'snapshot elpaish-output-dir)))
 
                ;; Consumer subprocess imports public key and verifies signatures
                (let* ((default-directory consumer-home)
