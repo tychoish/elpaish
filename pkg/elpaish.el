@@ -578,20 +578,25 @@ KEY-ID is the signing key. PASSPHRASE is the optional passphrase."
 
 (defun elpaish--sign-file (file)
   "Generate a detached GPG signature `FILE.sig' for FILE if signing is enabled.
-Strictly non-interactive: executes in batch mode via loopback without prompting."
+Strictly non-interactive: executes in batch mode via loopback without prompting.
+Signals an error if signing is enabled but the signature cannot be produced,
+so a misconfigured key or passphrase fails the build instead of silently
+publishing an archive without signatures."
   (when elpaish-sign-packages
     (let ((key-id (elpaish--get-signing-key))
           (passphrase (elpaish--get-signing-passphrase))
           (sig-file (concat file ".sig")))
       (when (file-exists-p sig-file)
         (delete-file sig-file))
-      (when (executable-find "gpg")
-        (let ((exit-code (elpaish--sign-with-gpg-cli file sig-file key-id passphrase)))
-          (if (and (numberp exit-code) (zerop exit-code) (file-exists-p sig-file))
-              (message "Signed %s -> %s"
-                       (file-name-nondirectory file)
-                       (file-name-nondirectory sig-file))
-            (message "Warning: Failed to sign %s" (file-name-nondirectory file))))))))
+      (unless (executable-find "gpg")
+        (error "elpaish-sign-packages is enabled but `gpg' was not found in PATH"))
+      (let ((exit-code (elpaish--sign-with-gpg-cli file sig-file key-id passphrase)))
+        (if (and (numberp exit-code) (zerop exit-code) (file-exists-p sig-file))
+            (message "Signed %s -> %s"
+                     (file-name-nondirectory file)
+                     (file-name-nondirectory sig-file))
+          (error "Failed to sign %s (gpg exit code %S)"
+                 (file-name-nondirectory file) exit-code))))))
 
 ;;;###autoload
 (cl-defun elpaish-sign-file-headless (file &key key-id passphrase output-file)
