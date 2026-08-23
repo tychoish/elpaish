@@ -242,7 +242,7 @@
          (goto-char (point-min))
          (should (search-forward "max-width:1240px" nil t))
          (goto-char (point-min))
-         (should (search-forward "font-size:18px" nil t))
+         (should (search-forward "font-size:20px" nil t))
          (goto-char (point-min))
          (should (search-forward "table-wrapper" nil t))
          (goto-char (point-min))
