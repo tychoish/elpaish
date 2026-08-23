@@ -22,7 +22,7 @@
 (package-refresh-contents)
 
 (defconst elpaish-bootstrap-deps
-  '(package-lint magit projectile f s ht seq compat transient modus-themes)
+  '(package-lint magit projectile transient modus-themes)
   "Prerequisite packages needed to build and validate the ecosystem in CI.")
 
 (dolist (pkg elpaish-bootstrap-deps)
