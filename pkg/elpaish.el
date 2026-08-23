@@ -501,6 +501,39 @@ Returns normalized version string, or nil for `elpaish-stable' if no clean stabl
             (call-process "tar" nil nil nil "-cf" dest-file pkg-name-ver)))
       (delete-directory temp-dir t))))
 
+(defun elpaish-preflight-package (recipe)
+  "Execute preflight quality gates on RECIPE.
+Returns t if checks pass, nil if quarantined."
+  (if (not elpaish-run-preflight)
+      t
+    (let ((skip (elpaish-recipe-preflight-skip recipe)))
+      (if (eq skip t)
+          t
+        (unless (featurep 'elpaish-check)
+          (require 'elpaish-check nil t))
+        (if (fboundp 'elpaish-check-package)
+            (let* ((repo-dir (elpaish--recipe-source-path recipe))
+                   (name (elpaish-recipe-name recipe))
+                   (main-file (if (string-suffix-p ".el" name) name (concat name ".el")))
+                   (sibling-dirs (thread-last (hash-table-values elpaish-registry)
+                                   (seq-remove (lambda (r) (eq r recipe)))
+                                   (seq-map #'elpaish--recipe-source-path)))
+                   (tdir (elpaish-recipe-test-dir recipe))
+                   (res (elpaish-check-package repo-dir
+                                               :main-file (and (file-exists-p (expand-file-name main-file repo-dir)) main-file)
+                                               :test-dir tdir
+                                               :skip-checks skip
+                                               :extra-load-path sibling-dirs))
+                   (passed (plist-get res :passed))
+                   (errs (plist-get res :errors)))
+              (unless passed
+                (message "PREFLIGHT QUARANTINE for %s: %d error(s)"
+                         name (length errs))
+                (dolist (e errs)
+                  (message "   - %s" e)))
+              passed)
+          t)))))
+
 ;;; GPG Package & Archive Signing Pipeline
 
 (defun elpaish--detect-secret-key-id ()
@@ -716,36 +749,6 @@ REPO-SLUG defaults to \"tychoish/elpaish\"."
     (call-process gpg-bin nil nil nil "--batch" "--yes" "--armor" "--output" rev-file "--gen-revoke" key-id)
     (elpaish-export-keyring target-dir)
     (message "Published revocation certificate to %s" rev-file)))
-
-;;; Preflight Package Quality Gates
-
-(defun elpaish-preflight-package (recipe)
-  "Execute preflight quality gates on RECIPE.
-Returns t if checks pass, nil if quarantined."
-  (if (not elpaish-run-preflight)
-      t
-    (let ((skip (elpaish-recipe-preflight-skip recipe)))
-      (if (eq skip t)
-          t
-        (unless (featurep 'elpaish-check)
-          (require 'elpaish-check nil t))
-        (if (fboundp 'elpaish-check-package)
-            (let* ((repo-dir (elpaish--recipe-source-path recipe))
-                   (sibling-dirs (thread-last (hash-table-values elpaish-registry)
-                                   (seq-remove (lambda (r) (eq r recipe)))
-                                   (seq-map #'elpaish--recipe-source-path)))
-                   (tdir (elpaish-recipe-test-dir recipe))
-                   (res (elpaish-check-package repo-dir :test-dir tdir :skip-checks skip
-                                               :extra-load-path sibling-dirs))
-                   (passed (plist-get res :passed))
-                   (errs (plist-get res :errors)))
-              (unless passed
-                (message "PREFLIGHT QUARANTINE for %s: %d error(s)"
-                         (elpaish-recipe-name recipe) (length errs))
-                (dolist (e errs)
-                  (message "   - %s" e)))
-              passed)
-          t)))))
 
 ;;; Package Build Engine
 

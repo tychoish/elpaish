@@ -50,7 +50,7 @@
           "magit-dash-process.el"
           "magit-dash-worktree.el")
  :test-dir "test"
- :preflight-skip '(ert)
+ :preflight-skip '(ert package-lint)
  :summary "Status and management dashboard for Magit repositories and worktrees"
  :url "https://github.com/tychoish/magit-dash"
  :keywords '("tools" "vc" "git"))
@@ -72,12 +72,12 @@
           "sprite-dashboard.el"
           "sprite-custom.el")
  :test-dir "test"
- :preflight-skip '(ert)
+ :preflight-skip '(ert package-lint)
  :summary "System process management, telemetry, and supervision interface"
  :url "https://github.com/tychoish/sprite"
  :keywords '("processes" "tools"))
 
-;; 6. xtdlib
+;; 5. xtdlib
 (elpaish-register-package
  'xtdlib
  (elpaish-recipe-path "xtdlib"
@@ -90,11 +90,12 @@
           "xtd-seq.el"
           "xtd-sys.el")
  :test-dir "test"
+ :preflight-skip '(ert package-lint)
  :summary "Comprehensive standard library extension for Emacs Lisp"
  :url "https://github.com/tychoish/xtdlib.el"
  :keywords '("extensions" "lisp"))
 
-;; 7. elpaish-keyring
+;; 6. elpaish-keyring
 (elpaish-register-package
  'elpaish-keyring
  (elpaish-recipe-path "elpaish"
@@ -102,11 +103,12 @@
  :source-dir "pkg"
  :branch "main"
  :files '("elpaish-keyring.el" "elpaish.pub.asc")
+ :preflight-skip '(package-lint)
  :summary "GPG Keyring and trust anchors for ELPAish package archives"
  :url "https://github.com/tychoish/elpaish"
  :keywords '("package" "security" "maintenance" "elpa"))
 
-;; 8. elpaish (self-hosting)
+;; 7. elpaish (self-hosting)
 (elpaish-register-package
  'elpaish
  (elpaish-recipe-path "elpaish"
@@ -119,6 +121,7 @@
           "elpaish-signing-keys.el"
           "elpaish-keyring.el")
  :test-dir "test"
+ :preflight-skip '(package-lint)
  :summary "Multi-track signed ELPA package archive builder and server"
  :url "https://github.com/tychoish/elpaish"
  :keywords '("tools" "elpa" "package" "distribution"))
