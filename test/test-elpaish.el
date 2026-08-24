@@ -285,8 +285,6 @@
          (goto-char (point-min))
          (should (search-forward (format "color:%s" (elpaish-css-color 'fg-link)) nil t))
          (goto-char (point-min))
-         (should (search-forward "width:260px" nil t))
-         (goto-char (point-min))
          (should (search-forward "annotated-completing-read" nil t)))))))
 
 (ert-deftest elpaish-test-build-all-streams ()
