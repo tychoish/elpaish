@@ -50,8 +50,8 @@
           (package-check-signature nil))
      (unwind-protect
          (progn ,@body)
-       (when (process-live-p elpaish-server-process)
-         (elpaish-stop-server))
+      (when (elpaish-server-running-p)
+        (elpaish-stop-server))
        (when (timerp elpaish-timer)
          (cancel-timer elpaish-timer))
        (when orig-registry-snapshot
@@ -368,7 +368,7 @@
      (unwind-protect
          (progn
            (elpaish-serve-local test-port elpaish-output-dir)
-           (should (process-live-p elpaish-server-process))
+          (should (elpaish-server-running-p))
 
            ;; Verify HTTP request to preview server
            (let ((url-buf (url-retrieve-synchronously (format "http://127.0.0.1:%d/snapshot/archive-contents" test-port) t t 5)))
@@ -581,7 +581,8 @@
   (should (equal (elpaish--http-mime-type "foo.html") "text/html; charset=utf-8"))
 
   (elpaish-test-with-temp-env
-   (let ((doc-root temp-dir))
+   (let ((doc-root temp-dir)
+         (test-port (+ 18000 (random 2000))))
      (with-temp-file (expand-file-name "test.html" doc-root) (insert "<h1>Hello</h1>"))
 
      ;; 200 OK
@@ -600,7 +601,40 @@
 
      ;; 400 Bad Request
      (let ((res (elpaish--handle-http-request "POST /test.html HTTP/1.1\r\n" doc-root)))
-       (should (string-prefix-p "HTTP/1.1 400 Bad Request" (car res)))))))
+       (should (string-prefix-p "HTTP/1.1 400 Bad Request" (car res))))
+
+     ;; Live HTTP server tests via web-server
+     (unwind-protect
+         (progn
+           (elpaish-serve-local test-port doc-root)
+           (should (elpaish-server-running-p))
+
+           ;; Live GET 200 OK
+           (let ((url-buf (url-retrieve-synchronously (format "http://127.0.0.1:%d/test.html" test-port) t t 5)))
+             (should url-buf)
+             (with-current-buffer url-buf
+               (goto-char (point-min))
+               (should (search-forward "200 OK" nil t))
+               (should (search-forward "<h1>Hello</h1>" nil t))
+               (kill-buffer url-buf)))
+
+           ;; Live HEAD 200 OK
+           (let ((url-request-method "HEAD"))
+             (let ((url-buf (url-retrieve-synchronously (format "http://127.0.0.1:%d/test.html" test-port) t t 5)))
+               (should url-buf)
+               (with-current-buffer url-buf
+                 (goto-char (point-min))
+                 (should (search-forward "200 OK" nil t))
+                 (kill-buffer url-buf))))
+
+           ;; Live GET 404
+           (let ((url-buf (url-retrieve-synchronously (format "http://127.0.0.1:%d/nonexistent.el" test-port) t t 5)))
+             (should url-buf)
+             (with-current-buffer url-buf
+               (goto-char (point-min))
+               (should (search-forward "404 Not Found" nil t))
+               (kill-buffer url-buf))))
+       (elpaish-stop-server)))))
 
 (ert-deftest elpaish-test-stable-stream-omission ()
   "Test omitting packages without clean semver tag from stable stream."
@@ -945,14 +979,13 @@ source's last commit time rather than the time of the build."
      (elpaish-register-package 'persist-pkg pkg-dir)
      (elpaish-build-all 'snapshot)
      (elpaish-serve-local test-port elpaish-output-dir)
-     (should (process-live-p elpaish-server-process))
+     (should (elpaish-server-running-p))
      ;; Run build-all while server is running
      (elpaish-build-all 'snapshot)
-     (should (process-live-p elpaish-server-process))
+     (should (elpaish-server-running-p))
      ;; Run build-single while server is running
      (elpaish-build-single 'persist-pkg 'snapshot)
-     (should (process-live-p elpaish-server-process)))))
-
+     (should (elpaish-server-running-p)))))
 (ert-deftest elpaish-test-two-row-detail-layout ()
   "Test that package catalogs emit distinct rows for the main entry and detail view."
   (elpaish-test-with-temp-env

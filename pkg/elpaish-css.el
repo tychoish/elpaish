@@ -148,7 +148,7 @@ DECLARATIONS is an alist of (PROPERTY . VALUE) strings."
          (border-bottom . ,(format "2px solid %s" (elpaish-css-color 'fg-dim))))
      ("tr.pkg-row" (border-bottom . ,(format "1px solid %s" (elpaish-css-color 'bg-inactive))))
      ("tr.pkg-row:hover" (background . "transparent"))
-     (".pkg-name-cell" (width . "260px"))
+     (".pkg-name-cell" (width . "300px"))
      ("input.pkg-toggle-input" (display . "none"))
      ("label.pkg-toggle-label" (cursor . "pointer")
                                (display . "inline-flex")

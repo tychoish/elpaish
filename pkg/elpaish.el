@@ -2,8 +2,7 @@
 
 ;; Author: tychoish
 ;; Keywords: maintenance, tools, local, package, elpa
-;; Package-Requires: ((emacs "27.1") (htmlize "1.34") (map "3.0") (seq "2.0"))
-
+;; Package-Requires: ((emacs "27.1") (htmlize "1.34") (map "3.0") (seq "2.0") (web-server "0.1.2"))
 ;;; Commentary:
 ;; ELPAish is a toolkit for building (and a prototype application of) an
 ;; Emacs Lisp package archive/repository hosted on GitHub Pages or web servers.
@@ -39,12 +38,12 @@
 (require 'tabulated-list)
 (require 'timer)
 (require 'compile)
+(require 'web-server)
 
 (require 'htmlize nil t)
 (require 'elpaish-check nil t)
 (require 'annotated-completing-read nil t)
 (require 'transient nil t)
-
 (defgroup elpaish nil
   "ELPA package repository builder."
   :group 'development)
@@ -146,9 +145,8 @@ or `elpaish-staging' (pre-release tags and git describe)."
 
 (defvar elpaish-timer nil
   "Timer object for scheduled repository auto-rebuilds.")
-
 (defvar elpaish-server-process nil
-  "Process handle for local preview HTTP server.")
+  "Server object or process handle for local preview HTTP server.")
 
 (defvar elpaish--quarantined-packages nil
   "Names of packages quarantined by preflight during the current build run.
@@ -1075,8 +1073,8 @@ Every registered package is rebuilt unconditionally on every call; see
          (streams (if (eq effective-mode 'all)
                       elpaish-streams
                     (list (elpaish-canonical-stream effective-mode))))
-         (server-was-running (process-live-p elpaish-server-process))
-         (preview-port (and server-was-running (process-contact elpaish-server-process :service)))
+         (server-was-running (elpaish-server-running-p))
+         (preview-port (and server-was-running (elpaish--server-port elpaish-server-process)))
          (elpaish--quarantined-packages nil))
     (elpaish-with-build-buffer (format "Build All (%s)" effective-mode)
       (make-directory target-root t)
@@ -1094,7 +1092,7 @@ Every registered package is rebuilt unconditionally on every call; see
 
       ;; If preview server was running before build, ensure it remains active
       (when server-was-running
-        (unless (process-live-p elpaish-server-process)
+        (unless (elpaish-server-running-p)
           (elpaish-serve-local preview-port target-root)))
 
       (elpaish--log "ELPAish repository successfully generated at %s" target-root)
@@ -1141,8 +1139,8 @@ Every registered package is rebuilt unconditionally on every call; see
                   (t nil)))
          (effective-stream (or stream 'all))
          (target-root (or output-directory-path elpaish-output-dir))
-         (server-was-running (process-live-p elpaish-server-process))
-         (preview-port (and server-was-running (process-contact elpaish-server-process :service)))
+         (server-was-running (elpaish-server-running-p))
+         (preview-port (and server-was-running (elpaish--server-port elpaish-server-process)))
          (elpaish--quarantined-packages nil))
     (unless recipe
       (user-error "Recipe %s not found in registry" recipe-or-name))
@@ -1160,7 +1158,7 @@ Every registered package is rebuilt unconditionally on every call; see
 
         ;; If preview server was running before build, ensure it remains active
         (when server-was-running
-          (unless (process-live-p elpaish-server-process)
+          (unless (elpaish-server-running-p)
             (elpaish-serve-local preview-port target-root)))
 
         (when (eq major-mode 'elpaish-status-mode)
@@ -1223,6 +1221,64 @@ Every registered package is rebuilt unconditionally on every call; see
   (or (cdr (seq-find (lambda (entry) (string-suffix-p (car entry) path)) elpaish--mime-types))
       "text/plain"))
 
+(defun elpaish--server-port (&optional server)
+  "Return active port of SERVER or `elpaish-server-process'."
+  (let ((s (or server elpaish-server-process)))
+    (cond
+     ((null s) nil)
+     ((and (fboundp 'ws-port) (ws-port s))
+      (ws-port s))
+     ((and (fboundp 'ws-process) (ws-process s) (process-live-p (ws-process s)))
+      (process-contact (ws-process s) :service))
+     ((processp s)
+      (and (process-live-p s) (process-contact s :service)))
+     (t nil))))
+
+(defun elpaish-server-running-p (&optional server)
+  "Return non-nil if SERVER or `elpaish-server-process' is currently running."
+  (let ((s (or server elpaish-server-process)))
+    (cond
+     ((null s) nil)
+     ((and (fboundp 'ws-process) (ignore-errors (ws-process s)))
+      (let ((proc (ws-process s)))
+        (and (processp proc) (process-live-p proc))))
+     ((processp s)
+      (process-live-p s))
+     (t nil))))
+
+(defun elpaish--handle-ws-request (request doc-root)
+  "Handler for `web-server' REQUEST serving files from DOC-ROOT."
+  (with-slots (process headers) request
+    (let* ((get-path (cdr (assoc :GET headers)))
+           (head-path (cdr (assoc :HEAD headers)))
+           (req-path (or get-path head-path)))
+      (if (not req-path)
+          (progn
+            (ws-response-header process 400
+                                (cons "Content-Type" "text/plain; charset=utf-8")
+                                (cons "Content-Length" "11"))
+            (process-send-string process "Bad Request")
+            (throw 'close-connection nil))
+        (let* ((rel-path (if (or (string= req-path "/") (string-suffix-p "/" req-path))
+                             (concat (string-remove-prefix "/" req-path) "index.html")
+                           (string-remove-prefix "/" req-path)))
+               (file-path (expand-file-name rel-path doc-root)))
+          (if (and (file-exists-p file-path) (file-regular-p file-path))
+              (let ((mime (elpaish--http-mime-type file-path))
+                    (size (file-attribute-size (file-attributes file-path))))
+                (if head-path
+                    (progn
+                      (ws-response-header process 200
+                                          (cons "Content-Type" mime)
+                                          (cons "Content-Length" (number-to-string size)))
+                      (throw 'close-connection nil))
+                  (ws-send-file process file-path mime)))
+            (ws-response-header process 404
+                                (cons "Content-Type" "text/plain; charset=utf-8")
+                                (cons "Content-Length" "9"))
+            (process-send-string process "Not Found")
+            (throw 'close-connection nil)))))))
+
 (defun elpaish--handle-http-request (request-str doc-root)
   "Process HTTP REQUEST-STR for document root DOC-ROOT.
 Returns a cons cell (HEADERS . BODY-BYTES)."
@@ -1258,27 +1314,25 @@ PORT defaults to `elpaish-preview-server-port'."
     (unless (file-directory-p doc-root)
       (make-directory doc-root t))
     (setq elpaish-server-process
-          (make-network-process
-           :name "elpaish-preview-server"
-           :service preview-port
-           :server t
-           :family 'ipv4
-           :host "127.0.0.1"
-           :filter
-           (lambda (proc string)
-             (let ((res (elpaish--handle-http-request string doc-root)))
-               (process-send-string proc (car res))
-               (when (and (cdr res) (not (string-empty-p (cdr res))))
-                 (process-send-string proc (cdr res)))
-               (delete-process proc)))))
+          (ws-start
+           (lambda (req)
+             (elpaish--handle-ws-request req doc-root))
+           preview-port))
     (message "ELPAish preview server running at http://127.0.0.1:%d/ (root: %s)" preview-port doc-root)))
 
 ;;;###autoload
 (defun elpaish-stop-server ()
   "Stop local preview HTTP server if active."
   (interactive)
-  (when (process-live-p elpaish-server-process)
-    (delete-process elpaish-server-process)
+  (when elpaish-server-process
+    (cond
+     ((and (fboundp 'ws-stop)
+           (or (and (boundp 'ws-server) (cl-typep elpaish-server-process 'ws-server))
+               (and (fboundp 'ws-process) (ignore-errors (ws-process elpaish-server-process)))))
+      (ws-stop elpaish-server-process))
+     ((processp elpaish-server-process)
+      (when (process-live-p elpaish-server-process)
+        (delete-process elpaish-server-process))))
     (setq elpaish-server-process nil)
     (message "ELPAish preview server stopped.")))
 
