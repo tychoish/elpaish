@@ -85,6 +85,7 @@
 (require 'subr-x)
 (require 'epg)
 
+(declare-function pinentry-start "pinentry")
 (defgroup elpaish-signing-keys nil
   "GPG signing key verification and generation for ELPAish archives."
   :group 'external)

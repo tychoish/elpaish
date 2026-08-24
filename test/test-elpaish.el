@@ -46,6 +46,7 @@
           (elpaish-timer nil)
           (elpaish-server-process nil)
           (elpaish--resolved-repo-path-cache (make-hash-table :test 'eq))
+          (elpaish-check-buffer-name (format " *elpaish-test-check-%s*" (make-temp-name "")))
           (package-archives (copy-sequence package-archives))
           (package-check-signature nil))
      (unwind-protect
@@ -62,13 +63,13 @@
   (make-directory dir t)
   (let ((file (expand-file-name (concat name ".el") dir)))
     (with-temp-file file
-      (insert (format ";;; %s.el --- %s -*- lexical-binding: t; -*-\n" name summary))
+      (insert (format ";;; %s.el --- %s -*- lexical-binding: t; -*-\n\n" name summary))
       (when version
         (insert ";; Version: " version "\n"))
-      (when reqs
-        (insert ";; Package-Requires: " (format "%S" reqs) "\n"))
+      (insert (format ";; Package-Requires: %S\n" (or reqs '((emacs "24.1")))))
       (insert ";; Keywords: test, tools\n")
       (insert ";; URL: https://github.com/tychoish/" name "\n\n")
+      (insert ";;; Commentary:\n;; Test commentary.\n\n;;; Code:\n\n")
       (insert "(provide '" name ")\n")
       (insert (format ";;; %s.el ends here\n" name)))))
 
@@ -1055,5 +1056,112 @@ source's last commit time rather than the time of the build."
      (should (file-exists-p (expand-file-name "snapshot/index.html" elpaish-output-dir)))
      (should (file-exists-p (expand-file-name "stable/index.html" elpaish-output-dir)))
      (should (file-exists-p (expand-file-name "staging/index.html" elpaish-output-dir))))))
+(ert-deftest elpaish-test-run-checks-compile-buffer-success ()
+  "Test `elpaish-run-checks' pipes output to a compilation buffer on passing package."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "good-pkg" temp-dir)))
+     (elpaish-test-create-dummy-pkg pkg-dir "good-pkg" "1.0.0" "Good Test Package")
+     (let ((res (elpaish-run-checks pkg-dir))
+           (buf (get-buffer (elpaish-check--get-buffer-name pkg-dir))))
+       (should res)
+       (should buf)
+       (with-current-buffer buf
+         (should (derived-mode-p 'compilation-mode))
+         (should (eq major-mode 'elpaish-check-mode))
+         (goto-char (point-min))
+         (should (search-forward "=== ELPAish Checks: good-pkg ===" nil t))
+         (should (search-forward "1. Running check-parens" nil t))
+         (should (search-forward "✓ check-parens passed" nil t))
+         (should (search-forward "✓ byte-compilation passed" nil t))
+         (should (search-forward "=== Checks PASSED" nil t))
+         (should (search-forward "Compilation finished" nil t)))))))
+
+(ert-deftest elpaish-test-run-checks-compile-buffer-failure ()
+  "Test `elpaish-run-checks' pipes error output and parses compilation errors on broken package."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "broken-pkg" temp-dir)))
+     (make-directory pkg-dir t)
+     (with-temp-file (expand-file-name "broken-pkg.el" pkg-dir)
+       (insert ";;; broken-pkg.el --- Broken -*- lexical-binding: t; -*-\n")
+       (insert "(defun broken (x (missing-close-paren)\n")
+       (insert "(provide 'broken-pkg)\n"))
+     (let ((res (elpaish-run-checks pkg-dir))
+           (buf (get-buffer (elpaish-check--get-buffer-name pkg-dir))))
+       (should-not res)
+       (should buf)
+       (with-current-buffer buf
+         (should (derived-mode-p 'compilation-mode))
+         (should (eq major-mode 'elpaish-check-mode))
+         (goto-char (point-min))
+         (should (search-forward "=== ELPAish Checks: broken-pkg ===" nil t))
+         (should (search-forward "error: check-parens:" nil t))
+         (should (search-forward "=== Checks FAILED" nil t))
+         (should (search-forward "Compilation exited abnormally" nil t))
+         (should (> compilation-num-errors-found 0)))))))
+
+(ert-deftest elpaish-test-view-check-log ()
+  "Test `elpaish-view-check-log' displays the check compilation buffer."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-check-buffer-name "*elpaish-test-check-view*"))
+     (elpaish-view-check-log)
+     (let ((buf (get-buffer (elpaish-check--get-buffer-name))))
+       (should buf)
+       (with-current-buffer buf
+         (should (derived-mode-p 'compilation-mode))
+         (should (eq major-mode 'elpaish-check-mode)))))))
+(ert-deftest elpaish-test-project-has-el-files-p ()
+  "Test `elpaish-project-has-el-files-p' detection of .el files."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "has-el" temp-dir))
+         (empty-dir (expand-file-name "no-el" temp-dir)))
+     (make-directory pkg-dir t)
+     (make-directory empty-dir t)
+     (with-temp-file (expand-file-name "foo.el" pkg-dir)
+       (insert ";;; foo.el\n"))
+     (should (elpaish-project-has-el-files-p pkg-dir))
+     (should-not (elpaish-project-has-el-files-p empty-dir)))))
+
+(ert-deftest elpaish-test-setup-compile-command ()
+  "Test `elpaish-setup-compile-command' sets `compile-command' buffer-locally."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "builder-pkg" temp-dir)))
+     (make-directory pkg-dir t)
+     (with-temp-file (expand-file-name "builder-pkg.el" pkg-dir)
+       (insert ";;; builder-pkg.el\n"))
+     (with-temp-buffer
+       (setq-local default-directory (file-name-as-directory pkg-dir))
+       (emacs-lisp-mode)
+       (elpaish-setup-compile-command pkg-dir)
+       (should (string-prefix-p "emacsclient --eval" compile-command))
+       (should (string-match-p "elpaish-run-checks" compile-command))
+       (should (string-match-p "builder-pkg" compile-command))))))
+
+(ert-deftest elpaish-test-maybe-setup-builder ()
+  "Test `elpaish-maybe-setup-builder' hook sets `compile-command' on .el buffers."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "hook-pkg" temp-dir)))
+     (make-directory pkg-dir t)
+     (let ((el-file (expand-file-name "hook-pkg.el" pkg-dir)))
+       (with-temp-file el-file
+         (insert ";;; hook-pkg.el\n"))
+       (with-temp-buffer
+         (setq-local buffer-file-name el-file)
+         (setq-local default-directory (file-name-as-directory pkg-dir))
+         (emacs-lisp-mode)
+         (elpaish-maybe-setup-builder)
+         (should (string-match-p "elpaish-run-checks" compile-command)))))))
+
+(ert-deftest elpaish-test-check-buffer-name-formatting ()
+  "Test that check compilation buffer name formats as *<project-name>-checks*."
+  (elpaish-test-with-temp-env
+   (let* ((elpaish-check-buffer-name nil)
+          (name (elpaish-check-buffer-name "/path/to/my-package/")))
+     (should (equal name "*my-package-checks*")))))
+(ert-deftest elpaish-test-run-check-alias ()
+  "Test `elpaish-run-check' alias."
+  (should (fboundp 'elpaish-run-check))
+  (should (equal (indirect-function 'elpaish-run-check)
+                 (indirect-function 'elpaish-run-checks))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here
