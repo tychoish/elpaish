@@ -150,6 +150,12 @@ or `elpaish-staging' (pre-release tags and git describe)."
 (defvar elpaish-server-process nil
   "Process handle for local preview HTTP server.")
 
+(defvar elpaish--quarantined-packages nil
+  "Names of packages quarantined by preflight during the current build run.
+Dynamically bound by `elpaish-build-all' and `elpaish-build-single' so
+callers can detect and fail on preflight quarantines instead of silently
+publishing an incomplete archive.")
+
 ;; Compatibility accessors for single built-version references
 (defun elpaish-recipe-built-version (recipe)
   "Return most recent built version for RECIPE across streams."
@@ -962,6 +968,7 @@ Version numbers still track the source's last commit (see
     ;; 1. Preflight Validation Gate
     (unless (elpaish-preflight-package recipe)
       (elpaish--log "Skipping %s due to preflight quarantine." name)
+      (push name elpaish--quarantined-packages)
       (cl-return-from elpaish-build-package nil))
 
     ;; 2. Derive Version
@@ -1069,7 +1076,8 @@ Every registered package is rebuilt unconditionally on every call; see
                       elpaish-streams
                     (list (elpaish-canonical-stream effective-mode))))
          (server-was-running (process-live-p elpaish-server-process))
-         (server-port (and server-was-running (process-contact elpaish-server-process :service))))
+         (preview-port (and server-was-running (process-contact elpaish-server-process :service)))
+         (elpaish--quarantined-packages nil))
     (elpaish-with-build-buffer (format "Build All (%s)" effective-mode)
       (make-directory target-root t)
       (dolist (stream streams)
@@ -1087,11 +1095,21 @@ Every registered package is rebuilt unconditionally on every call; see
       ;; If preview server was running before build, ensure it remains active
       (when server-was-running
         (unless (process-live-p elpaish-server-process)
-          (elpaish-serve-local server-port target-root)))
+          (elpaish-serve-local preview-port target-root)))
 
       (elpaish--log "ELPAish repository successfully generated at %s" target-root)
       (when (eq major-mode 'elpaish-status-mode)
-        (elpaish-status-refresh)))))
+        (elpaish-status-refresh))
+      ;; Preflight quarantines are otherwise silent: the archive still builds
+      ;; and this function still returns normally, so a caller that only
+      ;; checks for an unhandled error (e.g. the CI batch runner) would see a
+      ;; false success despite missing packages.
+      (when elpaish--quarantined-packages
+        (let ((names (delete-dups (nreverse elpaish--quarantined-packages))))
+          (elpaish--log "Quarantined %d package(s) during preflight: %s"
+                        (length names) (string-join names ", "))
+          (error "ELPAish build quarantined %d package(s) during preflight: %s"
+                 (length names) (string-join names ", ")))))))
 
 ;;;###autoload
 (defun elpaish-build-single (recipe-or-name &optional stream output-directory-path)
@@ -1124,7 +1142,8 @@ Every registered package is rebuilt unconditionally on every call; see
          (effective-stream (or stream 'all))
          (target-root (or output-directory-path elpaish-output-dir))
          (server-was-running (process-live-p elpaish-server-process))
-         (server-port (and server-was-running (process-contact elpaish-server-process :service))))
+         (preview-port (and server-was-running (process-contact elpaish-server-process :service)))
+         (elpaish--quarantined-packages nil))
     (unless recipe
       (user-error "Recipe %s not found in registry" recipe-or-name))
     (elpaish-with-build-buffer (format "%s (%s)" (elpaish-recipe-name recipe) effective-stream)
@@ -1142,12 +1161,15 @@ Every registered package is rebuilt unconditionally on every call; see
         ;; If preview server was running before build, ensure it remains active
         (when server-was-running
           (unless (process-live-p elpaish-server-process)
-            (elpaish-serve-local server-port target-root)))
+            (elpaish-serve-local preview-port target-root)))
 
         (when (eq major-mode 'elpaish-status-mode)
           (elpaish-status-refresh))
         (elpaish--log "Single build complete for %s on %s."
-                      (elpaish-recipe-name recipe) effective-stream)))))
+                      (elpaish-recipe-name recipe) effective-stream)
+        (when elpaish--quarantined-packages
+          (elpaish--log "Quarantined during preflight: %s" (elpaish-recipe-name recipe))
+          (error "ELPAish build of %s quarantined during preflight" (elpaish-recipe-name recipe)))))))
 
 ;;;###autoload
 (defun elpaish-preflight-single (recipe-or-name)
@@ -1231,14 +1253,14 @@ Returns a cons cell (HEADERS . BODY-BYTES)."
 PORT defaults to `elpaish-preview-server-port'."
   (interactive "P")
   (elpaish-stop-server)
-  (let* ((server-port (or port elpaish-preview-server-port))
+  (let* ((preview-port (or port elpaish-preview-server-port))
          (doc-root (file-name-as-directory (or output-dir elpaish-output-dir))))
     (unless (file-directory-p doc-root)
       (make-directory doc-root t))
     (setq elpaish-server-process
           (make-network-process
            :name "elpaish-preview-server"
-           :service server-port
+           :service preview-port
            :server t
            :family 'ipv4
            :host "127.0.0.1"
@@ -1249,7 +1271,7 @@ PORT defaults to `elpaish-preview-server-port'."
                (when (and (cdr res) (not (string-empty-p (cdr res))))
                  (process-send-string proc (cdr res)))
                (delete-process proc)))))
-    (message "ELPAish preview server running at http://127.0.0.1:%d/ (root: %s)" server-port doc-root)))
+    (message "ELPAish preview server running at http://127.0.0.1:%d/ (root: %s)" preview-port doc-root)))
 
 ;;;###autoload
 (defun elpaish-stop-server ()

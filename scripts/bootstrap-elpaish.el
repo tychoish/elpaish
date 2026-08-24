@@ -22,7 +22,11 @@
 (package-refresh-contents)
 
 (defconst elpaish-bootstrap-deps
-  '(package-lint magit projectile transient modus-themes)
+  ;; f/s are runtime deps of registered packages (xtdlib) that ELPAish itself
+  ;; doesn't use. Preflight byte-compilation loads each package's real
+  ;; `require's, so those deps must be installed here too, or compilation
+  ;; fails with "Cannot open load file" and the package gets quarantined.
+  '(package-lint magit projectile transient modus-themes f s)
   "Prerequisite packages needed to build and validate the ecosystem in CI.")
 
 (dolist (pkg elpaish-bootstrap-deps)
