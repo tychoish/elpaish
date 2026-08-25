@@ -15,16 +15,12 @@
 (require 'package)
 (require 'subr-x)
 
+(defvar elpaish-base-url)
+
 (defgroup elpaish-keyring nil
   "GPG Keyring and trust anchors for ELPAish package archives."
   :group 'package
   :prefix "elpaish-keyring-")
-
-(defcustom elpaish-keyring-base-url "https://tychoish.github.io/elpaish"
-  "Base URL for the ELPAish package repository site."
-  :type 'string
-  :group 'elpaish-keyring)
-
 (defun elpaish-keyring--canonical-stream (stream)
   "Return canonical stream symbol for STREAM."
   (pcase stream
@@ -36,14 +32,14 @@
 ;;;###autoload
 (defun elpaish-keyring-setup (&optional stream base-url)
   "Configure `package-archives' to include ELPAish repository for STREAM.
-STREAM defaults to \\='snapshot.  BASE-URL defaults to `elpaish-keyring-base-url'."
+STREAM defaults to \\='snapshot.  BASE-URL defaults to `elpaish-base-url'."
   (interactive)
   (unless (bound-and-true-p package-archive-contents)
     (package-initialize))
   (let* ((selected-stream (or stream 'snapshot))
          (canonical (elpaish-keyring--canonical-stream selected-stream))
          (stream-name (symbol-name canonical))
-         (root-url (string-remove-suffix "/" (or base-url elpaish-keyring-base-url)))
+         (root-url (string-remove-suffix "/" (or base-url (bound-and-true-p elpaish-base-url) "https://tychoish.github.io/elpaish")))
          (archive-url (format "%s/%s/" root-url stream-name))
          (existing (assoc stream-name package-archives)))
     (if existing

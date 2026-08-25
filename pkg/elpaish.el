@@ -51,14 +51,14 @@
 (require 'elpaish-install)
 (require 'elpaish-keyring)
 
-(defvaralias 'elpaish-base-url 'elpaish-keyring-base-url)
-(declare-function elpaish-check--get-buffer-name "elpaish-check")
-(declare-function elpaish-check-mode "elpaish-check")
-
 (defgroup elpaish nil
   "ELPA package repository builder."
   :group 'development)
 
+(defcustom elpaish-base-url "https://tychoish.github.io/elpaish"
+  "Base URL for the ELPAish package repository site."
+  :type 'string
+  :group 'elpaish)
 (defcustom elpaish-output-dir (expand-file-name "public/" default-directory)
   "Root directory where package archives, keys, and indexes are written."
   :type 'directory
