@@ -375,6 +375,8 @@ byte-compilation and tests."
          (all-errors nil)
          (all-warnings nil))
     (unless (or (memq 'all skip-list) (null pkg-files))
+      (when (fboundp 'elpaish-ensure-package-dependencies)
+        (elpaish-ensure-package-dependencies package-dir))
       ;; 1. Check Parens
       (unless (memq 'parens skip-list)
         (let ((errs (elpaish-check--check-parens pkg-files verbose)))

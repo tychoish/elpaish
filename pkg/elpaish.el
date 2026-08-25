@@ -141,10 +141,6 @@ or `elpaish-staging' (pre-release tags and git describe)."
   (built-hash nil :type (choice null string) :documentation "Git commit hash when last built.")
   (built-type 'single :type symbol :documentation "Package archive type (\\='single or \\='tar)."))
 
-;; Compatibility accessors for legacy property names
-(defalias 'elpaish-recipe-repo 'elpaish-recipe-repository-path)
-(defalias 'elpaish-recipe-source-dir 'elpaish-recipe-source-directory-path)
-(defalias 'elpaish-recipe-test-dir 'elpaish-recipe-test-directory-path)
 
 (defvar elpaish-registry (make-hash-table :test 'equal)
   "Registry storing package recipes keyed by package name string.")
@@ -303,7 +299,7 @@ is resolved more than once (its own preflight/build, plus as a sibling
 
 (defun elpaish--resolve-repo-path-1 (recipe)
   "Uncached implementation of `elpaish--resolve-repo-path' for RECIPE."
-  (let ((repo-target (elpaish-recipe-repo recipe)))
+  (let ((repo-target (elpaish-recipe-repository-path recipe)))
     (if (and (stringp repo-target)
              (not (string-match-p "\\`https?://" repo-target))
              (not (string-match-p "\\`git@" repo-target))
@@ -324,7 +320,7 @@ is resolved more than once (its own preflight/build, plus as a sibling
 
 (defun elpaish--recipe-source-dir-relative (recipe)
   "Return RECIPE's `:source-dir' relative path, or nil when it is the repo root."
-  (let ((source-dir (or (elpaish-recipe-source-dir recipe) ".")))
+  (let ((source-dir (or (elpaish-recipe-source-directory-path recipe) ".")))
     (unless (string= source-dir ".")
       (string-remove-suffix "/" source-dir))))
 
@@ -620,6 +616,7 @@ Returns t if checks pass, nil if quarantined."
   (let ((skip (elpaish-recipe-preflight-skip recipe)))
     (if (or (eq skip t) (eq skip 't) (and (listp skip) (memq 'all skip)))
         t
+      (elpaish-ensure-package-dependencies recipe)
       (unless (featurep 'elpaish-check)
         (require 'elpaish-check nil t))
       (if (fboundp 'elpaish-check-package)
@@ -629,7 +626,7 @@ Returns t if checks pass, nil if quarantined."
                  (sibling-dirs (thread-last (hash-table-values elpaish-registry)
                                  (seq-remove (lambda (r) (eq r recipe)))
                                  (seq-map #'elpaish--recipe-source-path)))
-                 (tdir (elpaish-recipe-test-dir recipe))
+                 (tdir (elpaish-recipe-test-directory-path recipe))
                  (res (elpaish-check-package repo-dir
                                              :main-file (and (file-exists-p (expand-file-name main-file repo-dir)) main-file)
                                              :test-dir tdir
@@ -881,21 +878,20 @@ Returns a hash table of package-name -> entry-vector."
                     (puthash (symbol-name (car entry)) (cdr entry) tbl))))))
         (error nil)))
     tbl))
-
 (defun elpaish--extract-buffer-metadata (recipe)
   "Extract package metadata from current buffer or fallback to RECIPE defaults.
 Returns a plist with :summary, :reqs, :url, and :keywords."
   (let ((pkg-info (condition-case nil (package-buffer-info) (error nil))))
     (if pkg-info
         (list :summary (or (package-desc-summary pkg-info)
-                           (elpaish-recipe-summary recipe)
+                           (and recipe (elpaish-recipe-summary recipe))
                            "No description")
               :reqs (or (package-desc-reqs pkg-info)
-                        (elpaish-recipe-requires recipe))
+                        (and recipe (elpaish-recipe-requires recipe)))
               :url (or (cdr (assoc :url (package-desc-extras pkg-info)))
-                       (elpaish-recipe-url recipe))
+                       (and recipe (elpaish-recipe-url recipe)))
               :keywords (or (cdr (assoc :keywords (package-desc-extras pkg-info)))
-                            (elpaish-recipe-keywords recipe)
+                            (and recipe (elpaish-recipe-keywords recipe))
                             '("tools")))
       ;; Fallback: try parsing a (define-package ...) form if present in buffer
       (save-excursion
@@ -910,16 +906,67 @@ Returns a plist with :summary, :reqs, :url, and :keywords."
                      (keywords (if (and (listp raw-kws) (eq (car raw-kws) 'quote))
                                    (cadr raw-kws)
                                  raw-kws)))
-                (list :summary (or summary (elpaish-recipe-summary recipe) "No description")
-                      :reqs (or reqs (elpaish-recipe-requires recipe))
-                      :url (or url (elpaish-recipe-url recipe))
-                      :keywords (or keywords (elpaish-recipe-keywords recipe) '("tools"))))
+                (list :summary (or summary (and recipe (elpaish-recipe-summary recipe)) "No description")
+                      :reqs (or reqs (and recipe (elpaish-recipe-requires recipe)))
+                      :url (or url (and recipe (elpaish-recipe-url recipe)))
+                      :keywords (or keywords (and recipe (elpaish-recipe-keywords recipe)) '("tools"))))
             ;; Ultimate fallback: recipe defaults
-            (list :summary (or (elpaish-recipe-summary recipe) "No description")
-                  :reqs (elpaish-recipe-requires recipe)
-                  :url (elpaish-recipe-url recipe)
-                  :keywords (or (elpaish-recipe-keywords recipe) '("tools")))))))))
+            (list :summary (or (and recipe (elpaish-recipe-summary recipe)) "No description")
+                  :reqs (and recipe (elpaish-recipe-requires recipe))
+                  :url (and recipe (elpaish-recipe-url recipe))
+                  :keywords (or (and recipe (elpaish-recipe-keywords recipe)) '("tools")))))))))
+(defun elpaish-ensure-package-dependencies (dir-or-recipe)
+  "Extract package dependencies from DIR-OR-RECIPE and install any missing ones.
+DIR-OR-RECIPE can be a directory path string or an `elpaish-recipe' struct."
+  (let* ((recipe (when (elpaish-recipe-p dir-or-recipe) dir-or-recipe))
+         (repo-dir (cond
+                    (recipe (elpaish--recipe-source-path recipe))
+                    ((stringp dir-or-recipe) (expand-file-name dir-or-recipe))
+                    (t default-directory)))
+         (name (if recipe (elpaish-recipe-name recipe) (file-name-nondirectory (directory-file-name repo-dir))))
+         (main-file-name (cond
+                          ((and recipe (elpaish-recipe-files recipe)
+                                (member (format "%s-pkg.el" name) (elpaish-recipe-files recipe))
+                                (not (member (format "%s.el" name) (elpaish-recipe-files recipe))))
+                           (format "%s-pkg.el" name))
+                          ((string-suffix-p ".el" name) name)
+                          (t (concat name ".el"))))
+         (main-file (expand-file-name main-file-name repo-dir))
+         (reqs nil))
 
+    (when (file-exists-p main-file)
+      (with-temp-buffer
+        (insert-file-contents main-file)
+        (let ((meta (elpaish--extract-buffer-metadata recipe)))
+          (setq reqs (plist-get meta :reqs)))))
+    (unless reqs
+      (when recipe
+        (setq reqs (elpaish-recipe-requires recipe))))
+
+    (let ((missing nil))
+      (dolist (req reqs)
+        (let ((dep-pkg (if (consp req) (car req) req)))
+          (when (and (symbolp dep-pkg)
+                     (not (eq dep-pkg 'emacs))
+                     (not (package-installed-p dep-pkg)))
+            (push dep-pkg missing))))
+      (when missing
+        (setq missing (nreverse (delete-dups missing)))
+        (unless (bound-and-true-p package-archives)
+          (setq package-archives
+                '(("gnu" . "https://elpa.gnu.org/packages/")
+                  ("nongnu" . "https://elpa.nongnu.org/nongnu/")
+                  ("melpa" . "https://melpa.org/packages/"))))
+        (unless (bound-and-true-p package-archive-contents)
+          (package-initialize))
+        (message "Installing implicit dependencies for %s: %s" name missing)
+        (dolist (pkg missing)
+          (unless (package-installed-p pkg)
+            (condition-case err
+                (package-install pkg)
+              (error
+               (message "Warning: Implicit dependency %s installation skipped or failed: %s"
+                        pkg (error-message-string err))))))))))
 (defcustom elpaish-build-buffer-name "*elpaish-build*"
   "Buffer name used for ELPAish package build and compilation output."
   :type 'string
@@ -1505,7 +1552,7 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
                             (stage-ver (or (elpaish-recipe-built-version-staging recipe) "—")))
                        (list name
                              (vector name
-                                     (elpaish-recipe-repo recipe)
+                                     (elpaish-recipe-repository-path recipe)
                                      snap-ver
                                      stab-ver
                                      stage-ver
@@ -1567,9 +1614,6 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
   (require 'elpaish-check)
   (elpaish-check-all dir))
 
-;;;###autoload
-(defalias 'elpaish-run-check #'elpaish-run-checks
-  "Alias for `elpaish-run-checks'.")
 
 ;;;###autoload
 (defun elpaish-view-check-log (&optional dir)
@@ -1607,8 +1651,6 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
    ["Keyring & Operations"
     ("k" "Export GPG keyring" elpaish-export-keyring)
     ("TKO" "Rotate GPG signing keys" elpaish-rotate-keys)]])
-(defalias 'elpaish-dispatch 'elpaish-menu
-  "Alias for `elpaish-menu'.")
 
 (provide 'elpaish)
 ;;; elpaish.el ends here
