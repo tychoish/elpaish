@@ -22,27 +22,16 @@ jobs:
     runs-on: ubuntu-latest
     container: silex/emacs:30.2-ci
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
-
-      - name: Install System Dependencies
-        run: apt-get update && apt-get install -y gnupg git
-
-      - name: Bootstrap Build Dependencies
-        run: emacs --batch -l scripts/bootstrap-elpaish.el
-
-      - name: Build Multi-Track Package Archives
-        env:
+      - run: emacs --batch -l scripts/bootstrap-elpaish.el
+      - env:
           ELPAISH_SIGNING_KEY: ${{ secrets.ELPAISH_SIGNING_KEY }}
           ELPAISH_GPG_PASSPHRASE: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
           ELPAISH_OUTPUT_DIR: public/
         run: emacs --batch -L pkg -L scripts -l scripts/build-elpaish.el
-
-      - name: Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: public/
 
@@ -55,12 +44,9 @@ jobs:
     outputs:
       page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Deploy to GitHub Pages
+      - uses: actions/configure-pages@v5
+      - uses: actions/deploy-pages@v4
         id: deployment
-        uses: actions/deploy-pages@v4
 
   verify:
     name: Verify Deployment & Run Consumer Integration Tests
@@ -68,17 +54,8 @@ jobs:
     container: silex/emacs:30.2-ci
     needs: deploy
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v5
-        with:
-          submodules: recursive
-
-      - name: Install System Dependencies
-        run: apt-get update && apt-get install -y gnupg git
-
-      - name: Bootstrap Test Dependencies
-        run: emacs --batch -l scripts/bootstrap-elpaish.el
-
+      - uses: actions/checkout@v5
+      - run: emacs --batch -l scripts/bootstrap-elpaish.el
       - name: Run Consumer Subprocess Integration Tests
         env:
           ELPAISH_RUN_INTEGRATION_TESTS: "1"

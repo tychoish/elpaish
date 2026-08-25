@@ -20,19 +20,11 @@ jobs:
         emacs_version:
           - "30.2"
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v5
-        with:
-          submodules: recursive
+      - uses: actions/checkout@v5
 
-      - name: Install System Dependencies
-        run: apt-get update && apt-get install -y gnupg git
+      - run: emacs --batch -l scripts/bootstrap-elpaish.el
 
-      - name: Bootstrap Build Dependencies
-        run: emacs --batch -l scripts/bootstrap-elpaish.el
-
-      - name: Run ELPAish Unit Tests
-        env:
+      - env:
           ELPAISH_SIGNING_KEY: "__testing_value"
           ELPAISH_GPG_PASSPHRASE: ""
         run: |
