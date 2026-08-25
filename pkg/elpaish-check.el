@@ -17,6 +17,7 @@
 (require 'subr-x)
 
 (declare-function package-lint-buffer "package-lint")
+(defvar ert--test-registry)
 
 (defgroup elpaish-check nil
   "Preflight checks for Emacs Lisp packages."
@@ -80,13 +81,16 @@ DIR is the target directory, defaulting to `default-directory'."
          (erase-buffer)
          (unless (eq major-mode 'elpaish-check-mode)
            (elpaish-check-mode))
+         (setq-local compilation-num-errors-found 0)
+         (setq-local compilation-num-warnings-found 0)
          (setq-local default-directory target-dir)
          (insert (propertize (format "=== ELPAish Checks: %s ===\nDirectory: %s\nStarted: %s\n\n"
                                      op-title
                                      target-dir
                                      (format-time-string "%Y-%m-%d %H:%M:%S" start-time))
                              'face 'bold))))
-     (display-buffer buf)
+     (when (and (not noninteractive) (called-interactively-p 'any))
+       (display-buffer buf))
      (let ((res nil))
        (unwind-protect
            (progn
@@ -153,11 +157,11 @@ Writes to check buffer if active, and to `message' if VERBOSE."
                               (string-suffix-p "-spec.el" base)
                               (string= base "run-checks.el")
                               (string-suffix-p "-autoloads.el" base)
+                              ;; Exclude any -pkg.el descriptor unless it is this package's own code file <dir-name>.el
+                              (and (string-suffix-p "-pkg.el" base)
+                                   (not (string= base (format "%s.el" dir-name))))
                               (and (string= base "packages.el")
-                                   (> (length el-files) 1))
-                              ;; Exclude generated <pkg-dir>-pkg.el descriptor if main <pkg-dir>.el exists
-                              (and (string= base (format "%s-pkg.el" dir-name))
-                                   (file-exists-p (expand-file-name (format "%s.el" dir-name) dir))))))
+                                   (> (length el-files) 1)))))
                       el-files)))
     candidates))
 
@@ -280,41 +284,53 @@ Return cons (ERRORS . WARNINGS)."
         (kill-buffer byte-compile-log-buffer)))
     (cons (nreverse errs) (nreverse warns))))
 
-(defun elpaish-check--ert (test-files pkg-name verbose extra-load-path)
+(defun elpaish-check--ert (test-files pkg-name verbose extra-load-path &optional pkg-files)
   "Run ERT on TEST-FILES for PKG-NAME with EXTRA-LOAD-PATH silently.
+PKG-FILES are loaded before running test files to ensure fresh definitions.
 VERBOSE enables logging.  Return list of error strings."
   (elpaish-check--log verbose "[elpaish-check] 5. Running ERT tests (%d file(s))..." (length test-files))
   (let ((errs nil)
         (orig-registry (when (boundp 'ert--test-registry)
-                         (copy-hash-table ert--test-registry))))
-    (dolist (tf test-files)
-      (condition-case err
-          (let ((load-path (append extra-load-path load-path)))
-            (load tf nil t)
-            (let* ((selector (format "\\`%s" (regexp-quote pkg-name)))
-                   (stats (ert-run-tests selector (lambda (_event-type &rest _args) nil)))
-                   (failed (if stats (ert-stats-completed-unexpected stats) 0)))
-              (when (> failed 0)
-                (let* ((tests (and stats (ert--stats-tests stats)))
-                       (results (and stats (ert--stats-test-results stats)))
-                       (len (if tests (length tests) 0))
-                       (tf-rel (file-relative-name tf default-directory)))
-                  (dotimes (i len)
-                    (let* ((tst (aref tests i))
-                           (res (aref results i)))
-                      (when (ert-test-failed-p res)
+                         (copy-hash-table ert--test-registry)))
+        (ert--test-registry (make-hash-table :test 'equal)))
+    (unwind-protect
+        (let ((load-path (append extra-load-path load-path)))
+          ;; Load package implementation files first so fresh definitions are used
+          (dolist (pf pkg-files)
+            (when (file-exists-p pf)
+              (condition-case nil
+                  (load pf nil t)
+                (error nil))))
+          ;; Load all test files
+          (dolist (tf test-files)
+            (condition-case err
+                (load tf nil t)
+              (error
+               (push (format "%s:1:1: error: ERT load error: %s"
+                             (file-relative-name tf default-directory)
+                             (error-message-string err))
+                     errs))))
+          ;; Run ERT test suite once across the package
+          (let* ((selector (format "\\`%s" (regexp-quote pkg-name)))
+                 (stats (ert-run-tests selector (lambda (_event-type &rest _args) nil)))
+                 (failed (if stats (ert-stats-completed-unexpected stats) 0)))
+            (when (> failed 0)
+              (let* ((tests (and stats (ert--stats-tests stats)))
+                     (results (and stats (ert--stats-test-results stats)))
+                     (len (if tests (length tests) 0)))
+                (dotimes (i len)
+                  (let* ((tst (aref tests i))
+                         (res (aref results i)))
+                    (when (ert-test-failed-p res)
+                      (let* ((t-file (or (ert-test-file-name tst) (car test-files)))
+                             (tf-rel (file-relative-name t-file default-directory)))
                         (push (format "%s:1:1: error: ERT test '%s' failed: %s"
                                       tf-rel
                                       (ert-test-name tst)
                                       (ert-test-failed-condition res))
-                              errs))))))))
-        (error
-         (push (format "%s:1:1: error: ERT execution error: %s"
-                       (file-relative-name tf default-directory)
-                       (error-message-string err))
-               errs))))
-    (when (and orig-registry (boundp 'ert--test-registry))
-      (setq ert--test-registry orig-registry))
+                              errs)))))))))
+      (when (and orig-registry (boundp 'ert--test-registry))
+        (setq ert--test-registry orig-registry)))
     (nreverse errs)))
 ;;;###autoload
 (cl-defun elpaish-check-package (&optional dir &key main-file test-dir skip-checks verbose
@@ -404,7 +420,7 @@ VERBOSE prints progress messages to `message' buffer."
 
       ;; 5. ERT Test Suite
       (unless (or (memq 'ert skip-list) (null test-files))
-        (let ((errs (elpaish-check--ert test-files pkg-name-str verbose pkg-load-dirs)))
+        (let ((errs (elpaish-check--ert test-files pkg-name-str verbose pkg-load-dirs pkg-files)))
           (if errs
               (dolist (e errs)
                 (elpaish-check--log verbose "%s" e))
@@ -417,10 +433,9 @@ VERBOSE prints progress messages to `message' buffer."
                          :errors all-errors
                          :warnings all-warnings)))
       (if passed
-          (elpaish-check--log verbose "[elpaish-check] ✓ Preflight passed for %s (%d warning(s))"
-                              pkg-name-str (length all-warnings))
-        (elpaish-check--log verbose "[elpaish-check] ✗ Preflight FAILED for %s (%d error(s), %d warning(s))"
-                            pkg-name-str (length all-errors) (length all-warnings)))
+          (elpaish-check--log verbose "[elpaish-check] ✓ Preflight passed for %s" pkg-name-str)
+        (elpaish-check--log verbose "[elpaish-check] ✗ Preflight FAILED for %s (%d error(s))"
+                            pkg-name-str (length all-errors)))
       result)))
 
 ;;;###autoload

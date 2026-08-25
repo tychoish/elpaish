@@ -1296,6 +1296,46 @@ source's last commit time rather than the time of the build."
        (elpaish-upgrade-packages 'upgrade-pkg 'up-to-date-pkg)
        (should refresh-called)
        (should (equal upgraded-log '(upgrade-pkg)))))))
+(ert-deftest elpaish-test-recipe-exclude-files ()
+  "Test `:exclude-files' filters matching files in `elpaish--collect-files'."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "ex-pkg" temp-dir)))
+     (make-directory pkg-dir t)
+     (with-temp-file (expand-file-name "ex-pkg.el" pkg-dir)
+       (insert ";;; ex-pkg.el --- Test -*- lexical-binding: t; -*-\n(provide 'ex-pkg)\n"))
+     (with-temp-file (expand-file-name "other-pkg.el" pkg-dir)
+       (insert ";;; other-pkg.el --- Other -*- lexical-binding: t; -*-\n(provide 'other-pkg)\n"))
+     (with-temp-file (expand-file-name "sibling-pkg-pkg.el" pkg-dir)
+       (insert "(define-package \"sibling-pkg\" \"1.0.0\" \"Sibling\")\n"))
+     (let* ((recipe (elpaish-register-package
+                     'ex-pkg pkg-dir
+                     :files '("*.el")
+                     :exclude-files '("other-pkg.el")))
+            (collected (elpaish--collect-files pkg-dir '("*.el") "ex-pkg" recipe)))
+       (should (member "ex-pkg.el" collected))
+       (should-not (member "other-pkg.el" collected))
+       (should-not (member "sibling-pkg-pkg.el" collected))))))
+
+(ert-deftest elpaish-test-tar-package-from-pkg-descriptor ()
+  "Test packaging from <name>-pkg.el and asset files without <name>.el."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "asset-pkg" temp-dir)))
+     (make-directory pkg-dir t)
+     (with-temp-file (expand-file-name "asset-pkg-pkg.el" pkg-dir)
+       (insert "(define-package \"asset-pkg\" \"1.0.0\"\n  \"Asset Package Summary\"\n  '()\n  :url \"https://example.com/asset\"\n  :keywords '(\"assets\"))\n"))
+     (with-temp-file (expand-file-name "key.asc" pkg-dir)
+       (insert "-----BEGIN PGP PUBLIC KEY BLOCK-----\ntest\n-----END PGP PUBLIC KEY BLOCK-----\n"))
+     (let ((recipe (elpaish-register-package
+                    'asset-pkg pkg-dir
+                    :files '("key.asc" "asset-pkg-pkg.el")
+                    :preflight-skip t)))
+       (let ((dest (elpaish-build-package recipe 'snapshot (expand-file-name "snapshot" elpaish-output-dir))))
+         (should dest)
+         (should (string-suffix-p ".tar" dest))
+         (should (file-exists-p dest))
+         (should (equal (elpaish-recipe-summary recipe) "Asset Package Summary"))
+         (should (equal (elpaish-recipe-url recipe) "https://example.com/asset"))
+         (should (equal (elpaish-recipe-keywords recipe) '("assets"))))))))
 
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here

@@ -80,7 +80,8 @@
                       "https://github.com/tychoish/elpaish.git")
  :source-dir "pkg"
  :branch "main"
- :files '("elpaish.pub.asc")
+ :files '("elpaish.pub.asc" "elpaish-keyring-pkg.el")
+ :preflight-skip t
  :summary "GPG Keyring and trust anchors for ELPAish package archives"
  :url "https://github.com/tychoish/elpaish"
  :keywords '("package" "security" "maintenance" "elpa"))
@@ -93,6 +94,7 @@
  :source-dir "pkg"
  :branch "main"
  :test-dir "test"
+ :exclude-files '("elpaish-keyring-pkg.el")
  :summary "Multi-track signed ELPA package archive builder and server"
  :url "https://github.com/tychoish/elpaish"
  :keywords '("tools" "elpa" "package" "distribution"))

@@ -1,6 +1,8 @@
 ;;; elpaish-keyring.el --- GPG Keyring and trust anchors for ELPAish package archives -*- lexical-binding: t; -*-
 
 ;; Author: tychoish
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "24.4"))
 ;; Keywords: maint, tools, package, security
 ;; URL: https://github.com/tychoish/elpaish
 
@@ -17,8 +19,6 @@
   "GPG Keyring and trust anchors for ELPAish package archives."
   :group 'package
   :prefix "elpaish-keyring-")
-
-(defvaralias 'elpaish-base-url 'elpaish-keyring-base-url)
 
 (defcustom elpaish-keyring-base-url "https://tychoish.github.io/elpaish"
   "Base URL for the ELPAish package repository site."
@@ -53,7 +53,4 @@ STREAM defaults to \\='snapshot.  BASE-URL defaults to `elpaish-keyring-base-url
 
 (provide 'elpaish-keyring)
 
-;; Local Variables:
-;; package-lint-main-file: "pkg/elpaish.el"
-;; End:
 ;;; elpaish-keyring.el ends here

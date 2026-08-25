@@ -124,6 +124,7 @@ or `elpaish-staging' (pre-release tags and git describe)."
   (repository-path nil :type string :documentation "Local directory path or Git URL.")
   (branch "main" :type string :documentation "Git branch to track.")
   (files '("*.el") :type list :documentation "List of file patterns to include.")
+  (exclude-files nil :type list :documentation "List of file patterns to exclude.")
   (source-directory-path "." :type string :documentation "Subdirectory within REPOSITORY-PATH holding the package source.")
   (test-directory-path nil :type (choice null string) :documentation "Optional custom test directory path.")
   (preflight-skip nil :type (choice boolean list) :documentation "Checks to skip in preflight.")
@@ -173,6 +174,8 @@ publishing an incomplete archive.")
 				    repository-path
 				    &key branch
 				    (files '("*.el"))
+                                    exclude-files
+                                    exclude
                                     source-directory-path
                                     test-directory-path
                                     source-dir
@@ -197,9 +200,10 @@ nested folders.
 
 TEST-DIRECTORY-PATH (or TEST-DIR) is an optional custom test directory path.
 
+EXCLUDE-FILES (or EXCLUDE) is an optional list of file patterns to exclude.
+
 PREFLIGHT-SKIP is t (or \='t) to skip all checks, or a list of check
 symbols to bypass during preflight.
-
 DISABLED-STREAMS (or SUPPRESS-STREAMS) is a list of suppressed stream symbols.
 
 DOC (or DOCS-URL) is an optional URL or path to documentation.
@@ -224,6 +228,7 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                   :repository-path repo-target
                   :branch (or branch elpaish-default-branch)
                   :files (or files '("*.el"))
+                  :exclude-files (or exclude-files exclude)
                   :source-directory-path effective-source
                   :test-directory-path effective-test
                   :preflight-skip preflight-skip
@@ -255,7 +260,8 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
 ;;; Stream & Directory Resolution
 
 (defun elpaish-canonical-stream (stream)
-  "Return canonical stream symbol for STREAM (`snapshot', `stable', `staging', or `all')."
+  "Return canonical stream symbol for STREAM.
+STREAM can be `snapshot', `stable', `staging', or `all'."
   (pcase stream
     ((or 'snapshot 'elpaish 'unstable) 'snapshot)
     ((or 'stable 'elpaish-stable 'release) 'stable)
@@ -265,7 +271,8 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
 
 
 (defun elpaish-stream-dir (stream &optional root-directory-path)
-  "Return destination directory for STREAM under ROOT-DIRECTORY-PATH (or `elpaish-output-dir')."
+  "Return destination directory for STREAM under ROOT-DIRECTORY-PATH.
+ROOT-DIRECTORY-PATH defaults to `elpaish-output-dir'."
   (let ((base (file-name-as-directory (or root-directory-path elpaish-output-dir)))
         (canon (elpaish-canonical-stream stream)))
     (if (eq canon 'all)
@@ -513,11 +520,13 @@ point when two recipes are registered against the same directory."
 Also includes README and LICENSE files.  Excludes tests and generated
 descriptor files.  PKG-NAME overrides base name detection.
 When RECIPE is given, also excludes any sibling recipe's main file that
-shares RECIPE's source directory."
+shares RECIPE's source directory, other packages' descriptor files,
+and any patterns in RECIPE's `:exclude-files'."
   (let* ((default-directory repo-dir)
          (name-str (and pkg-name (if (symbolp pkg-name) (symbol-name pkg-name) pkg-name)))
          (sibling-mains (elpaish--sibling-main-files recipe))
          (user-patterns (or patterns '("*.el")))
+         (exclude-patterns (when recipe (elpaish-recipe-exclude-files recipe)))
          (explicit-files
           (seq-mapcat
            (lambda (pat)
@@ -534,15 +543,27 @@ shares RECIPE's source directory."
                       (or (string-match-p "\\`\\.#" base)
                           (string-suffix-p ".elc" base)
                           (string-suffix-p "-autoloads.el" base)
-                          (and name-str (string= base (format "%s-pkg.el" name-str)))
-                          (string-match-p "\\`test/" f)
+                          ;; Exclude own generated pkg.el if not explicitly requested
+                          (and name-str (string= base (format "%s-pkg.el" name-str))
+                               (not (member base user-patterns)))
+                          ;; Exclude any other package's -pkg.el descriptor (unless it is this package's own code file <name>.el)
+                          (and (string-suffix-p "-pkg.el" base)
+                               (not (and name-str (string= base (format "%s.el" name-str))))
+                               (not (and name-str (string= base (format "%s-pkg.el" name-str)))))
                           (string-match-p "\\`tests/" f)
                           (string-prefix-p "test-" base)
                           (string-suffix-p "-test.el" base)
                           (string-suffix-p "-tests.el" base)
-                          (member base sibling-mains)))))
+                          (member base sibling-mains)
+                          ;; Exclude explicit exclude patterns
+                          (and exclude-patterns
+                               (seq-some (lambda (epat)
+                                           (or (string= f epat)
+                                               (string= base epat)
+                                               (string-match-p (wildcard-to-regexp epat) f)
+                                               (string-match-p (wildcard-to-regexp epat) base)))
+                                         exclude-patterns))))))
       (seq-uniq))))
-
 (cl-defun elpaish--generate-pkg-file (dest-file name &key version summary reqs url keywords)
   "Write `<pkg>-pkg.el' descriptor for NAME at DEST-FILE.
 VERSION, SUMMARY, REQS, URL, and KEYWORDS provide the descriptor metadata."
@@ -583,38 +604,52 @@ are forwarded to `elpaish--generate-pkg-file' for the bundled descriptor."
             (call-process "tar" nil nil nil "-cf" dest-file pkg-name-ver)))
       (delete-directory temp-dir t))))
 
+(defvar elpaish--preflight-cache (make-hash-table :test 'equal)
+  "Cache of recipe name -> preflight result (t or nil) for current build run.
+Avoids re-running preflight test suites redundantly across multiple streams.")
+
 (defun elpaish-preflight-package (recipe)
   "Execute preflight quality gates on RECIPE.
 Returns t if checks pass, nil if quarantined."
   (if (not elpaish-run-preflight)
       t
-    (let ((skip (elpaish-recipe-preflight-skip recipe)))
-      (if (or (eq skip t) (eq skip 't) (and (listp skip) (memq 'all skip)))
-          t
-        (unless (featurep 'elpaish-check)
-          (require 'elpaish-check nil t))
-        (if (fboundp 'elpaish-check-package)
-            (let* ((repo-dir (elpaish--recipe-source-path recipe))
-                   (name (elpaish-recipe-name recipe))
-                   (main-file (if (string-suffix-p ".el" name) name (concat name ".el")))
-                   (sibling-dirs (thread-last (hash-table-values elpaish-registry)
-                                   (seq-remove (lambda (r) (eq r recipe)))
-                                   (seq-map #'elpaish--recipe-source-path)))
-                   (tdir (elpaish-recipe-test-dir recipe))
-                   (res (elpaish-check-package repo-dir
-                                               :main-file (and (file-exists-p (expand-file-name main-file repo-dir)) main-file)
-                                               :test-dir tdir
-                                               :skip-checks skip
-                                               :extra-load-path sibling-dirs))
-                   (passed (plist-get res :passed))
-                   (errs (plist-get res :errors)))
-              (unless passed
-                (message "PREFLIGHT QUARANTINE for %s: %d error(s)"
-                         name (length errs))
-                (dolist (e errs)
-                  (message "   - %s" e)))
-              passed)
-          t)))))
+    (let* ((name (elpaish-recipe-name recipe))
+           (cached (gethash name elpaish--preflight-cache 'not-found)))
+      (if (not (eq cached 'not-found))
+          cached
+        (let ((result (elpaish-preflight-package-1 recipe)))
+          (puthash name result elpaish--preflight-cache)
+          result)))))
+
+(defun elpaish-preflight-package-1 (recipe)
+  "Internal uncached preflight execution on RECIPE."
+  (let ((skip (elpaish-recipe-preflight-skip recipe)))
+    (if (or (eq skip t) (eq skip 't) (and (listp skip) (memq 'all skip)))
+        t
+      (unless (featurep 'elpaish-check)
+        (require 'elpaish-check nil t))
+      (if (fboundp 'elpaish-check-package)
+          (let* ((repo-dir (elpaish--recipe-source-path recipe))
+                 (name (elpaish-recipe-name recipe))
+                 (main-file (if (string-suffix-p ".el" name) name (concat name ".el")))
+                 (sibling-dirs (thread-last (hash-table-values elpaish-registry)
+                                 (seq-remove (lambda (r) (eq r recipe)))
+                                 (seq-map #'elpaish--recipe-source-path)))
+                 (tdir (elpaish-recipe-test-dir recipe))
+                 (res (elpaish-check-package repo-dir
+                                             :main-file (and (file-exists-p (expand-file-name main-file repo-dir)) main-file)
+                                             :test-dir tdir
+                                             :skip-checks skip
+                                             :extra-load-path sibling-dirs))
+                 (passed (plist-get res :passed))
+                 (errs (plist-get res :errors)))
+            (unless passed
+              (message "PREFLIGHT QUARANTINE for %s: %d error(s)"
+                       name (length errs))
+              (dolist (e errs)
+                (message "   - %s" e)))
+            passed)
+        t))))
 
 ;;; GPG Package & Archive Signing Pipeline
 
@@ -857,16 +892,39 @@ Returns a hash table of package-name -> entry-vector."
   "Extract package metadata from current buffer or fallback to RECIPE defaults.
 Returns a plist with :summary, :reqs, :url, and :keywords."
   (let ((pkg-info (condition-case nil (package-buffer-info) (error nil))))
-    (list :summary (or (and pkg-info (package-desc-summary pkg-info))
-                       (elpaish-recipe-summary recipe)
-                       "No description")
-          :reqs (or (and pkg-info (package-desc-reqs pkg-info))
-                    (elpaish-recipe-requires recipe))
-          :url (or (and pkg-info (cdr (assoc :url (package-desc-extras pkg-info))))
-                   (elpaish-recipe-url recipe))
-          :keywords (or (and pkg-info (cdr (assoc :keywords (package-desc-extras pkg-info))))
-                        (elpaish-recipe-keywords recipe)
-                        '("tools")))))
+    (if pkg-info
+        (list :summary (or (package-desc-summary pkg-info)
+                           (elpaish-recipe-summary recipe)
+                           "No description")
+              :reqs (or (package-desc-reqs pkg-info)
+                        (elpaish-recipe-requires recipe))
+              :url (or (cdr (assoc :url (package-desc-extras pkg-info)))
+                       (elpaish-recipe-url recipe))
+              :keywords (or (cdr (assoc :keywords (package-desc-extras pkg-info)))
+                            (elpaish-recipe-keywords recipe)
+                            '("tools")))
+      ;; Fallback: try parsing a (define-package ...) form if present in buffer
+      (save-excursion
+        (goto-char (point-min))
+        (let ((form (condition-case nil (read (current-buffer)) (error nil))))
+          (if (and (listp form) (eq (car form) 'define-package))
+              (let* ((summary (nth 3 form))
+                     (reqs (condition-case nil (eval (nth 4 form)) (error nil)))
+                     (extras (nthcdr 5 form))
+                     (url (plist-get extras :url))
+                     (raw-kws (plist-get extras :keywords))
+                     (keywords (if (and (listp raw-kws) (eq (car raw-kws) 'quote))
+                                   (cadr raw-kws)
+                                 raw-kws)))
+                (list :summary (or summary (elpaish-recipe-summary recipe) "No description")
+                      :reqs (or reqs (elpaish-recipe-requires recipe))
+                      :url (or url (elpaish-recipe-url recipe))
+                      :keywords (or keywords (elpaish-recipe-keywords recipe) '("tools"))))
+            ;; Ultimate fallback: recipe defaults
+            (list :summary (or (elpaish-recipe-summary recipe) "No description")
+                  :reqs (elpaish-recipe-requires recipe)
+                  :url (elpaish-recipe-url recipe)
+                  :keywords (or (elpaish-recipe-keywords recipe) '("tools")))))))))
 
 (defcustom elpaish-build-buffer-name "*elpaish-build*"
   "Buffer name used for ELPAish package build and compilation output."
@@ -935,7 +993,8 @@ TITLE is a string describing the build operation."
                                      op-title
                                      (format-time-string "%Y-%m-%d %H:%M:%S" start-time))
                              'face 'bold))))
-     (display-buffer buf)
+     (when (and (not noninteractive) (called-interactively-p 'any))
+       (display-buffer buf))
      (unwind-protect
          (prog1 (progn ,@body)
            (with-current-buffer buf
@@ -962,7 +1021,14 @@ Version numbers still track the source's last commit (see
          (repo-dir (elpaish--recipe-source-path recipe))
          (source-dir-rel (elpaish--recipe-source-dir-relative recipe))
          (name (elpaish-recipe-name recipe))
-         (main-file-name (if (string-suffix-p ".el" name) name (concat name ".el")))
+         (main-file-name
+          (cond
+           ((and (elpaish-recipe-files recipe)
+                 (member (format "%s-pkg.el" name) (elpaish-recipe-files recipe))
+                 (not (member (format "%s.el" name) (elpaish-recipe-files recipe))))
+            (format "%s-pkg.el" name))
+           ((string-suffix-p ".el" name) name)
+           (t (concat name ".el"))))
          (main-file (expand-file-name main-file-name repo-dir))
          (current-commit (elpaish--current-hash repo-dir source-dir-rel)))
 
@@ -971,10 +1037,8 @@ Version numbers still track the source's last commit (see
       (elpaish--log "Omitting %s from %s: Package is suppressed for this stream." name effective-stream)
       (cl-return-from elpaish-build-package nil))
 
-    (unless (file-exists-p main-file)
+    (unless (and main-file (file-exists-p main-file))
       (error "Main file %s not found in %s" main-file-name repo-dir))
-
-    ;; 1. Preflight Validation Gate
     (unless (elpaish-preflight-package recipe)
       (elpaish--log "Skipping %s due to preflight quarantine." name)
       (push name elpaish--quarantined-packages)
@@ -989,7 +1053,7 @@ Version numbers still track the source's last commit (see
       ;; 3. Build artifact
       (make-directory target-dir t)
       (let* ((files (elpaish--collect-files repo-dir (elpaish-recipe-files recipe) name recipe))
-             (is-tar (> (length files) 1))
+             (is-tar (or (> (length files) 1) (string= main-file-name (format "%s-pkg.el" name))))
              (pkg-type (if is-tar 'tar 'single))
              (pkg-name-ver (format "%s-%s" name version-str))
              (dest-file (expand-file-name (format "%s.%s" pkg-name-ver (if is-tar "tar" "el"))
@@ -997,13 +1061,13 @@ Version numbers still track the source's last commit (see
              meta summary reqs url keywords)
         (with-temp-buffer
           (insert-file-contents main-file)
-          (elpaish--inject-version-header version-str)
+          (unless (string= main-file-name (format "%s-pkg.el" name))
+            (elpaish--inject-version-header version-str))
           (setq meta (elpaish--extract-buffer-metadata recipe))
           (setq summary (plist-get meta :summary)
                 reqs (plist-get meta :reqs)
                 url (plist-get meta :url)
                 keywords (plist-get meta :keywords))
-
           (if is-tar
               (elpaish--create-tar-package repo-dir dest-file pkg-name-ver name files
                                             :version version-str :summary summary
@@ -1029,7 +1093,8 @@ Version numbers still track the source's last commit (see
 ;;; Archive Contents Generation
 
 (defun elpaish-generate-archive-contents (&optional stream output-directory-path)
-  "Generate `archive-contents' and its signature for STREAM in OUTPUT-DIRECTORY-PATH."
+  "Generate `archive-contents' and its signature for STREAM.
+OUTPUT-DIRECTORY-PATH defaults to stream destination directory."
   (let* ((effective-stream (elpaish-canonical-stream (or stream elpaish-release-mode)))
          (target-dir (or output-directory-path (elpaish-stream-dir effective-stream)))
          (archive-file (expand-file-name "archive-contents" target-dir))
@@ -1078,6 +1143,7 @@ Defaults to `elpaish-release-mode'.  OUTPUT-DIRECTORY-PATH defaults to
 on every call; see `elpaish-build-package'."
   (interactive)
   (clrhash elpaish--resolved-repo-path-cache)
+  (clrhash elpaish--preflight-cache)
   (let* ((effective-mode (or mode elpaish-release-mode))
          (target-root (or output-directory-path elpaish-output-dir))
          (streams (if (eq effective-mode 'all)
