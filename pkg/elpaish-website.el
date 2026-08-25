@@ -1,11 +1,11 @@
 ;;; elpaish-website.el --- Static GitHub Pages catalog generation for ELPAish -*- lexical-binding: t; -*-
 
 ;; Author: tychoish
-;; Keywords: maintenance, tools, elpa, package
+;; Keywords: maint, tools, elpa, package
 
 ;;; Commentary:
 ;; Renders the static HTML pages published alongside the package archives:
-;; a per-track package catalog (`elpaish-generate-github-index') and the
+;; a per-track package catalog (`elpaish-generate-stream-index') and the
 ;; top-level landing page (`elpaish-generate-top-index').  HTML is built as
 ;; `dom' sexps and printed with `dom-print'; CSS is built as sexps via
 ;; `elpaish-css' and rendered to a single inline `<style>' block.
@@ -197,7 +197,6 @@ RELATIVE-PREFIX is prepended to relative links (e.g. \"../\" for stream pages)."
                                          (strong nil "SHA256 Checksum: ")
                                          (code ((class . "detail-hash")) ,sha256-hash))))))))))))))
 
-(defalias 'elpaish-website--package-row 'elpaish-website--package-rows)
 
 (defun elpaish-website--catalog-table (rows)
   "Return the packages `<table>' dom node for ROWS, or a placeholder if empty."
@@ -247,8 +246,6 @@ TITLE overrides the default page title derived from STREAM."
                     ,(elpaish-website--catalog-table rows)))))
     (expand-file-name "index.html" target-dir)))
 
-(defalias 'elpaish-generate-github-index 'elpaish-generate-stream-index
-  "Compatibility alias for `elpaish-generate-stream-index'.")
 ;;; Top-level landing page
 
 (defun elpaish-website--stream-card (path heading description button-label)
@@ -430,4 +427,8 @@ OUTPUT-DIRECTORY-PATH defaults to `elpaish-output-dir'."
     (message "ELPAish website successfully generated at %s" target-root)))
 
 (provide 'elpaish-website)
+
+;; Local Variables:
+;; package-lint-main-file: "pkg/elpaish.el"
+;; End:
 ;;; elpaish-website.el ends here

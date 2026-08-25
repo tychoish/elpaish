@@ -1,10 +1,7 @@
 ;;; elpaish-keyring.el --- GPG Keyring and trust anchors for ELPAish package archives -*- lexical-binding: t; -*-
 
 ;; Author: tychoish
-;; Version: 20260819.1
-;; Package-Requires: ((emacs "27.1"))
-;; Keywords: package, security, maintenance, elpa
-;; URL: https://github.com/tychoish/elpaish
+;; Keywords: maint, tools, package, security, elpa
 
 ;;; Commentary:
 ;; Provides public GPG keyrings, trust anchor configuration, and repository setup
@@ -13,8 +10,12 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'package)
+(require 'seq)
+(require 'subr-x)
 
+(declare-function elpaish-canonical-stream "elpaish" (stream))
 (defgroup elpaish nil
   "ELPAish package archive configuration and security."
   :group 'package)

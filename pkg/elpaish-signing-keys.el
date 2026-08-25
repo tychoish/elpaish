@@ -1,9 +1,7 @@
 ;;; elpaish-signing-keys.el --- GPG signing key ceremony and verification -*- lexical-binding: t; -*-
 
 ;; Author: tychoish
-;; Keywords: tools, elpa, package, security
-;; Package-Requires: ((emacs "27.1"))
-;; URL: https://github.com/tychoish/elpaish
+;; Keywords: maint, tools, elpa, package, security
 
 ;;; Commentary:
 ;; Verification and generation helpers for the GPG signing key an ELPAish
@@ -434,4 +432,8 @@ This mints real key material — confirm you mean to run it."
         (elpaish-verify-signing-key master-fpr)))))
 
 (provide 'elpaish-signing-keys)
+
+;; Local Variables:
+;; package-lint-main-file: "pkg/elpaish.el"
+;; End:
 ;;; elpaish-signing-keys.el ends here

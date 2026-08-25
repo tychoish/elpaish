@@ -3,7 +3,7 @@
 ;; Author: tychoish
 ;; Version: 0.1.0
 ;; URL: https://github.com/tychoish/elpaish
-;; Keywords: maintenance, tools, local, package, elpa
+;; Keywords: maint, tools, local, package, elpa
 ;; Package-Requires: ((emacs "28.1") (htmlize "1.34") (map "3.0") (seq "2.0") (web-server "0.1.2") (transient "0.3.0"))
 
 ;;; Commentary:
@@ -140,12 +140,6 @@ or `elpaish-staging' (pre-release tags and git describe)."
 (defalias 'elpaish-recipe-source-dir 'elpaish-recipe-source-directory-path)
 (defalias 'elpaish-recipe-test-dir 'elpaish-recipe-test-directory-path)
 
-(defun elpaish-recipe-built-version-elpaish (recipe)
-  "Compatibility accessor for `elpaish-recipe-built-version-snapshot' on RECIPE."
-  (elpaish-recipe-built-version-snapshot recipe))
-
-(gv-define-setter elpaish-recipe-built-version-elpaish (val recipe)
-  `(setf (elpaish-recipe-built-version-snapshot ,recipe) ,val))
 (defvar elpaish-registry (make-hash-table :test 'equal)
   "Registry storing package recipes keyed by package name string.")
 
@@ -269,8 +263,7 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
 (defun elpaish-recipe-version-for-stream (recipe stream)
   "Return stored built version string for RECIPE on STREAM."
   (pcase (elpaish-canonical-stream stream)
-    ('snapshot (or (elpaish-recipe-built-version-snapshot recipe)
-                   (elpaish-recipe-built-version-elpaish recipe)))
+    ('snapshot (elpaish-recipe-built-version-snapshot recipe))
     ('stable (elpaish-recipe-built-version-stable recipe))
     ('staging (elpaish-recipe-built-version-staging recipe))
     (_ (elpaish-recipe-built-version recipe))))
@@ -1061,7 +1054,6 @@ Version numbers still track the source's last commit (see
     archive-file))
 
 (declare-function elpaish-generate-stream-index "elpaish-website" (&optional stream output-dir title))
-(declare-function elpaish-generate-github-index "elpaish-website" (&optional stream output-dir title))
 (declare-function elpaish-generate-top-index "elpaish-website" (&optional output-dir))
 
 ;;; Build Orchestration
@@ -1253,6 +1245,19 @@ OUTPUT-DIRECTORY-PATH overrides destination directory."
       (process-live-p s))
      (t nil))))
 
+(defun elpaish--http-resolve-path (req-path doc-root)
+  "Resolve HTTP REQ-PATH against DOC-ROOT, preventing directory traversal.
+Return resolved file path if valid and within DOC-ROOT, else nil."
+  (when (stringp req-path)
+    (let* ((clean-path (string-remove-prefix "/" req-path))
+           (rel-path (if (or (string-empty-p clean-path) (string-suffix-p "/" clean-path))
+                         (concat clean-path "index.html")
+                       clean-path))
+           (expanded (expand-file-name rel-path doc-root))
+           (canon-root (file-name-as-directory (expand-file-name doc-root))))
+      (when (string-prefix-p canon-root (expand-file-name expanded))
+        expanded))))
+
 (defun elpaish--handle-ws-request (request doc-root)
   "Handler for `web-server' REQUEST serving files from DOC-ROOT."
   (with-slots (process headers) request
@@ -1266,11 +1271,8 @@ OUTPUT-DIRECTORY-PATH overrides destination directory."
                                 (cons "Content-Length" "11"))
             (process-send-string process "Bad Request")
             (throw 'close-connection nil))
-        (let* ((rel-path (if (or (string= req-path "/") (string-suffix-p "/" req-path))
-                             (concat (string-remove-prefix "/" req-path) "index.html")
-                           (string-remove-prefix "/" req-path)))
-               (file-path (expand-file-name rel-path doc-root)))
-          (if (and (file-exists-p file-path) (file-regular-p file-path))
+        (let ((file-path (elpaish--http-resolve-path req-path doc-root)))
+          (if (and file-path (file-exists-p file-path) (file-regular-p file-path))
               (let ((mime (elpaish--http-mime-type file-path))
                     (size (file-attribute-size (file-attributes file-path))))
                 (if head-path
@@ -1292,11 +1294,8 @@ Returns a cons cell (HEADERS . BODY-BYTES)."
   (if (string-match "\\`\\(GET\\|HEAD\\)[ \t]+\\([^ \t\r\n?]+\\)" request-str)
       (let* ((method (match-string 1 request-str))
              (req-path (match-string 2 request-str))
-             (rel-path (if (or (string= req-path "/") (string-suffix-p "/" req-path))
-                           (concat (string-remove-prefix "/" req-path) "index.html")
-                         (string-remove-prefix "/" req-path)))
-             (file-path (expand-file-name rel-path doc-root)))
-        (if (and (file-exists-p file-path) (file-regular-p file-path))
+             (file-path (elpaish--http-resolve-path req-path doc-root)))
+        (if (and file-path (file-exists-p file-path) (file-regular-p file-path))
             (let* ((content (with-temp-buffer
                               (set-buffer-multibyte nil)
                               (insert-file-contents-literally file-path)
@@ -1436,7 +1435,6 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
                                                                (elpaish--recipe-source-dir-relative recipe))
                                      "Uncloned"))
                             (snap-ver (or (elpaish-recipe-built-version-snapshot recipe)
-                                          (elpaish-recipe-built-version-elpaish recipe)
                                           "—"))
                             (stab-ver (or (elpaish-recipe-built-version-stable recipe) "—"))
                             (stage-ver (or (elpaish-recipe-built-version-staging recipe) "—")))

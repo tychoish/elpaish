@@ -1,8 +1,7 @@
-;;; elpaish-check.el --- Quality validation and preflight checks for Emacs packages -*- lexical-binding: t -*-
+;;; elpaish-check.el --- Quality validation and preflight checks -*- lexical-binding: t -*-
 
 ;; Author: tychoish
 ;; Keywords: tools, lisp, test, lint, maintenance
-;; Package-Requires: ((emacs "28.1"))
 
 ;;; Commentary:
 ;; Provides comprehensive, isolated preflight quality validation for Emacs
@@ -500,4 +499,8 @@ Only applies when the current buffer or DIR belongs to a project with .el files.
   (message "ELPAish builder command enabled for Emacs Lisp files."))
 
 (provide 'elpaish-check)
+
+;; Local Variables:
+;; package-lint-main-file: "pkg/elpaish.el"
+;; End:
 ;;; elpaish-check.el ends here

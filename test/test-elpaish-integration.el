@@ -28,7 +28,9 @@
     (package-initialize))
    (t
     (package-initialize))))
-
+(let ((pkg-dir (expand-file-name "pkg" default-directory)))
+  (when (file-directory-p pkg-dir)
+    (push pkg-dir load-path)))
 (require 'cl-lib)
 (require 'ert)
 (require 'elpaish)

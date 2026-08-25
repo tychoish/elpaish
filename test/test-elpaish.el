@@ -17,12 +17,16 @@
     (package-initialize))
    (t
     (package-initialize))))
-
+(let ((pkg-dir (expand-file-name "pkg" default-directory)))
+  (when (file-directory-p pkg-dir)
+    (push pkg-dir load-path)))
 (require 'ert)
 (require 'elpaish)
 (require 'elpaish-recipes)
 (require 'elpaish-check)
 (require 'elpaish-website)
+(require 'elpaish-keyring)
+(require 'elpaish-signing-keys)
 (require 'url)
 
 (defmacro elpaish-test-with-temp-env (&rest body)
@@ -221,7 +225,7 @@
      (elpaish-register-package 'catalog-pkg pkg-dir)
      (elpaish-build-package (gethash "catalog-pkg" elpaish-registry) 'elpaish)
 
-     (elpaish-generate-github-index 'elpaish)
+     (elpaish-generate-stream-index 'elpaish)
      (elpaish-generate-top-index)
 
      (let ((stream-index (expand-file-name "snapshot/index.html" elpaish-output-dir))
@@ -276,7 +280,7 @@
      (elpaish-test-create-dummy-pkg pkg-dir "annotated-completing-read" "1.0.0" "Long Package Name Test")
      (elpaish-register-package 'annotated-completing-read pkg-dir)
      (elpaish-build-package (gethash "annotated-completing-read" elpaish-registry) 'elpaish)
-     (elpaish-generate-github-index 'elpaish)
+     (elpaish-generate-stream-index 'elpaish)
      (elpaish-generate-top-index)
 
      (let ((stream-index (expand-file-name "snapshot/index.html" elpaish-output-dir))
@@ -1162,6 +1166,70 @@ source's last commit time rather than the time of the build."
   (should (fboundp 'elpaish-run-check))
   (should (equal (indirect-function 'elpaish-run-check)
                  (indirect-function 'elpaish-run-checks))))
+
+(ert-deftest elpaish-test-http-resolve-path-traversal-protection ()
+  "Test `elpaish--http-resolve-path' prevents directory traversal outside doc-root."
+  (elpaish-test-with-temp-env
+   (let ((doc-root (expand-file-name "public/" temp-dir)))
+     (make-directory doc-root t)
+     (with-temp-file (expand-file-name "index.html" doc-root)
+       (insert "<h1>Index</h1>"))
+     (make-directory (expand-file-name "snapshot" doc-root) t)
+     (with-temp-file (expand-file-name "snapshot/index.html" doc-root)
+       (insert "<h1>Snapshot</h1>"))
+
+     ;; Valid paths
+     (should (equal (elpaish--http-resolve-path "/" doc-root)
+                    (expand-file-name "index.html" doc-root)))
+     (should (equal (elpaish--http-resolve-path "/snapshot/" doc-root)
+                    (expand-file-name "snapshot/index.html" doc-root)))
+     (should (equal (elpaish--http-resolve-path "index.html" doc-root)
+                    (expand-file-name "index.html" doc-root)))
+
+     ;; Path traversal attempts should be rejected (return nil)
+     (should-not (elpaish--http-resolve-path "../secret.txt" doc-root))
+     (should-not (elpaish--http-resolve-path "../../etc/passwd" doc-root))
+     (should-not (elpaish--http-resolve-path "/../secret.txt" doc-root)))))
+
+(ert-deftest elpaish-test-keyring-setup-streams ()
+  "Test `elpaish-keyring-setup' configures `package-archives' entries."
+  (elpaish-test-with-temp-env
+   (let ((package-archives nil))
+     (elpaish-keyring-setup 'snapshot)
+     (should (assoc "snapshot" package-archives))
+     (should (string-match-p "/snapshot/" (cdr (assoc "snapshot" package-archives)))))
+   (let ((package-archives nil))
+     (elpaish-keyring-setup 'stable)
+     (should (assoc "stable" package-archives))
+     (should (string-match-p "/stable/" (cdr (assoc "stable" package-archives)))))
+   (let ((package-archives nil))
+     (elpaish-keyring-setup 'staging)
+     (should (assoc "staging" package-archives))
+     (should (string-match-p "/staging/" (cdr (assoc "staging" package-archives)))))))
+
+(ert-deftest elpaish-test-package-header-p-validation ()
+  "Test `elpaish--package-header-p' detects valid and invalid package files."
+  (elpaish-test-with-temp-env
+   (let ((valid-file (expand-file-name "valid.el" temp-dir))
+         (invalid-file (expand-file-name "invalid.el" temp-dir))
+         (non-existent (expand-file-name "missing.el" temp-dir)))
+     (with-temp-file valid-file
+       (insert ";;; valid.el --- Valid package summary -*- lexical-binding: t; -*-\n"))
+     (with-temp-file invalid-file
+       (insert ";; Not a valid package header\n(defun foo ())\n"))
+     (should (elpaish--package-header-p valid-file))
+     (should-not (elpaish--package-header-p invalid-file))
+     (should-not (elpaish--package-header-p non-existent)))))
+
+(ert-deftest elpaish-test-signing-key-expiration-helper ()
+  "Test `elpaish-verify-signing-key--subkey-expired-p' subkey expiration check."
+  (let* ((now (float-time))
+         (future-key (epg-make-sub-key nil nil nil nil nil nil nil (+ now 10000)))
+         (never-key (epg-make-sub-key nil nil nil nil nil nil nil 0))
+         (past-key (epg-make-sub-key nil nil nil nil nil nil nil (- now 10000))))
+    (should-not (elpaish-verify-signing-key--subkey-expired-p future-key))
+    (should-not (elpaish-verify-signing-key--subkey-expired-p never-key))
+    (should (elpaish-verify-signing-key--subkey-expired-p past-key))))
 
 (ert-deftest elpaish-test-install-packages-fallback-and-list ()
   "Test `elpaish-install-packages' fallback and argument parsing."

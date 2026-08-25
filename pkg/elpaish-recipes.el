@@ -1,7 +1,7 @@
 ;;; elpaish-recipes.el --- Recipe discovery and configuration for ELPAish -*- lexical-binding: t; -*-
 
 ;; Author: tychoish
-;; Keywords: maintenance, tools, elpa, package
+;; Keywords: maint, tools, elpa, package
 
 ;;; Commentary:
 ;; Recipe path resolution, package loading, and monorepo discovery tooling for
@@ -168,4 +168,8 @@ enumerating every file here."
     candidates))
 
 (provide 'elpaish-recipes)
+
+;; Local Variables:
+;; package-lint-main-file: "pkg/elpaish.el"
+;; End:
 ;;; elpaish-recipes.el ends here

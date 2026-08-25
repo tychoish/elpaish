@@ -1,7 +1,7 @@
 ;;; elpaish-css.el --- CSS-as-sexp stylesheets for ELPAish generated pages -*- lexical-binding: t; -*-
 
 ;; Author: tychoish
-;; Keywords: maintenance, tools, elpa, package
+;; Keywords: maint, tools, elpa, package
 
 ;;; Commentary:
 ;; Represents the CSS used by the generated GitHub Pages catalog as plain
@@ -294,4 +294,8 @@ DECLARATIONS is an alist of (PROPERTY . VALUE) strings."
          (padding-left . "24px"))
      (li (margin . "6px 0")))))
 (provide 'elpaish-css)
+
+;; Local Variables:
+;; package-lint-main-file: "pkg/elpaish.el"
+;; End:
 ;;; elpaish-css.el ends here
