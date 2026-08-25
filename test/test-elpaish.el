@@ -25,6 +25,7 @@
 (require 'elpaish-recipes)
 (require 'elpaish-check)
 (require 'elpaish-website)
+(require 'elpaish-install)
 (require 'elpaish-keyring)
 (require 'elpaish-signing-keys)
 (require 'url)
@@ -565,8 +566,17 @@
        (should (plist-get res :passed)))
 
      ;; Test skipping all checks
+     ;; Test skipping all checks
      (let ((res (elpaish-check-package pkg-dir :skip-checks t)))
-       (should (plist-get res :passed))))))
+       (should (plist-get res :passed)))
+
+     ;; Test registered package with :preflight-skip t
+     (let ((elpaish-registry (make-hash-table :test 'equal)))
+       (elpaish-register-package "skip-pkg" pkg-dir :preflight-skip t)
+       (let ((rec (gethash "skip-pkg" elpaish-registry)))
+         (should (eq (elpaish-recipe-preflight-skip rec) t))
+         (should (elpaish-preflight-package rec))
+         (should (plist-get (elpaish-check-package pkg-dir) :passed)))))))
 
 (ert-deftest elpaish-test-staging-version-edge-cases ()
   "Test edge cases in version normalization and staging version derivation."
@@ -1234,7 +1244,7 @@ source's last commit time rather than the time of the build."
 (ert-deftest elpaish-test-install-packages-fallback-and-list ()
   "Test `elpaish-install-packages' fallback and argument parsing."
   (elpaish-test-with-temp-env
-   (let ((elpaish-bootstrap-packages '(boot-a boot-b))
+   (let ((elpaish-install-bootstrap-packages '(boot-a boot-b))
          (installed-log nil))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
                ((symbol-function 'package-install) (lambda (pkg) (push pkg installed-log))))
@@ -1250,7 +1260,7 @@ source's last commit time rather than the time of the build."
 (ert-deftest elpaish-test-install-packages-continue-on-error ()
   "Test `elpaish-install-packages' installs packages and continues on error."
   (elpaish-test-with-temp-env
-   (let ((elpaish-bootstrap-packages '(dummy-pkg-a dummy-pkg-b))
+   (let ((elpaish-install-bootstrap-packages '(dummy-pkg-a dummy-pkg-b))
          (installed-log nil)
          (refresh-called nil))
      (cl-letf (((symbol-function 'package-refresh-contents)
@@ -1270,7 +1280,7 @@ source's last commit time rather than the time of the build."
 (ert-deftest elpaish-test-upgrade-packages-continue-on-error ()
   "Test `elpaish-upgrade-packages' refreshes contents and upgrades packages without error."
   (elpaish-test-with-temp-env
-   (let ((elpaish-bootstrap-packages '(boot-pkg))
+   (let ((elpaish-install-bootstrap-packages '(boot-pkg))
          (refresh-called nil)
          (upgraded-log nil))
      (cl-letf (((symbol-function 'package-refresh-contents)

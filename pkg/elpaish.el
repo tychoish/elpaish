@@ -4,7 +4,7 @@
 ;; Version: 0.1.0
 ;; URL: https://github.com/tychoish/elpaish
 ;; Keywords: maint, tools, local, package, elpa
-;; Package-Requires: ((emacs "28.1") (htmlize "1.34") (map "3.0") (seq "2.0") (web-server "0.1.2") (transient "0.3.0"))
+;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (htmlize "1.34") (map "3.0") (seq "2.0") (web-server "0.1.2") (transient "0.3.0"))
 
 ;;; Commentary:
 ;; ELPAish is a toolkit for building (and a prototype application of) an
@@ -43,13 +43,17 @@
 (require 'compile)
 (require 'web-server)
 
-(require 'htmlize nil t)
-(require 'elpaish-check nil t)
-(require 'annotated-completing-read nil t)
-(require 'transient nil t)
+(require 'annotated-completing-read)
+(require 'htmlize)
+(require 'transient)
+
+(require 'elpaish-check)
+(require 'elpaish-install)
+(require 'elpaish-keyring)
 
 (declare-function elpaish-check--get-buffer-name "elpaish-check")
 (declare-function elpaish-check-mode "elpaish-check")
+
 (defgroup elpaish nil
   "ELPA package repository builder."
   :group 'development)
@@ -183,14 +187,23 @@ publishing an incomplete archive.")
                                     suppress-streams
                                     docs-url)
   "Register package NAME with REPOSITORY-PATH (local directory or Git URL).
+
 BRANCH defaults to `elpaish-default-branch' and FILES to \\='(\"*.el\").
+
 SOURCE-DIRECTORY-PATH (or SOURCE-DIR) is the subdirectory within
+
 REPOSITORY-PATH holding the package (default \".\"), for monorepos or
 nested folders.
+
 TEST-DIRECTORY-PATH (or TEST-DIR) is an optional custom test directory path.
-PREFLIGHT-SKIP is a list of check symbols to bypass during preflight.
+
+PREFLIGHT-SKIP is t (or \='t) to skip all checks, or a list of check
+symbols to bypass during preflight.
+
 DISABLED-STREAMS (or SUPPRESS-STREAMS) is a list of suppressed stream symbols.
+
 DOC (or DOCS-URL) is an optional URL or path to documentation.
+
 SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
   (let* ((raw-name (if (symbolp name) (symbol-name name) (string-trim name)))
          (name-str (string-remove-suffix ".el" raw-name))
@@ -576,7 +589,7 @@ Returns t if checks pass, nil if quarantined."
   (if (not elpaish-run-preflight)
       t
     (let ((skip (elpaish-recipe-preflight-skip recipe)))
-      (if (eq skip t)
+      (if (or (eq skip t) (eq skip 't) (and (listp skip) (memq 'all skip)))
           t
         (unless (featurep 'elpaish-check)
           (require 'elpaish-check nil t))
@@ -742,11 +755,9 @@ and enables signing.  Return the detected signing key ID or nil."
                   (seq-map (lambda (k)
                              (cons (epg-sub-key-id (car (epg-key-sub-key-list k)))
                                    (epg-user-id-string (car (epg-key-user-id-list k))))))))
-         (key-id (if (fboundp 'annotated-completing-read)
-                     (annotated-completing-read table
-                                                :prompt "Select GPG key for signing ELPA packages: "
-                                                :require-match t)
-                   (completing-read "Select GPG key for signing ELPA packages: " table nil t))))
+         (key-id (annotated-completing-read table
+                                            :prompt "Select GPG key for signing ELPA packages: "
+                                            :require-match t)))
     (setq elpaish-gpg-key key-id
           elpaish-sign-packages t)
     (message "GPG package signing enabled! Selected Key ID: %s." key-id)))
@@ -1119,18 +1130,13 @@ OUTPUT-DIRECTORY-PATH overrides destination directory."
                                   (summary (if r (elpaish-recipe-summary r) "")))
                              (cons n summary)))
                          names))
-          (picked (if (and (fboundp 'annotated-completing-read) table)
-                      (annotated-completing-read table :prompt "Build ELPAish package: " :require-match t)
-                    (completing-read "Build ELPAish package: " names nil t)))
-          (stream-choice (if (fboundp 'annotated-completing-read)
-                             (annotated-completing-read
-                              '(("all" . "Build across all release streams (snapshot, stable, staging)")
-                                ("snapshot" . "Snapshot / development release stream")
-                                ("stable" . "Clean semver release stream")
-                                ("staging" . "Pre-release / RC release stream"))
-                              :prompt "Release stream: " :default "all" :require-match t)
-                           (completing-read "Release stream (all/snapshot/stable/staging, default all): "
-                                            '("all" "snapshot" "stable" "staging") nil t nil nil "all"))))
+          (picked (annotated-completing-read table :prompt "Build ELPAish package: " :require-match t))
+          (stream-choice (annotated-completing-read
+                          '(("all" . "Build across all release streams (snapshot, stable, staging)")
+                            ("snapshot" . "Snapshot / development release stream")
+                            ("stable" . "Clean semver release stream")
+                            ("staging" . "Pre-release / RC release stream"))
+                          :prompt "Release stream: " :default "all" :require-match t)))
      (list (gethash picked elpaish-registry) (intern stream-choice))))
   (let* ((recipe (cond
                   ((elpaish-recipe-p recipe-or-name) recipe-or-name)
@@ -1174,10 +1180,12 @@ OUTPUT-DIRECTORY-PATH overrides destination directory."
   "Run preflight quality gates on a single package RECIPE-OR-NAME."
   (interactive
    (let* ((names (sort (hash-table-keys elpaish-registry) #'string<))
-          (picked (if (and (fboundp 'annotated-completing-read) names)
-                      (annotated-completing-read (mapcar (lambda (n) (cons n "registered recipe")) names)
-                                                 :prompt "Preflight package: " :require-match t)
-                    (completing-read "Preflight package: " names nil t))))
+          (table (mapcar (lambda (n)
+                           (let* ((r (gethash n elpaish-registry))
+                                  (summary (if r (elpaish-recipe-summary r) "")))
+                             (cons n (if (string-empty-p summary) "registered recipe" summary))))
+                         names))
+          (picked (annotated-completing-read table :prompt "Preflight package: " :require-match t)))
      (list (gethash picked elpaish-registry))))
   (let ((recipe (cond
                  ((elpaish-recipe-p recipe-or-name) recipe-or-name)
@@ -1353,17 +1361,14 @@ PORT defaults to `elpaish-preview-server-port'."
   "Start scheduled background rebuilds of the ELPA repository.
 INTERVAL can be seconds or a time string (e.g. \"1 hour\").
 If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
-  (interactive (list (if (fboundp 'annotated-completing-read)
-                         (annotated-completing-read
-                          (thread-last elpaish-auto-build-intervals
-                            (seq-map (lambda (i) (cons i (format "Rebuild every %s" i)))))
-                          :prompt "Auto-build interval: "
-                          :require-match nil
-                          :default "1 hour")
-                       (completing-read "Auto-build interval: "
-                                        elpaish-auto-build-intervals
-                                        nil nil nil nil "1 hour"))
-                     current-prefix-arg))
+  (interactive
+   (list (annotated-completing-read
+          (thread-last elpaish-auto-build-intervals
+            (seq-map (lambda (i) (cons i (format "Rebuild every %s" i)))))
+          :prompt "Auto-build interval: "
+          :require-match nil
+          :default "1 hour")
+         current-prefix-arg))
   (elpaish-stop-auto-build)
   (let* ((secs (cond
                 ((numberp interval) interval)
