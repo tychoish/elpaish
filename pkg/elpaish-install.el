@@ -48,6 +48,68 @@ PKGS can be package symbols or lists of package symbols."
       (setq elpaish-install-bootstrap-packages
             (append elpaish-install-bootstrap-packages (nreverse new-pkgs)))))
   elpaish-install-bootstrap-packages)
+(defun elpaish-install--extract-header-requires (file)
+  "Extract package requirements list from FILE header using `package-buffer-info'."
+  (when (and file (file-exists-p file))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (when-let* ((pkg-info (condition-case nil (package-buffer-info) (error nil))))
+        (package-desc-reqs pkg-info)))))
+
+;;;###autoload
+(defun elpaish-ensure-package-dependencies (dir-or-recipe)
+  "Extract package dependencies from DIR-OR-RECIPE and install any missing ones.
+DIR-OR-RECIPE can be a directory path string or an `elpaish-recipe' struct."
+  (let* ((recipe (when (and (fboundp 'elpaish-recipe-p) (elpaish-recipe-p dir-or-recipe))
+                   dir-or-recipe))
+         (repo-dir (cond
+                    (recipe (if (fboundp 'elpaish--recipe-source-path)
+                                (elpaish--recipe-source-path recipe)
+                              default-directory))
+                    ((stringp dir-or-recipe) (expand-file-name dir-or-recipe))
+                    (t default-directory)))
+         (name (cond
+                (recipe (elpaish-recipe-name recipe))
+                ((file-directory-p repo-dir) (file-name-nondirectory (directory-file-name repo-dir)))
+                (t "package")))
+         (main-file (cond
+                     ((file-regular-p repo-dir) repo-dir)
+                     (t (let ((el-file (expand-file-name (concat name ".el") repo-dir))
+                              (pkg-file (expand-file-name (concat name "-pkg.el") repo-dir)))
+                          (cond
+                           ((file-exists-p el-file) el-file)
+                           ((file-exists-p pkg-file) pkg-file)
+                           (t (car (directory-files repo-dir t "\\.el\\'"))))))))
+         (reqs (and main-file (elpaish-install--extract-header-requires main-file))))
+
+    (unless reqs
+      (when (and recipe (fboundp 'elpaish-recipe-requires))
+        (setq reqs (elpaish-recipe-requires recipe))))
+
+    (let ((missing nil))
+      (dolist (req reqs)
+        (let ((dep-pkg (if (consp req) (car req) req)))
+          (when (and (symbolp dep-pkg)
+                     (not (eq dep-pkg 'emacs))
+                     (not (package-installed-p dep-pkg)))
+            (push dep-pkg missing))))
+      (when missing
+        (setq missing (nreverse (delete-dups missing)))
+        (unless (bound-and-true-p package-archives)
+          (setq package-archives
+                '(("gnu" . "https://elpa.gnu.org/packages/")
+                  ("nongnu" . "https://elpa.nongnu.org/nongnu/")
+                  ("melpa" . "https://melpa.org/packages/"))))
+        (unless (bound-and-true-p package-archive-contents)
+          (package-initialize))
+        (message "Installing implicit dependencies for %s: %s" name missing)
+        (dolist (pkg missing)
+          (unless (package-installed-p pkg)
+            (condition-case err
+                (package-install pkg)
+              (error
+               (message "Warning: Implicit dependency %s installation skipped or failed: %s"
+                        pkg (error-message-string err))))))))))
 
 ;;;; Core Single Package Operation
 

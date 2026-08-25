@@ -915,58 +915,7 @@ Returns a plist with :summary, :reqs, :url, and :keywords."
                   :reqs (and recipe (elpaish-recipe-requires recipe))
                   :url (and recipe (elpaish-recipe-url recipe))
                   :keywords (or (and recipe (elpaish-recipe-keywords recipe)) '("tools")))))))))
-(defun elpaish-ensure-package-dependencies (dir-or-recipe)
-  "Extract package dependencies from DIR-OR-RECIPE and install any missing ones.
-DIR-OR-RECIPE can be a directory path string or an `elpaish-recipe' struct."
-  (let* ((recipe (when (elpaish-recipe-p dir-or-recipe) dir-or-recipe))
-         (repo-dir (cond
-                    (recipe (elpaish--recipe-source-path recipe))
-                    ((stringp dir-or-recipe) (expand-file-name dir-or-recipe))
-                    (t default-directory)))
-         (name (if recipe (elpaish-recipe-name recipe) (file-name-nondirectory (directory-file-name repo-dir))))
-         (main-file-name (cond
-                          ((and recipe (elpaish-recipe-files recipe)
-                                (member (format "%s-pkg.el" name) (elpaish-recipe-files recipe))
-                                (not (member (format "%s.el" name) (elpaish-recipe-files recipe))))
-                           (format "%s-pkg.el" name))
-                          ((string-suffix-p ".el" name) name)
-                          (t (concat name ".el"))))
-         (main-file (expand-file-name main-file-name repo-dir))
-         (reqs nil))
 
-    (when (file-exists-p main-file)
-      (with-temp-buffer
-        (insert-file-contents main-file)
-        (let ((meta (elpaish--extract-buffer-metadata recipe)))
-          (setq reqs (plist-get meta :reqs)))))
-    (unless reqs
-      (when recipe
-        (setq reqs (elpaish-recipe-requires recipe))))
-
-    (let ((missing nil))
-      (dolist (req reqs)
-        (let ((dep-pkg (if (consp req) (car req) req)))
-          (when (and (symbolp dep-pkg)
-                     (not (eq dep-pkg 'emacs))
-                     (not (package-installed-p dep-pkg)))
-            (push dep-pkg missing))))
-      (when missing
-        (setq missing (nreverse (delete-dups missing)))
-        (unless (bound-and-true-p package-archives)
-          (setq package-archives
-                '(("gnu" . "https://elpa.gnu.org/packages/")
-                  ("nongnu" . "https://elpa.nongnu.org/nongnu/")
-                  ("melpa" . "https://melpa.org/packages/"))))
-        (unless (bound-and-true-p package-archive-contents)
-          (package-initialize))
-        (message "Installing implicit dependencies for %s: %s" name missing)
-        (dolist (pkg missing)
-          (unless (package-installed-p pkg)
-            (condition-case err
-                (package-install pkg)
-              (error
-               (message "Warning: Implicit dependency %s installation skipped or failed: %s"
-                        pkg (error-message-string err))))))))))
 (defcustom elpaish-build-buffer-name "*elpaish-build*"
   "Buffer name used for ELPAish package build and compilation output."
   :type 'string
