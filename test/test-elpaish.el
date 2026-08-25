@@ -1163,5 +1163,61 @@ source's last commit time rather than the time of the build."
   (should (equal (indirect-function 'elpaish-run-check)
                  (indirect-function 'elpaish-run-checks))))
 
+(ert-deftest elpaish-test-install-packages-fallback-and-list ()
+  "Test `elpaish-install-packages' fallback and argument parsing."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-bootstrap-packages '(boot-a boot-b))
+         (installed-log nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
+               ((symbol-function 'package-install) (lambda (pkg) (push pkg installed-log))))
+       ;; Default fallback
+       (elpaish-install-packages)
+       (should (equal installed-log '(boot-b boot-a)))
+       (setq installed-log nil)
+
+       ;; List of symbols
+       (elpaish-install-packages '(pkg-x pkg-y))
+       (should (equal installed-log '(pkg-y pkg-x)))))))
+
+(ert-deftest elpaish-test-install-packages-continue-on-error ()
+  "Test `elpaish-install-packages' installs packages and continues on error."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-bootstrap-packages '(dummy-pkg-a dummy-pkg-b))
+         (installed-log nil)
+         (refresh-called nil))
+     (cl-letf (((symbol-function 'package-refresh-contents)
+                (lambda () (setq refresh-called t)))
+               ((symbol-function 'package-installed-p)
+                (lambda (pkg) (eq pkg 'already-installed)))
+               ((symbol-function 'package-install)
+                (lambda (pkg)
+                  (if (eq pkg 'fail-pkg)
+                      (error "Simulated install error for %s" pkg)
+                    (push pkg installed-log)))))
+       ;; Test with refresh option and error handling
+       (elpaish-install-packages 'good-pkg 'fail-pkg 'already-installed :refresh t)
+       (should refresh-called)
+       (should (equal installed-log '(good-pkg)))))))
+
+(ert-deftest elpaish-test-upgrade-packages-continue-on-error ()
+  "Test `elpaish-upgrade-packages' refreshes contents and upgrades packages without error."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-bootstrap-packages '(boot-pkg))
+         (refresh-called nil)
+         (upgraded-log nil))
+     (cl-letf (((symbol-function 'package-refresh-contents)
+                (lambda () (setq refresh-called t)))
+               ((symbol-function 'package-installed-p)
+                (lambda (_pkg) t))
+               ((symbol-function 'package-upgrade)
+                (lambda (pkg)
+                  (if (eq pkg 'up-to-date-pkg)
+                      (signal 'user-error '("Package is up to date"))
+                    (push pkg upgraded-log)))))
+       ;; Runs refresh contents first and does not fail on up-to-date or error
+       (elpaish-upgrade-packages 'upgrade-pkg 'up-to-date-pkg)
+       (should refresh-called)
+       (should (equal upgraded-log '(upgrade-pkg)))))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here

@@ -61,8 +61,7 @@ FILES may be a single file path/glob, a list of paths/globs, or nil (defaulting 
 Expands wildcards across the current directory hierarchy and returns a deduplicated
 list of resolved existing file paths."
   (let* ((patterns (cond
-                    ((null files) (or (and (boundp 'elpaish-packages-files) elpaish-packages-files)
-                                      (list elpaish-packages-file)))
+                    ((null files) (or elpaish-packages-files (list elpaish-packages-file)))
                     ((listp files) files)
                     ((stringp files) (list files))
                     (t (list (format "%s" files)))))
