@@ -1324,7 +1324,19 @@ source's last commit time rather than the time of the build."
                          (let ((f (sprite-future--make :state :pending)))
                            (sprite-future--settle f :resolved res)
                            f)
-                       res))))))
+                       res)))))
+               ;; Stub the sprite-future protocol itself: `sprite' is not a
+               ;; published package installable in CI, so the test cannot rely
+               ;; on the real implementation being loaded.
+               ((symbol-function 'sprite-future--make)
+                (cl-function (lambda (&key state &allow-other-keys) (cons state nil))))
+               ((symbol-function 'sprite-future--settle)
+                (lambda (future state value) (setcar future state) (setcdr future value)))
+               ((symbol-function 'sprite-future-then)
+                (lambda (future on-resolve &optional _on-reject)
+                  (when (eq (car future) :resolved)
+                    (funcall on-resolve (cdr future)))
+                  future)))
        (elpaish-install-packages :async t :callback (lambda (_) (setq callback-called t)))
        (should reloaded)
        (should callback-called)))))
