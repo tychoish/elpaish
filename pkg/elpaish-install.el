@@ -74,12 +74,14 @@ DIR-OR-RECIPE can be a directory path string or an `elpaish-recipe' struct."
                 (t "package")))
          (main-file (cond
                      ((file-regular-p repo-dir) repo-dir)
-                     (t (let ((el-file (expand-file-name (concat name ".el") repo-dir))
-                              (pkg-file (expand-file-name (concat name "-pkg.el") repo-dir)))
-                          (cond
-                           ((file-exists-p el-file) el-file)
-                           ((file-exists-p pkg-file) pkg-file)
-                           (t (car (directory-files repo-dir t "\\.el\\'"))))))))
+                     ((file-directory-p repo-dir)
+                      (let ((el-file (expand-file-name (concat name ".el") repo-dir))
+                            (pkg-file (expand-file-name (concat name "-pkg.el") repo-dir)))
+                        (cond
+                         ((file-exists-p el-file) el-file)
+                         ((file-exists-p pkg-file) pkg-file)
+                         (t (car (directory-files repo-dir t "\\.el\\'"))))))
+                     (t nil)))
          (reqs (and main-file (elpaish-install--extract-header-requires main-file))))
 
     (unless reqs
