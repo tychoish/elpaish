@@ -23,10 +23,11 @@
   (package-refresh-contents))
 
 ;; Load minimal installer (0 external dependencies) and derive/install elpaish's own dependencies
-(let ((pkg-dir (expand-file-name "pkg" default-directory)))
+(let* ((pkg-dir (expand-file-name "pkg" default-directory))
+       (main-file (expand-file-name "elpaish.el" pkg-dir)))
   (add-to-list 'load-path pkg-dir)
   (require 'elpaish-install)
-  (elpaish-install-ensure-package-dependencies pkg-dir))
+  (elpaish-install-ensure-package-dependencies main-file))
 
 (provide 'bootstrap-elpaish)
 ;;; bootstrap-elpaish.el ends here
