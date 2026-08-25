@@ -48,7 +48,6 @@
                       "https://github.com/tychoish/magit-dash.git")
  :branch "main"
  :test-dir "test"
- :preflight-skip '(ert package-lint)
  :summary "Status and management dashboard for Magit repositories and worktrees"
  :url "https://github.com/tychoish/magit-dash"
  :keywords '("tools" "vc" "git"))
@@ -89,16 +88,12 @@
 
 (elpaish-register-package
  'elpaish
- (elpaish-recipe-path "elpaish"
-                      "https://github.com/tychoish/elpaish.git")
+ (elpaish-recipe-path
+  "elpaish"
+  "https://github.com/tychoish/elpaish.git")
  :source-dir "pkg"
  :branch "main"
- ;; No `:files' needed — defaults to a "*.el" glob of `pkg/' at build time,
- ;; automatically excluding `elpaish-keyring.el' since it is the main file
- ;; of the separately-registered `elpaish-keyring' recipe sharing this
- ;; source directory (see `elpaish--sibling-main-files').
  :test-dir "test"
- :preflight-skip '(package-lint)
  :summary "Multi-track signed ELPA package archive builder and server"
  :url "https://github.com/tychoish/elpaish"
  :keywords '("tools" "elpa" "package" "distribution"))
