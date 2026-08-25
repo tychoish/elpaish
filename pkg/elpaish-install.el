@@ -18,7 +18,8 @@
   :group 'package
   :prefix "elpaish-install-")
 
-(defcustom elpaish-install-bootstrap-packages nil
+(defcustom elpaish-install-bootstrap-packages
+  '(web-server htmlize annotated-completing-read transient package-lint)
   "List of package symbols to install or upgrade during bootstrapping.
 Used as default target package list for `elpaish-install-packages'
 and `elpaish-install-upgrade-packages' when no explicit packages are specified."
