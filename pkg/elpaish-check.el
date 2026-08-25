@@ -517,7 +517,7 @@ Only applies when the current buffer or DIR belongs to a project with .el files.
   (interactive)
   (add-hook 'emacs-lisp-mode-hook #'elpaish-check-setup-compile-command)
   (add-hook 'find-file-hook #'elpaish-check-maybe-setup-builder)
-  (message "ELPAish builder command enabled for Emacs Lisp files."))q
+  (message "ELPAish builder command enabled for Emacs Lisp files."))
 
 (provide 'elpaish-check)
 
