@@ -1330,7 +1330,7 @@ source's last commit time rather than the time of the build."
        (should callback-called)))))
 
 (ert-deftest elpaish-test-ensure-package-dependencies ()
-  "Test `elpaish-ensure-package-dependencies' implicitly installs missing header dependencies."
+  "Test `elpaish-install-ensure-package-dependencies' implicitly installs missing header dependencies."
   (elpaish-test-with-temp-env
    (let ((installed-log nil)
          (recipe (elpaish-recipe-create :name "demo-pkg"
@@ -1338,8 +1338,19 @@ source's last commit time rather than the time of the build."
                                        :requires '((emacs "28.1") (dep-a "1.0") (dep-b "2.0")))))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (p) (eq p 'dep-b)))
                ((symbol-function 'package-install) (lambda (p) (push p installed-log))))
-       (elpaish-ensure-package-dependencies recipe)
+       (elpaish-install-ensure-package-dependencies recipe)
        (should (equal installed-log '(dep-a)))))))
+
+(ert-deftest elpaish-test-ensure-package-dependencies-user-error ()
+  "Test `elpaish-install-ensure-package-dependencies' signals user-error when package-archives is nil."
+  (elpaish-test-with-temp-env
+   (let ((package-archives nil)
+         (recipe (elpaish-recipe-create :name "demo-pkg"
+                                       :repository-path "demo-pkg"
+                                       :requires '((emacs "28.1") (missing-dep "1.0")))))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil)))
+       (should-error (elpaish-install-ensure-package-dependencies recipe)
+                     :type 'user-error)))))
 (ert-deftest elpaish-test-recipe-exclude-files ()
   "Test `:exclude-files' filters matching files in `elpaish--collect-files'."
   (elpaish-test-with-temp-env

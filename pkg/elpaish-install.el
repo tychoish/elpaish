@@ -57,7 +57,7 @@ PKGS can be package symbols or lists of package symbols."
         (package-desc-reqs pkg-info)))))
 
 ;;;###autoload
-(defun elpaish-ensure-package-dependencies (dir-or-recipe)
+(defun elpaish-install-ensure-package-dependencies (dir-or-recipe)
   "Extract package dependencies from DIR-OR-RECIPE and install any missing ones.
 DIR-OR-RECIPE can be a directory path string or an `elpaish-recipe' struct."
   (let* ((recipe (when (and (fboundp 'elpaish-recipe-p) (elpaish-recipe-p dir-or-recipe))
@@ -97,11 +97,9 @@ DIR-OR-RECIPE can be a directory path string or an `elpaish-recipe' struct."
             (push dep-pkg missing))))
       (when missing
         (setq missing (nreverse (delete-dups missing)))
-        (unless (bound-and-true-p package-archives)
-          (setq package-archives
-                '(("gnu" . "https://elpa.gnu.org/packages/")
-                  ("nongnu" . "https://elpa.nongnu.org/nongnu/")
-                  ("melpa" . "https://melpa.org/packages/"))))
+        (unless (and (boundp 'package-archives) package-archives)
+          (user-error "Cannot install missing dependencies (%s) for %s: `package-archives' is not configured"
+                      (mapconcat #'symbol-name missing ", ") name))
         (unless (bound-and-true-p package-archive-contents)
           (package-initialize))
         (message "Installing implicit dependencies for %s: %s" name missing)

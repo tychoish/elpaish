@@ -616,7 +616,7 @@ Returns t if checks pass, nil if quarantined."
   (let ((skip (elpaish-recipe-preflight-skip recipe)))
     (if (or (eq skip t) (eq skip 't) (and (listp skip) (memq 'all skip)))
         t
-      (elpaish-ensure-package-dependencies recipe)
+      (elpaish-install-ensure-package-dependencies recipe)
       (unless (featurep 'elpaish-check)
         (require 'elpaish-check nil t))
       (if (fboundp 'elpaish-check-package)

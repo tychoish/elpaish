@@ -26,7 +26,7 @@
 (let ((pkg-dir (expand-file-name "pkg" default-directory)))
   (add-to-list 'load-path pkg-dir)
   (require 'elpaish-install)
-  (elpaish-ensure-package-dependencies pkg-dir))
+  (elpaish-install-ensure-package-dependencies pkg-dir))
 
 (provide 'bootstrap-elpaish)
 ;;; bootstrap-elpaish.el ends here
