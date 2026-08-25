@@ -46,6 +46,7 @@
  (elpaish-recipe-path "magit-dash" "https://github.com/tychoish/magit-dash.git")
  :branch "main"
  :test-dir "test"
+ :requires '(magit projectile)
  :summary "Status and management dashboard for Magit repositories and worktrees"
  :url "https://github.com/tychoish/magit-dash"
  :keywords '("tools" "vc" "git"))

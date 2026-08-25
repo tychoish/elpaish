@@ -1,3 +1,5 @@
 public/
 repos/
+elpa-ci/
+elpa/
 *.elc

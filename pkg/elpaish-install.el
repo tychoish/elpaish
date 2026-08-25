@@ -82,11 +82,10 @@ DIR-OR-RECIPE can be a directory path string or an `elpaish-recipe' struct."
                          ((file-exists-p pkg-file) pkg-file)
                          (t (car (directory-files repo-dir t "\\.el\\'"))))))
                      (t nil)))
-         (reqs (and main-file (elpaish-install--extract-header-requires main-file))))
-
-    (unless reqs
-      (when (and recipe (fboundp 'elpaish-recipe-requires))
-        (setq reqs (elpaish-recipe-requires recipe))))
+         (header-reqs (and main-file (elpaish-install--extract-header-requires main-file)))
+         (recipe-reqs (when (and recipe (fboundp 'elpaish-recipe-requires))
+                        (elpaish-recipe-requires recipe)))
+         (reqs (append header-reqs recipe-reqs)))
 
     (let ((missing nil))
       (dolist (req reqs)
@@ -102,6 +101,9 @@ DIR-OR-RECIPE can be a directory path string or an `elpaish-recipe' struct."
                       (mapconcat #'symbol-name missing ", ") name))
         (unless (bound-and-true-p package-archive-contents)
           (package-initialize))
+        (when (or (not (bound-and-true-p package-archive-contents))
+                  (seq-some (lambda (p) (not (assq p package-archive-contents))) missing))
+          (package-refresh-contents))
         (message "Installing implicit dependencies for %s: %s" name missing)
         (dolist (pkg missing)
           (unless (package-installed-p pkg)

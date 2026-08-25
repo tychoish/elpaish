@@ -53,9 +53,13 @@
 ;; Initialize GPG signing from environment variables (ELPAISH_SIGNING_KEY)
 (elpaish-init-signing-from-env)
 
-(message "[elpaish] Building ELPAish repository into %s..." elpaish-output-dir)
-(elpaish-build-all 'all elpaish-output-dir)
-(message "[elpaish] Repository build complete!")
+(let ((package-archives (or package-archives
+                            '(("gnu" . "https://elpa.gnu.org/packages/")
+                              ("nongnu" . "https://elpa.nongnu.org/nongnu/")
+                              ("melpa" . "https://melpa.org/packages/")))))
+  (message "[elpaish] Building ELPAish repository into %s..." elpaish-output-dir)
+  (elpaish-build-all 'all elpaish-output-dir)
+  (message "[elpaish] Repository build complete!"))
 
 (provide 'build-elpaish)
 ;;; build-elpaish.el ends here
