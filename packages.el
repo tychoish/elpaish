@@ -12,7 +12,6 @@
                       "https://github.com/tychoish/annotated-completing-read.git")
  :branch "main"
  :files '("annotated-completing-read.el")
- :preflight-skip '(ert)
  :test-dir "test"
  :summary "Annotated completing-read interface with aligned annotations"
  :url "https://github.com/tychoish/annotated-completing-read"
@@ -33,11 +32,11 @@
  'agent-shell-notifications
  (elpaish-recipe-path "agent-shell-notifications"
                       "https://github.com/zackattackz/agent-shell-notifications.git")
+ :preflight-skip t ;; it's external -- yolo
  :branch "main"
  :files '("agent-shell-notifications.el"
 	  "agent-shell-notifications-knockknock.el"
 	  "agent-shell-notifications-libnotify.el")
- :preflight-skip '(byte-compile ert package-lint)
  :summary "Libnotify notifications for agent-shell"
  :url "https://github.com/zackattackz/agent-shell-notifications"
  :keywords '("tools" "agent-shell"))
@@ -69,7 +68,7 @@
                       "https://github.com/tychoish/xtdlib.el.git")
  :branch "main"
  :test-dir "test"
- :preflight-skip '(ert package-lint)
+ :preflight-skip '(package-lint)
  :summary "Comprehensive standard library extension for Emacs Lisp"
  :url "https://github.com/tychoish/xtdlib.el"
  :keywords '("extensions" "lisp"))
