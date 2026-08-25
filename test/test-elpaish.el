@@ -104,7 +104,7 @@
      (should recipe-b)
      (should (equal (elpaish-recipe-branch recipe-b) "develop"))
      (should (equal (elpaish-recipe-files recipe-b) '("*.el" "src/*.el")))
-     (should (equal (elpaish-recipe-test-dir recipe-b) "test"))
+     (should (equal (elpaish-recipe-test-directory-path recipe-b) "test"))
      (should (equal (elpaish-recipe-preflight-skip recipe-b) '(checkdoc))))))
 
 (ert-deftest elpaish-test-pure-date-version ()
@@ -841,7 +841,7 @@ source's last commit time rather than the time of the build."
        (should (gethash "pkg-one" elpaish-registry))
        (should (gethash "pkg-two" elpaish-registry))
        (should-not (gethash "not-a-package" elpaish-registry))
-       (should (equal (elpaish-recipe-source-dir (gethash "pkg-one" elpaish-registry)) "pkg-one"))))))
+       (should (equal (elpaish-recipe-source-directory-path (gethash "pkg-one" elpaish-registry)) "pkg-one"))))))
 
 (ert-deftest elpaish-test-recipe-path-local-and-remote-fallback ()
   "Test local checkout search and remote URL fallback for `elpaish-recipe-path'."
@@ -914,9 +914,8 @@ source's last commit time rather than the time of the build."
      (should (file-exists-p (expand-file-name "index.html" elpaish-output-dir))))))
 
 (ert-deftest elpaish-test-transient-menu-defined ()
-  "Test that transient menu `elpaish-menu' and alias `elpaish-dispatch' exist."
-  (should (fboundp 'elpaish-menu))
-  (should (fboundp 'elpaish-dispatch)))
+  "Test that transient menu `elpaish-menu' exists."
+  (should (fboundp 'elpaish-menu)))
 
 (ert-deftest elpaish-test-register-package-descriptive-parameter-names ()
   "Test registering a package with full descriptive path parameters."
@@ -1171,11 +1170,6 @@ source's last commit time rather than the time of the build."
    (let* ((elpaish-check-buffer-name nil)
           (name (elpaish-check-buffer-name "/path/to/my-package/")))
      (should (equal name "*my-package-checks*")))))
-(ert-deftest elpaish-test-run-check-alias ()
-  "Test `elpaish-run-check' alias."
-  (should (fboundp 'elpaish-run-check))
-  (should (equal (indirect-function 'elpaish-run-check)
-                 (indirect-function 'elpaish-run-checks))))
 
 (ert-deftest elpaish-test-http-resolve-path-traversal-protection ()
   "Test `elpaish--http-resolve-path' prevents directory traversal outside doc-root."
@@ -1278,7 +1272,7 @@ source's last commit time rather than the time of the build."
        (should (equal installed-log '(good-pkg)))))))
 
 (ert-deftest elpaish-test-upgrade-packages-continue-on-error ()
-  "Test `elpaish-upgrade-packages' refreshes contents and upgrades packages without error."
+  "Test `elpaish-install-upgrade-packages' refreshes contents and upgrades packages without error."
   (elpaish-test-with-temp-env
    (let ((elpaish-install-bootstrap-packages '(boot-pkg))
          (refresh-called nil)
@@ -1293,9 +1287,59 @@ source's last commit time rather than the time of the build."
                       (signal 'user-error '("Package is up to date"))
                     (push pkg upgraded-log)))))
        ;; Runs refresh contents first and does not fail on up-to-date or error
-       (elpaish-upgrade-packages 'upgrade-pkg 'up-to-date-pkg)
+       (elpaish-install-upgrade-packages 'upgrade-pkg 'up-to-date-pkg)
        (should refresh-called)
        (should (equal upgraded-log '(upgrade-pkg)))))))
+
+(ert-deftest elpaish-test-add-bootstrap-packages ()
+  "Test `elpaish-install-add-bootstrap-packages' appends unique symbols."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-install-bootstrap-packages '(pkg-a pkg-b)))
+     ;; Append single symbols and list of symbols
+     (elpaish-install-add-bootstrap-packages 'pkg-c 'pkg-b '(pkg-d pkg-a))
+     (should (equal elpaish-install-bootstrap-packages '(pkg-a pkg-b pkg-c pkg-d)))
+
+     ;; Append additional symbols
+     (elpaish-install-add-bootstrap-packages '(pkg-e pkg-c) 'pkg-f)
+     (should (equal elpaish-install-bootstrap-packages '(pkg-a pkg-b pkg-c pkg-d pkg-e pkg-f))))))
+
+(ert-deftest elpaish-test-install-packages-async-sprite ()
+  "Test `elpaish-install-packages' async path using sprite pool."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-install-bootstrap-packages '(pkg-async-a pkg-async-b))
+         (reloaded nil)
+         (callback-called nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
+               ((symbol-function 'package-read-all-archive-contents) (lambda () (setq reloaded t)))
+               ((symbol-function 'require)
+                (lambda (feature &optional filename noerror)
+                  (if (memq feature '(sprite sprite-fleet))
+                      t
+                    (apply #'require feature filename noerror))))
+               ((symbol-function 'sprite-pool-mapcar)
+                (cl-function
+                 (lambda (_fn items &key async _pool-size &allow-other-keys)
+                   (let ((res (mapcar (lambda (item) (list :status :installed :pkg item)) items)))
+                     (if async
+                         (let ((f (sprite-future--make :state :pending)))
+                           (sprite-future--settle f :resolved res)
+                           f)
+                       res))))))
+       (elpaish-install-packages :async t :callback (lambda (_) (setq callback-called t)))
+       (should reloaded)
+       (should callback-called)))))
+
+(ert-deftest elpaish-test-ensure-package-dependencies ()
+  "Test `elpaish-ensure-package-dependencies' implicitly installs missing header dependencies."
+  (elpaish-test-with-temp-env
+   (let ((installed-log nil)
+         (recipe (elpaish-recipe-create :name "demo-pkg"
+                                       :repository-path "demo-pkg"
+                                       :requires '((emacs "28.1") (dep-a "1.0") (dep-b "2.0")))))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (p) (eq p 'dep-b)))
+               ((symbol-function 'package-install) (lambda (p) (push p installed-log))))
+       (elpaish-ensure-package-dependencies recipe)
+       (should (equal installed-log '(dep-a)))))))
 (ert-deftest elpaish-test-recipe-exclude-files ()
   "Test `:exclude-files' filters matching files in `elpaish--collect-files'."
   (elpaish-test-with-temp-env

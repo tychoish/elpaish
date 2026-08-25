@@ -113,9 +113,6 @@ Returns the number of registered recipes."
                (or files (and (boundp 'elpaish-packages-files) elpaish-packages-files) elpaish-packages-file))
       (hash-table-count elpaish-registry))))
 
-;;;###autoload
-(defalias 'elpaish-recipes-register-all 'elpaish-load-packages
-  "Load all package recipes from the active `packages.el' file.")
 
 ;;; Monorepo Package Discovery Tooling
 
