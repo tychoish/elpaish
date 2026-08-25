@@ -18,8 +18,6 @@
   :group 'package
   :prefix "elpaish-install-")
 
-(defvaralias 'elpaish-bootstrap-packages 'elpaish-install-bootstrap-packages)
-
 (defcustom elpaish-install-bootstrap-packages nil
   "List of package symbols to install or upgrade during bootstrapping.
 Used as default target package list for `elpaish-install-packages'
