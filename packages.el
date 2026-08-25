@@ -43,8 +43,7 @@
 
 (elpaish-register-package
  'magit-dash
- (elpaish-recipe-path "magit-dash"
-                      "https://github.com/tychoish/magit-dash.git")
+ (elpaish-recipe-path "magit-dash" "https://github.com/tychoish/magit-dash.git")
  :branch "main"
  :test-dir "test"
  :summary "Status and management dashboard for Magit repositories and worktrees"
@@ -53,8 +52,7 @@
 
 (elpaish-register-package
  'sprite
- (elpaish-recipe-path "sprite"
-                      "https://github.com/tychoish/sprite.git")
+ (elpaish-recipe-path "sprite" "https://github.com/tychoish/sprite.git")
  :branch "main"
  :test-dir "test"
  :preflight-skip '(ert package-lint)
@@ -64,8 +62,7 @@
 
 (elpaish-register-package
  'xtdlib
- (elpaish-recipe-path "xtdlib"
-                      "https://github.com/tychoish/xtdlib.el.git")
+ (elpaish-recipe-path "xtdlib" "https://github.com/tychoish/xtdlib.el.git")
  :branch "main"
  :test-dir "test"
  :preflight-skip '(package-lint)
@@ -75,8 +72,7 @@
 
 (elpaish-register-package
  'elpaish-keyring
- (elpaish-recipe-path "elpaish"
-                      "https://github.com/tychoish/elpaish.git")
+ (elpaish-recipe-path "elpaish" "https://github.com/tychoish/elpaish.git")
  :source-dir "pkg"
  :branch "main"
  :files '("elpaish.pub.asc" "elpaish-keyring-pkg.el")
@@ -87,9 +83,7 @@
 
 (elpaish-register-package
  'elpaish
- (elpaish-recipe-path
-  "elpaish"
-  "https://github.com/tychoish/elpaish.git")
+ (elpaish-recipe-path "elpaish" "https://github.com/tychoish/elpaish.git")
  :source-dir "pkg"
  :branch "main"
  :test-dir "test"

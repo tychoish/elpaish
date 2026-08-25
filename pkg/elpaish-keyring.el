@@ -2,7 +2,7 @@
 
 ;; Author: tychoish
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "24.4"))
+;; Package-Requires: r"29.1"))
 ;; Keywords: maint, tools, package, security
 ;; URL: https://github.com/tychoish/elpaish
 

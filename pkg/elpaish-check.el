@@ -1,7 +1,10 @@
 ;;; elpaish-check.el --- Quality validation and preflight checks -*- lexical-binding: t -*-
 
 ;; Author: tychoish
+;; Version: 0.1.0
 ;; Keywords: tools, lisp, test, lint, maintenance
+;; Package-Requires: ((emacs "29.1"))
+;; URL: https://github.com/tychoish/elpaish
 
 ;;; Commentary:
 ;; Provides comprehensive, isolated preflight quality validation for Emacs
@@ -31,9 +34,10 @@ Formatted as `*<project-name>-checks*' based on `project-current' and `project-n
          (pname (or (and proj (fboundp 'project-name) (project-name proj))
                     (file-name-nondirectory (directory-file-name target-dir)))))
     (format "*%s-checks*" pname)))
+
 (defcustom elpaish-check-buffer-name #'elpaish-check-buffer-name
-  "Buffer name or function used for ELPAish package quality check compilation output.
-Defaults to `elpaish-check-buffer-name', formatting the buffer name as
+  "Buffer name or function used for ELPAish package quality check output.
+Defaults to `function:elpaish-check-buffer-name', formatting the buffer name as
 `*<project-name>-checks*' based on `project-current' and `project-name'."
   :type '(choice (function-item :tag "Default (*<project-name>-checks*)" elpaish-check-buffer-name)
                  (string :tag "Fixed Buffer Name")
@@ -66,7 +70,7 @@ Defaults to `elpaish-check-buffer-name', formatting the buffer name as
 \\{elpaish-check-mode-map}"
   (setq-local revert-buffer-function #'elpaish-check-recompile))
 
-(defmacro elpaish-with-check-buffer (title &optional dir &rest body)
+(defmacro elpaish-check-with-buffer (title &optional dir &rest body)
   "Execute BODY, directing check logs into check compilation buffer.
 TITLE is a string describing the check operation.
 DIR is the target directory, defaulting to `default-directory'."
@@ -332,6 +336,7 @@ VERBOSE enables logging.  Return list of error strings."
       (when (and orig-registry (boundp 'ert--test-registry))
         (setq ert--test-registry orig-registry)))
     (nreverse errs)))
+
 ;;;###autoload
 (cl-defun elpaish-check-package (&optional dir &key main-file test-dir skip-checks verbose
                                            extra-load-path)
@@ -341,6 +346,7 @@ TEST-DIR explicitly specifies directory containing ERT test files.
 SKIP-CHECKS is a list of check symbols to bypass, or t to skip all.
 Supported check symbols: `parens', `checkdoc', `package-lint',
 `byte-compile', `ert'.
+VERBOSE is toggles extra output.
 EXTRA-LOAD-PATH is a list of directories added to `load-path' during
 byte-compilation and tests."
   (let* ((package-dir (expand-file-name (or dir default-directory)))
@@ -441,11 +447,11 @@ byte-compilation and tests."
 ;;;###autoload
 (defun elpaish-check-all (&optional dir)
   "Execute preflight quality check suite for DIR (defaults to `default-directory').
-Pipes all output into `elpaish-check-buffer-name' compilation buffer."
+Pipes all output into `function:elpaish-check-buffer-name' compilation buffer."
   (interactive)
   (let* ((target-dir (expand-file-name (or dir default-directory)))
          (pkg-name-str (file-name-nondirectory (directory-file-name target-dir))))
-    (elpaish-with-check-buffer pkg-name-str target-dir
+    (elpaish-check-with-buffer pkg-name-str target-dir
       (let* ((res (elpaish-check-package target-dir :verbose t))
              (passed (plist-get res :passed))
              (pkg (plist-get res :package))
@@ -462,7 +468,7 @@ Pipes all output into `elpaish-check-buffer-name' compilation buffer."
 ;;; Project Builder Integration
 
 ;;;###autoload
-(defun elpaish-project-has-el-files-p (&optional dir)
+(defun elpaish-check-project-has-el-files-p (&optional dir)
   "Return non-nil when DIR or its project root has Emacs Lisp (.el) files."
   (let* ((target-dir (expand-file-name (or dir default-directory)))
          (proj (and (fboundp 'project-current) (project-current nil target-dir)))
@@ -480,7 +486,7 @@ Pipes all output into `elpaish-check-buffer-name' compilation buffer."
                                                 (not (string-prefix-p "." (file-name-nondirectory d))))))))))
 
 ;;;###autoload
-(defun elpaish-setup-compile-command (&optional dir)
+(defun elpaish-check-setup-compile-command (&optional dir)
   "Set buffer-local `compile-command' to run `elpaish-run-checks' for DIR.
 Only applies when the current buffer or DIR belongs to a project with .el files."
   (interactive)
@@ -492,26 +498,26 @@ Only applies when the current buffer or DIR belongs to a project with .el files.
                          (with-no-warnings (cdr proj)))
                      target-dir)))
     (when (or (derived-mode-p 'emacs-lisp-mode)
-              (elpaish-project-has-el-files-p root-dir))
+              (elpaish-check-project-has-el-files-p root-dir))
       (setq-local compile-command
                   (format "emacsclient --eval \"(elpaish-run-checks %S)\""
                           (directory-file-name root-dir))))))
 ;;;###autoload
-(defun elpaish-maybe-setup-builder ()
+(defun elpaish-check-maybe-setup-builder ()
   "Configure `compile-command' to run `elpaish-run-checks' when opening .el files."
   (when (and buffer-file-name
              (or (string-suffix-p ".el" buffer-file-name)
                  (derived-mode-p 'emacs-lisp-mode)
-                 (elpaish-project-has-el-files-p)))
-    (elpaish-setup-compile-command)))
+                 (elpaish-check-project-has-el-files-p)))
+    (elpaish-check-setup-compile-command)))
 
 ;;;###autoload
-(defun elpaish-enable-builder ()
+(defun elpaish-check-enable-builder ()
   "Enable `elpaish-run-checks' as the default build command for projects with .el files."
   (interactive)
-  (add-hook 'emacs-lisp-mode-hook #'elpaish-setup-compile-command)
-  (add-hook 'find-file-hook #'elpaish-maybe-setup-builder)
-  (message "ELPAish builder command enabled for Emacs Lisp files."))
+  (add-hook 'emacs-lisp-mode-hook #'elpaish-check-setup-compile-command)
+  (add-hook 'find-file-hook #'elpaish-check-maybe-setup-builder)
+  (message "ELPAish builder command enabled for Emacs Lisp files."))q
 
 (provide 'elpaish-check)
 
@@ -519,3 +525,4 @@ Only applies when the current buffer or DIR belongs to a project with .el files.
 ;; package-lint-main-file: "pkg/elpaish.el"
 ;; End:
 ;;; elpaish-check.el ends here
+

@@ -1124,7 +1124,7 @@ source's last commit time rather than the time of the build."
          (should (derived-mode-p 'compilation-mode))
          (should (eq major-mode 'elpaish-check-mode)))))))
 (ert-deftest elpaish-test-project-has-el-files-p ()
-  "Test `elpaish-project-has-el-files-p' detection of .el files."
+  "Test `elpaish-check-project-has-el-files-p' detection of .el files."
   (elpaish-test-with-temp-env
    (let ((pkg-dir (expand-file-name "has-el" temp-dir))
          (empty-dir (expand-file-name "no-el" temp-dir)))
@@ -1132,11 +1132,11 @@ source's last commit time rather than the time of the build."
      (make-directory empty-dir t)
      (with-temp-file (expand-file-name "foo.el" pkg-dir)
        (insert ";;; foo.el\n"))
-     (should (elpaish-project-has-el-files-p pkg-dir))
-     (should-not (elpaish-project-has-el-files-p empty-dir)))))
+     (should (elpaish-check-project-has-el-files-p pkg-dir))
+     (should-not (elpaish-check-project-has-el-files-p empty-dir)))))
 
 (ert-deftest elpaish-test-setup-compile-command ()
-  "Test `elpaish-setup-compile-command' sets `compile-command' buffer-locally."
+  "Test `elpaish-check-setup-compile-command' sets `compile-command' buffer-locally."
   (elpaish-test-with-temp-env
    (let ((pkg-dir (expand-file-name "builder-pkg" temp-dir)))
      (make-directory pkg-dir t)
@@ -1145,13 +1145,13 @@ source's last commit time rather than the time of the build."
      (with-temp-buffer
        (setq-local default-directory (file-name-as-directory pkg-dir))
        (emacs-lisp-mode)
-       (elpaish-setup-compile-command pkg-dir)
+       (elpaish-check-setup-compile-command pkg-dir)
        (should (string-prefix-p "emacsclient --eval" compile-command))
        (should (string-match-p "elpaish-run-checks" compile-command))
        (should (string-match-p "builder-pkg" compile-command))))))
 
 (ert-deftest elpaish-test-maybe-setup-builder ()
-  "Test `elpaish-maybe-setup-builder' hook sets `compile-command' on .el buffers."
+  "Test `elpaish-check-maybe-setup-builder' hook sets `compile-command' on .el buffers."
   (elpaish-test-with-temp-env
    (let ((pkg-dir (expand-file-name "hook-pkg" temp-dir)))
      (make-directory pkg-dir t)
@@ -1162,7 +1162,7 @@ source's last commit time rather than the time of the build."
          (setq-local buffer-file-name el-file)
          (setq-local default-directory (file-name-as-directory pkg-dir))
          (emacs-lisp-mode)
-         (elpaish-maybe-setup-builder)
+         (elpaish-check-maybe-setup-builder)
          (should (string-match-p "elpaish-run-checks" compile-command)))))))
 
 (ert-deftest elpaish-test-check-buffer-name-formatting ()
