@@ -294,8 +294,8 @@ VERBOSE enables logging.  Return list of error strings."
                          (copy-hash-table ert--test-registry)))
         (ert--test-registry (make-hash-table :test 'equal)))
     (unwind-protect
-        (let ((load-path (append extra-load-path load-path)))
-          ;; Load package implementation files first so fresh definitions are used
+        (let ((load-prefer-newer t)
+              (load-path (append extra-load-path load-path)))
           (dolist (pf pkg-files)
             (when (file-exists-p pf)
               (condition-case nil
@@ -342,14 +342,14 @@ SKIP-CHECKS is a list of check symbols to bypass, or t to skip all.
 Supported check symbols: `parens', `checkdoc', `package-lint',
 `byte-compile', `ert'.
 EXTRA-LOAD-PATH is a list of directories added to `load-path' during
-byte-compilation and tests.
-VERBOSE prints progress messages to `message' buffer."
+byte-compilation and tests."
   (let* ((package-dir (expand-file-name (or dir default-directory)))
          (default-directory package-dir)
+         (load-prefer-newer t)
+         (dir-pkg-name (file-name-nondirectory (directory-file-name package-dir)))
          (pkg-files (if main-file
                         (list (expand-file-name main-file package-dir))
                       (elpaish-check--find-package-files package-dir)))
-         (dir-pkg-name (file-name-nondirectory (directory-file-name package-dir)))
          (pkg-file (or (and main-file (expand-file-name main-file package-dir))
                        (seq-find (lambda (f)
                                    (string= (file-name-sans-extension (file-name-nondirectory f))

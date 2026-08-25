@@ -51,6 +51,7 @@
 (require 'elpaish-install)
 (require 'elpaish-keyring)
 
+(defvaralias 'elpaish-base-url 'elpaish-keyring-base-url)
 (declare-function elpaish-check--get-buffer-name "elpaish-check")
 (declare-function elpaish-check-mode "elpaish-check")
 
@@ -188,26 +189,19 @@ publishing an incomplete archive.")
 				    requires
 				    disabled-streams
                                     suppress-streams
-                                    docs-url)
+                                    docs-url
+                                    &allow-other-keys)
   "Register package NAME with REPOSITORY-PATH (local directory or Git URL).
-
 BRANCH defaults to `elpaish-default-branch' and FILES to \\='(\"*.el\").
-
 SOURCE-DIRECTORY-PATH (or SOURCE-DIR) is the subdirectory within
-
 REPOSITORY-PATH holding the package (default \".\"), for monorepos or
 nested folders.
-
 TEST-DIRECTORY-PATH (or TEST-DIR) is an optional custom test directory path.
-
 EXCLUDE-FILES (or EXCLUDE) is an optional list of file patterns to exclude.
-
-PREFLIGHT-SKIP is t (or \='t) to skip all checks, or a list of check
+PREFLIGHT-SKIP is t (or \\='t) to skip all checks, or a list of check
 symbols to bypass during preflight.
 DISABLED-STREAMS (or SUPPRESS-STREAMS) is a list of suppressed stream symbols.
-
 DOC (or DOCS-URL) is an optional URL or path to documentation.
-
 SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
   (let* ((raw-name (if (symbolp name) (symbol-name name) (string-trim name)))
          (name-str (string-remove-suffix ".el" raw-name))
