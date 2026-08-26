@@ -56,7 +56,6 @@
  (elpaish-recipe-path "sprite" "https://github.com/tychoish/sprite.git")
  :branch "main"
  :test-dir "test"
- :preflight-skip '(ert package-lint)
  :summary "System process management, telemetry, and supervision interface"
  :url "https://github.com/tychoish/sprite"
  :keywords '("processes" "tools"))
