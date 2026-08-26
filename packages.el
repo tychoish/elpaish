@@ -23,7 +23,6 @@
                       "https://github.com/tychoish/agent-shell-queue.git")
  :branch "main"
  :test-dir "test"
- :preflight-skip '(byte-compile ert package-lint)
  :summary "Emacs queue manager for AI agent tasks"
  :url "https://github.com/tychoish/agent-shell-queue"
  :keywords '("tools" "agent-shell"))
