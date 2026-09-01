@@ -6,17 +6,14 @@
 ;;; Code:
 
 (require 'package)
-(let ((ci-elpa (expand-file-name "elpa-ci" default-directory))
-      (local-elpa (expand-file-name "elpa" default-directory)))
-  (cond
-   ((file-directory-p ci-elpa)
-    (setq package-user-dir ci-elpa)
-    (package-initialize))
-   ((file-directory-p local-elpa)
-    (setq package-user-dir local-elpa)
-    (package-initialize))
-   (t
-    (package-initialize))))
+(let* ((ci-elpa (expand-file-name "elpa-ci" default-directory))
+       (local-elpa (expand-file-name "elpa" default-directory))
+       (target-user-dir (cond
+                         ((file-directory-p ci-elpa) ci-elpa)
+                         ((file-directory-p local-elpa) local-elpa)
+                         (t (and (boundp 'package-user-dir) package-user-dir))))
+       (package-user-dir (or target-user-dir (expand-file-name "elpa" default-directory))))
+  (package-initialize))
 (let ((pkg-dir (expand-file-name "pkg" default-directory)))
   (when (file-directory-p pkg-dir)
     (push pkg-dir load-path)))

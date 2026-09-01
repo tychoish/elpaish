@@ -289,52 +289,45 @@ Return cons (ERRORS . WARNINGS)."
     (cons (nreverse errs) (nreverse warns))))
 
 (defun elpaish-check--ert (test-files pkg-name verbose extra-load-path &optional pkg-files)
-  "Run ERT on TEST-FILES for PKG-NAME with EXTRA-LOAD-PATH silently.
-PKG-FILES are loaded before running test files to ensure fresh definitions.
+  "Run ERT on TEST-FILES for PKG-NAME in an isolated Emacs process.
+PKG-FILES and TEST-FILES are loaded with EXTRA-LOAD-PATH.
 VERBOSE enables logging.  Return list of error strings."
   (elpaish-check--log verbose "[elpaish-check] 5. Running ERT tests (%d file(s))..." (length test-files))
-  (let ((errs nil)
-        (orig-registry (when (boundp 'ert--test-registry)
-                         (copy-hash-table ert--test-registry)))
-        (ert--test-registry (make-hash-table :test 'equal)))
+  (let* ((emacs-bin (expand-file-name invocation-name invocation-directory))
+         (buf (generate-new-buffer " *elpaish-check-ert*"))
+         (load-args nil)
+         (errs nil))
+    (dolist (dir extra-load-path)
+      (push "-L" load-args)
+      (push dir load-args))
+    (push "-l" load-args)
+    (push "server" load-args)
+    (dolist (pf pkg-files)
+      (push "-l" load-args)
+      (push pf load-args))
+    (dolist (tf test-files)
+      (push "-l" load-args)
+      (push tf load-args))
+    (setq load-args (nreverse load-args))
     (unwind-protect
-        (let ((load-prefer-newer t)
-              (load-path (append extra-load-path load-path)))
-          (dolist (pf pkg-files)
-            (when (file-exists-p pf)
-              (condition-case nil
-                  (load pf nil t)
-                (error nil))))
-          ;; Load all test files
-          (dolist (tf test-files)
-            (condition-case err
-                (load tf nil t)
-              (error
-               (push (format "%s:1:1: error: ERT load error: %s"
-                             (file-relative-name tf default-directory)
-                             (error-message-string err))
-                     errs))))
-          ;; Run ERT test suite once across the package
-          (let* ((selector (format "\\`%s" (regexp-quote pkg-name)))
-                 (stats (ert-run-tests selector (lambda (_event-type &rest _args) nil)))
-                 (failed (if stats (ert-stats-completed-unexpected stats) 0)))
-            (when (> failed 0)
-              (let* ((tests (and stats (ert--stats-tests stats)))
-                     (results (and stats (ert--stats-test-results stats)))
-                     (len (if tests (length tests) 0)))
-                (dotimes (i len)
-                  (let* ((tst (aref tests i))
-                         (res (aref results i)))
-                    (when (ert-test-failed-p res)
-                      (let* ((t-file (or (ert-test-file-name tst) (car test-files)))
-                             (tf-rel (file-relative-name t-file default-directory)))
-                        (push (format "%s:1:1: error: ERT test '%s' failed: %s"
-                                      tf-rel
-                                      (ert-test-name tst)
-                                      (ert-test-failed-condition res))
-                              errs)))))))))
-      (when (and orig-registry (boundp 'ert--test-registry))
-        (setq ert--test-registry orig-registry)))
+        (let* ((selector (format "\\`%s" (regexp-quote pkg-name)))
+               (args (append (list "-Q" "--batch")
+                             load-args
+                             (list "--eval"
+                                   (format "(ert-run-tests-batch-and-exit %S)" selector))))
+               (exit-code (apply #'call-process emacs-bin nil buf nil args))
+               (output (with-current-buffer buf (buffer-string))))
+          (unless (= exit-code 0)
+            (with-temp-buffer
+              (insert output)
+              (goto-char (point-min))
+              (while (re-search-forward "^ +FAILED +[0-9]+/[0-9]+ +\\([^ \n]+\\)" nil t)
+                (let ((test-symbol (match-string 1)))
+                  (push (format "error: ERT test '%s' failed" test-symbol) errs))))
+            (when (null errs)
+              (push (format "error: ERT subprocess failed with exit code %d:\n%s" exit-code output) errs))))
+      (when (buffer-live-p buf)
+        (kill-buffer buf)))
     (nreverse errs)))
 
 ;;;###autoload

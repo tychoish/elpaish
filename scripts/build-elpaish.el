@@ -18,44 +18,42 @@
 ;; Initialize package infrastructure so dependencies installed by bootstrap-elpaish.el
 ;; or present in elpa/ are activated.
 (require 'package)
-(let ((ci-elpa (expand-file-name "elpa-ci" default-directory))
-      (local-elpa (expand-file-name "elpa" default-directory)))
-  (cond
-   ((file-directory-p ci-elpa)
-    (setq package-user-dir ci-elpa)
-    (package-initialize))
-   ((file-directory-p local-elpa)
-    (setq package-user-dir local-elpa)
-    (package-initialize))
-   (t
-    (package-initialize))))
 
-;; Ensure current repository's pkg/ directory takes precedence over installed packages
-(let ((pkg-dir (expand-file-name "pkg" default-directory)))
-  (setq load-path (cons pkg-dir (delete pkg-dir load-path))))
-(require 'elpaish)
-(require 'elpaish-recipes)
-(require 'elpaish-website)
-(require 'elpaish-check nil t)
+(let* ((ci-elpa (expand-file-name "elpa-ci" default-directory))
+       (local-elpa (expand-file-name "elpa" default-directory))
+       (target-user-dir (cond
+                         ((file-directory-p ci-elpa) ci-elpa)
+                         ((file-directory-p local-elpa) local-elpa)
+                         (t (and (boundp 'package-user-dir) package-user-dir))))
+       (package-user-dir (or target-user-dir (expand-file-name "elpa" default-directory)))
+       (package-archives '(("gnu" . "https://elpa.gnu.org/packages/")
+                           ("nongnu" . "https://elpa.nongnu.org/nongnu/")
+                           ("melpa" . "https://melpa.org/packages/"))))
+  (package-initialize)
 
-;; Load external package definitions from top-level packages.el
-(elpaish-load-packages)
+  ;; Ensure current repository's pkg/ directory takes precedence over installed packages
+  (let ((pkg-dir (expand-file-name "pkg" default-directory)))
+    (setq load-path (cons pkg-dir (delete pkg-dir load-path))))
+  (require 'elpaish)
+  (require 'elpaish-recipes)
+  (require 'elpaish-website)
+  (require 'elpaish-check nil t)
 
-;; Configure output directory from environment or default to public/
-(setq elpaish-output-dir
-      (or (getenv "ELPAISH_OUTPUT_DIR")
-          (expand-file-name "public/" default-directory)))
+  ;; Load external package definitions from top-level packages.el
+  (elpaish-load-packages)
 
-;; Preflight quality gates can be toggled via ELPAISH_RUN_PREFLIGHT
-(when (equal (getenv "ELPAISH_RUN_PREFLIGHT") "0")
-  (setq elpaish-run-preflight nil))
+  ;; Configure output directory from environment or default to public/
+  (setq elpaish-output-dir
+        (or (getenv "ELPAISH_OUTPUT_DIR")
+            (expand-file-name "public/" default-directory)))
 
-;; Initialize GPG signing from environment variables (ELPAISH_SIGNING_KEY)
-(elpaish-init-signing-from-env)
+  ;; Preflight quality gates can be toggled via ELPAISH_RUN_PREFLIGHT
+  (when (equal (getenv "ELPAISH_RUN_PREFLIGHT") "0")
+    (setq elpaish-run-preflight nil))
 
-(let ((package-archives '(("gnu" . "https://elpa.gnu.org/packages/")
-                          ("nongnu" . "https://elpa.nongnu.org/nongnu/")
-                          ("melpa" . "https://melpa.org/packages/"))))
+  ;; Initialize GPG signing from environment variables (ELPAISH_SIGNING_KEY)
+  (elpaish-init-signing-from-env)
+
   (message "[elpaish] Building ELPAish repository into %s..." elpaish-output-dir)
   (elpaish-build-all 'all elpaish-output-dir)
   (message "[elpaish] Repository build complete!"))

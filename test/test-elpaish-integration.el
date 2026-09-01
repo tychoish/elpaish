@@ -17,17 +17,14 @@
 ;;; Code:
 
 (require 'package)
-(let ((ci-elpa (expand-file-name "elpa-ci" default-directory))
-      (local-elpa (expand-file-name "elpa" default-directory)))
-  (cond
-   ((file-directory-p ci-elpa)
-    (setq package-user-dir ci-elpa)
-    (package-initialize))
-   ((file-directory-p local-elpa)
-    (setq package-user-dir local-elpa)
-    (package-initialize))
-   (t
-    (package-initialize))))
+(let* ((ci-elpa (expand-file-name "elpa-ci" default-directory))
+       (local-elpa (expand-file-name "elpa" default-directory))
+       (target-user-dir (cond
+                         ((file-directory-p ci-elpa) ci-elpa)
+                         ((file-directory-p local-elpa) local-elpa)
+                         (t (and (boundp 'package-user-dir) package-user-dir))))
+       (package-user-dir (or target-user-dir (expand-file-name "elpa" default-directory))))
+  (package-initialize))
 (let ((pkg-dir (expand-file-name "pkg" default-directory)))
   (when (file-directory-p pkg-dir)
     (push pkg-dir load-path)))
@@ -108,10 +105,9 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
      ;; 4. Run consumer installation in isolated emacs -Q subprocess
      (let* ((archive-dir (elpaish-stream-dir 'snapshot elpaish-output-dir))
             (sub-code
-             (format "(progn
+             (format "(let ((package-user-dir \"%s/elpa\")
+       (package-archives (list (cons \"elpaish-test\" \"%s\"))))
   (require (quote package))
-  (setq package-user-dir \"%s/elpa\")
-  (setq package-archives (list (cons \"elpaish-test\" \"%s\")))
   (package-initialize)
   (package-refresh-contents)
   (unless (assoc (quote consumer-pkg) package-archive-contents)
@@ -177,13 +173,12 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
                ;; Consumer subprocess imports public key and verifies signatures
                (let* ((default-directory consumer-home)
                       (sub-code
-                       (format "(progn
+                       (format "(let ((package-user-dir \"%s/elpa\")
+       (package-archives (list (cons \"elpaish-signed\" \"%s\")))
+       (package-check-signature t))
   (require (quote package))
-  (setq package-user-dir \"%s/elpa\")
-  (setq package-archives (list (cons \"elpaish-signed\" \"%s\")))
   (package-initialize)
   (package-import-keyring \"%s\")
-  (setq package-check-signature t)
   (package-refresh-contents)
   (package-install (quote signed-pkg))
   (require (quote signed-pkg))
@@ -222,15 +217,14 @@ used to."
          (url-copy-file (concat base-url "elpaish-keyring.gpg") keyring-file t)
          (let* ((default-directory consumer-home)
                 (sub-code
-                 (format "(progn
-  (require (quote package))
-  (setq package-user-dir \"%s/elpa\")
-  (setq package-archives
+                 (format "(let ((package-user-dir \"%s/elpa\")
+       (package-archives
         (list (cons \"gnu\" \"https://elpa.gnu.org/packages/\")
               (cons \"nongnu\" \"https://elpa.nongnu.org/nongnu/\")
               (cons \"melpa\" \"https://melpa.org/packages/\")
               (cons \"elpaish-live\" \"%s\")))
-  (setq package-check-signature (quote allow-unsigned))
+       (package-check-signature (quote allow-unsigned)))
+  (require (quote package))
   (package-initialize)
   (package-import-keyring \"%s\")
   (package-refresh-contents)
