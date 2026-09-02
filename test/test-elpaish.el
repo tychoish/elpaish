@@ -877,26 +877,20 @@ source's last commit time rather than the time of the build."
            (should (search-forward "External package" nil t))))))))
 
 (ert-deftest elpaish-test-ollama-package-registration-and-build ()
-  "Test that the registered ollama-api and ollama package recipes build locally."
+  "Test that the registered ollama package recipe builds locally."
   (elpaish-test-with-temp-env
    (elpaish-load-packages)
-   (let ((api-recipe (gethash "ollama-api" elpaish-registry))
-         (recipe (gethash "ollama" elpaish-registry)))
-     (should api-recipe)
+   (let ((recipe (gethash "ollama" elpaish-registry)))
      (should recipe)
-     (should (elpaish-recipe-external-p api-recipe))
      (should (elpaish-recipe-external-p recipe))
-     (should (member 'ollama-api (elpaish-recipe-requires recipe)))
-     (let ((built-api (elpaish-build-package api-recipe 'snapshot))
-           (built (elpaish-build-package recipe 'snapshot)))
-       (should built-api)
-       (should (file-exists-p built-api))
+     (should (equal (elpaish-recipe-branch recipe) "master"))
+     (let ((built (elpaish-build-package recipe 'snapshot)))
        (should built)
        (should (file-exists-p built))
        (should (string-suffix-p ".tar" built))))))
 
 (ert-deftest elpaish-test-package-dependency-validation ()
-  "Test validation of package dependencies (builtin, MELPA, or registered in ELPAish)."
+  "Test validation of package dependencies (builtin, MELPA, ELPAish, or self-provided)."
   (elpaish-test-with-temp-env
    (elpaish-load-packages)
    ;; All packages in packages.el should pass dependency validation
@@ -904,8 +898,10 @@ source's last commit time rather than the time of the build."
    ;; Builtin dependency check
    (should (elpaish-dependency-valid-p 'emacs))
    (should (elpaish-dependency-valid-p 'json))
-   ;; ELPAish registered package dependency check
-   (should (elpaish-dependency-valid-p 'ollama-api))
+   ;; Self-provided internal feature check for multi-file package
+   (let ((recipe (gethash "ollama" elpaish-registry)))
+     (should (memq 'ollama-api (elpaish--recipe-provided-features recipe)))
+     (should-not (elpaish-check-recipe-dependencies recipe)))
    ;; MELPA dependency check
    (should (elpaish-dependency-valid-p 'request))
    (should (elpaish-dependency-valid-p 'magit))
@@ -915,6 +911,7 @@ source's last commit time rather than the time of the build."
    (elpaish-register-package 'bad-dep-pkg "/tmp" :requires '(unregistered-fake-dependency-xyz))
    (should (equal (elpaish-check-recipe-dependencies 'bad-dep-pkg)
                   '(unregistered-fake-dependency-xyz)))))
+
 (ert-deftest elpaish-test-disabled-streams ()
   "Test suppressing/disabling package builds on specific release streams."
   (elpaish-test-with-temp-env

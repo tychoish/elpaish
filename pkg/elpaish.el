@@ -619,14 +619,28 @@ are forwarded to `elpaish--generate-pkg-file' for the bundled descriptor."
           (memq sym '(request transient magit projectile htmlize web-server modus-themes
                               compat package-lint async dash s f yaml markdown-mode))))))
 
+(defun elpaish--recipe-provided-features (recipe)
+  "Return list of feature/package symbols provided internally by RECIPE."
+  (when (and (fboundp 'elpaish-recipe-p) (elpaish-recipe-p recipe))
+    (let ((name (elpaish-recipe-name recipe))
+          (files (elpaish-recipe-files recipe))
+          (provided nil))
+      (push (intern name) provided)
+      (dolist (f (or files (list (concat name ".el"))))
+        (when (string-suffix-p ".el" f)
+          (let ((feat (string-remove-suffix ".el" (file-name-nondirectory f))))
+            (push (intern feat) provided))))
+      (delete-dups provided))))
+
 ;;;###autoload
 (defun elpaish-check-recipe-dependencies (recipe)
-  "Check that all dependencies of RECIPE are builtin, in MELPA, or registered in ELPAish.
+  "Check that all dependencies of RECIPE are builtin, in MELPA, in ELPAish, or self-provided.
 Returns a list of invalid dependency symbols if any are invalid, or nil if all are valid."
   (let* ((recipe-obj (cond ((and (fboundp 'elpaish-recipe-p) (elpaish-recipe-p recipe)) recipe)
                            ((stringp recipe) (and (boundp 'elpaish-registry) (gethash recipe elpaish-registry)))
                            ((symbolp recipe) (and (boundp 'elpaish-registry) (gethash (symbol-name recipe) elpaish-registry)))
                            (t nil)))
+         (provided (when recipe-obj (elpaish--recipe-provided-features recipe-obj)))
          (reqs (when recipe-obj
                  (append (when (fboundp 'elpaish-recipe-requires)
                            (elpaish-recipe-requires recipe-obj))
@@ -642,10 +656,10 @@ Returns a list of invalid dependency symbols if any are invalid, or nil if all a
          (invalid nil))
     (dolist (req reqs)
       (let ((dep-sym (if (consp req) (car req) req)))
-        (unless (elpaish-dependency-valid-p dep-sym)
+        (unless (or (memq dep-sym provided)
+                    (elpaish-dependency-valid-p dep-sym))
           (push dep-sym invalid))))
     (nreverse (delete-dups invalid))))
-
 ;;;###autoload
 (defun elpaish-validate-all-dependencies ()
   "Validate that all dependencies of all registered packages are builtin, in MELPA, or in ELPAish.
