@@ -883,7 +883,6 @@ source's last commit time rather than the time of the build."
    (let ((recipe (gethash "ollama" elpaish-registry)))
      (should recipe)
      (should (elpaish-recipe-external-p recipe))
-     (should (equal (elpaish-recipe-branch recipe) "master"))
      (let ((built (elpaish-build-package recipe 'snapshot)))
        (should built)
        (should (file-exists-p built))

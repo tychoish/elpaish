@@ -40,17 +40,17 @@
 
 (elpaish-register-package
  'ollama
- (elpaish-recipe-path "https://github.com/nailuoGG/ollama.el.git")
+ (elpaish-recipe-path "https://github.com/tychoish/ollama.el.git")
  :external t
  :preflight-skip t ;; it's external -- yolo
- :branch "master"
+ :branch "patch-1"
  :files '("ollama.el"
 	  "ollama-api.el"
 	  "ollama-status.el"
 	  "ollama-transient.el"
 	  "ollama-utils.el")
  :summary "Manage Ollama models from Emacs"
- :url "https://github.com/nailuoGG/ollama.el"
+ :url "https://github.com/tychoish/ollama.el"
  :keywords '("tools" "ai" "ollama"))
 
 (elpaish-register-package
