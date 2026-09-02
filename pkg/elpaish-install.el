@@ -13,6 +13,11 @@
 (require 'cl-lib)
 (require 'package)
 
+(declare-function elpaish-recipe-p "elpaish" (object))
+(declare-function elpaish-recipe-name "elpaish" (recipe))
+(declare-function elpaish-recipe-requires "elpaish" (recipe))
+(declare-function elpaish--recipe-source-path "elpaish" (recipe))
+(declare-function sprite-future-then "sprite" (future callback))
 (defgroup elpaish-install nil
   "Package bootstrapping and upgrade utilities."
   :group 'package
@@ -116,7 +121,7 @@ DIR-OR-RECIPE can be a directory path string or an `elpaish-recipe' struct."
 ;;;; Core Single Package Operation
 
 (defun elpaish-install--process-package (pkg action &optional refresh)
-  "Perform single package PKG installation or upgrade for ACTION ('install or 'upgrade).
+  "Perform single package PKG installation or upgrade for ACTION (\\='install or \\='upgrade).
 If REFRESH is non-nil, call `package-refresh-contents' first."
   (unless (bound-and-true-p package-archive-contents)
     (package-initialize))
@@ -170,7 +175,7 @@ If REFRESH is non-nil, call `package-refresh-contents' first."
 ;;;; Remote Form and Completion Helpers
 
 (defun elpaish-install--remote-eval-form (pkg action parent-user-dir parent-archives refresh)
-  "Generate Lisp form for remote sprite execution of PKG with ACTION ('install or 'upgrade).
+  "Generate Lisp form for remote sprite execution of PKG with ACTION (\\='install or \\='upgrade).
 PARENT-USER-DIR and PARENT-ARCHIVES configure the remote package environment.
 If REFRESH is non-nil, refreshes package contents remotely."
   `(progn
@@ -181,7 +186,7 @@ If REFRESH is non-nil, refreshes package contents remotely."
        (elpaish-install--process-package ',pkg ',action ,refresh))))
 
 (defun elpaish-install--on-async-complete (res-list action callback)
-  "Handle completion of async package operations RES-LIST for ACTION ('install or 'upgrade).
+  "Handle completion of async package operations RES-LIST for ACTION (\\='install or \\='upgrade).
 Reloads package contents in the main Emacs instance and invokes CALLBACK."
   (condition-case nil
       (if (fboundp 'package-read-all-archive-contents)
@@ -205,7 +210,7 @@ Reloads package contents in the main Emacs instance and invokes CALLBACK."
 ;;;; Unified Batch Execution
 
 (cl-defun elpaish-install--do-packages (pkgs &key (action 'install) refresh)
-  "Perform package operation ACTION ('install or 'upgrade) for PKGS synchronously.
+  "Perform package operation ACTION (\\='install or \\='upgrade) for PKGS synchronously.
 If REFRESH is non-nil, call `package-refresh-contents' first."
   (unless (bound-and-true-p package-archive-contents)
     (package-initialize))
@@ -242,7 +247,7 @@ If REFRESH is non-nil, call `package-refresh-contents' first."
   (elpaish-install--do-packages pkgs :action 'upgrade :refresh t))
 
 (cl-defun elpaish-install--do-packages-async (pkgs &key (action 'install) refresh pool-size callback)
-  "Perform package operation ACTION ('install or 'upgrade) for PKGS asynchronously out-of-process.
+  "Perform package operation ACTION (\\='install or \\='upgrade) for PKGS asynchronously.
 Uses a sprite pool if available, falling back to a background timer otherwise.
 Calls CALLBACK when complete."
   (if (and (require 'sprite nil t)

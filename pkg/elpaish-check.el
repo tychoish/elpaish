@@ -21,6 +21,7 @@
 
 (declare-function package-lint-buffer "package-lint")
 (defvar ert--test-registry)
+(declare-function elpaish-recipe-preflight-skip "elpaish" (recipe))
 
 (defgroup elpaish-check nil
   "Preflight checks for Emacs Lisp packages."

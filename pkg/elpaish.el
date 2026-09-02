@@ -51,6 +51,7 @@
 (require 'elpaish-install)
 (require 'elpaish-keyring)
 
+
 (defgroup elpaish nil
   "ELPA package repository builder."
   :group 'development)
@@ -229,6 +230,7 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                   :disabled-streams dis-streams
                   :summary (or summary "No description")
                   :url url
+                  :doc (or doc docs-url)
                   :keywords (or keywords '("tools"))
                   :requires requires
                   :built-version-snapshot nil
@@ -254,14 +256,13 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
 
 (defun elpaish-canonical-stream (stream)
   "Return canonical stream symbol for STREAM.
-STREAM can be `snapshot', `stable', `staging', or `all'."
+STREAM can be \\='snapshot, \\='stable, \\='staging, or \\='all."
   (pcase stream
     ((or 'snapshot 'elpaish 'unstable) 'snapshot)
     ((or 'stable 'elpaish-stable 'release) 'stable)
     ((or 'staging 'elpaish-staging 'pre 'beta 'rc) 'staging)
     ('all 'all)
     (_ 'snapshot)))
-
 
 (defun elpaish-stream-dir (stream &optional root-directory-path)
   "Return destination directory for STREAM under ROOT-DIRECTORY-PATH.
@@ -414,7 +415,9 @@ Derives deterministic UTC date strings from Git commit timestamps."
       (setq clean (replace-regexp-in-string "\\.\\(rc\\|pre\\|beta\\|alpha\\)\\." ".\\1" clean))
       ;; Validate with version-to-list
       (condition-case nil
-          (and (version-to-list clean) clean)
+          (progn
+            (ignore (version-to-list clean))
+            clean)
         (error
          (let ((nums (seq-filter (lambda (s) (string-match-p "\\`[0-9]+\\'" s))
                                  (split-string clean "[^0-9a-zA-Z]+" t))))
@@ -454,8 +457,8 @@ Derives deterministic UTC date strings from Git commit timestamps."
 
 (defun elpaish-derive-version (recipe &optional stream)
   "Derive package version string for RECIPE on STREAM.
-STREAM can be `snapshot', `stable', or `staging'.  Return normalized
-version string, or nil for `stable' if no tag is present."
+STREAM can be \\='snapshot, \\='stable, or \\='staging.  Return
+normalized version string, or nil for \\='stable if no tag is present."
   (let* ((repo-dir (elpaish--resolve-repo-path recipe))
          (source-dir-rel (elpaish--recipe-source-dir-relative recipe))
          (canon (elpaish-canonical-stream (or stream 'snapshot)))
@@ -608,6 +611,7 @@ are forwarded to `elpaish--generate-pkg-file' for the bundled descriptor."
     (when sym
       (or (eq sym 'emacs)
           (package-built-in-p sym)
+          (package-installed-p sym)
           (and (fboundp 'locate-library) (locate-library (symbol-name sym)))
           (and (boundp 'elpaish-registry)
                (hash-table-p elpaish-registry)
@@ -615,9 +619,10 @@ are forwarded to `elpaish--generate-pkg-file' for the bundled descriptor."
                    (gethash (concat (symbol-name sym) ".el") elpaish-registry)))
           (and (bound-and-true-p package-archive-contents)
                (assq sym package-archive-contents))
-          ;; Common MELPA packages fallback when package-archive-contents is not initialized
-          (memq sym '(request transient magit projectile htmlize web-server modus-themes
-                              compat package-lint async dash s f yaml markdown-mode))))))
+          ;; Known external/MELPA package dependencies fallback
+          (memq sym '(agent-shell alert request transient magit projectile htmlize web-server
+                                 modus-themes compat package-lint async dash s f yaml markdown-mode
+                                 ht kv llama tempel consult embark marshal))))))
 
 (defun elpaish--recipe-provided-features (recipe)
   "Return list of feature/package symbols provided internally by RECIPE."
@@ -1663,6 +1668,8 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
       (unless (derived-mode-p 'compilation-mode)
         (elpaish-check-mode)))
     (display-buffer buf)))
+
+(declare-function elpaish-load-packages "elpaish-recipes" (&optional files))
 
 ;;;###autoload
 (transient-define-prefix elpaish-menu ()
