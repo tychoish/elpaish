@@ -288,6 +288,24 @@ Return cons (ERRORS . WARNINGS)."
         (kill-buffer byte-compile-log-buffer)))
     (cons (nreverse errs) (nreverse warns))))
 
+(defun elpaish-check--installed-package-dirs ()
+  "Return list of load-path directories for installed packages in `package-user-dir'."
+  (let ((dirs nil)
+        (user-dir (and (boundp 'package-user-dir)
+                       (stringp package-user-dir)
+                       (file-directory-p package-user-dir)
+                       (expand-file-name package-user-dir))))
+    (when user-dir
+      (dolist (f (directory-files user-dir t "^[^.]"))
+        (when (and (file-directory-p f)
+                   (not (member (file-name-nondirectory f) '("archives" "gnupg"))))
+          (push (expand-file-name f) dirs))))
+    (dolist (p load-path)
+      (when (and p (stringp p) (file-directory-p p)
+                 user-dir (string-prefix-p user-dir (expand-file-name p)))
+        (push (expand-file-name p) dirs)))
+    (delete-dups (nreverse dirs))))
+
 (defun elpaish-check--ert (test-files pkg-name verbose extra-load-path &optional pkg-files)
   "Run ERT on TEST-FILES for PKG-NAME in an isolated Emacs process.
 PKG-FILES and TEST-FILES are loaded with EXTRA-LOAD-PATH.
@@ -298,8 +316,13 @@ VERBOSE enables logging.  Return list of error strings."
          (load-args nil)
          (errs nil))
     (dolist (dir extra-load-path)
-      (push "-L" load-args)
-      (push dir load-args))
+      (when (and (stringp dir) (file-directory-p dir))
+        (push "-L" load-args)
+        (push dir load-args)
+        (let ((auto-file (car (directory-files dir t "-autoloads\\.el\\'"))))
+          (when (and auto-file (file-exists-p auto-file))
+            (push "-l" load-args)
+            (push auto-file load-args)))))
     (push "-l" load-args)
     (push "server" load-args)
     (dolist (pf pkg-files)
@@ -364,7 +387,9 @@ byte-compilation and tests."
          (effective-skip (or skip-checks recipe-skip))
          (skip-list (if (listp effective-skip) effective-skip (if effective-skip '(all) nil)))
          (test-files (elpaish-check--find-test-files package-dir test-dir))
-         (pkg-load-dirs (delete-dups (cons package-dir extra-load-path)))
+         (pkg-load-dirs (delete-dups (append (list package-dir)
+                                             extra-load-path
+                                             (elpaish-check--installed-package-dirs))))
          (all-errors nil)
          (all-warnings nil))
     (unless (or (memq 'all skip-list) (null pkg-files))

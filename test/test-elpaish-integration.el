@@ -105,9 +105,8 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
      ;; 4. Run consumer installation in isolated emacs -Q subprocess
      (let* ((archive-dir (elpaish-stream-dir 'snapshot elpaish-output-dir))
             (sub-code
-             (format "(let ((package-user-dir \"%s/elpa\")
+             (format "(progn (require (quote package)) (let ((package-user-dir \"%s/elpa\")
        (package-archives (list (cons \"elpaish-test\" \"%s\"))))
-  (require (quote package))
   (package-initialize)
   (package-refresh-contents)
   (unless (assoc (quote consumer-pkg) package-archive-contents)
@@ -120,7 +119,7 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
   (require (quote consumer-tar-pkg))
   (unless (equal (consumer-pkg-greeting) \"Hello from consumer-pkg!\")
     (error \"consumer-pkg function call failed\"))
-  (message \"SUBPROCESS_CONSUMER_SUCCESS\"))"
+  (message \"SUBPROCESS_CONSUMER_SUCCESS\")))"
                      consumer-home archive-dir))
             (output-buf (generate-new-buffer " *int-sub-output*"))
             (process-environment (cons (concat "HOME=" consumer-home) process-environment))
@@ -173,16 +172,15 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
                ;; Consumer subprocess imports public key and verifies signatures
                (let* ((default-directory consumer-home)
                       (sub-code
-                       (format "(let ((package-user-dir \"%s/elpa\")
+                       (format "(progn (require (quote package)) (let ((package-user-dir \"%s/elpa\")
        (package-archives (list (cons \"elpaish-signed\" \"%s\")))
        (package-check-signature t))
-  (require (quote package))
   (package-initialize)
   (package-import-keyring \"%s\")
   (package-refresh-contents)
   (package-install (quote signed-pkg))
   (require (quote signed-pkg))
-  (message \"SIGNED_CONSUMER_SUCCESS\"))"
+  (message \"SIGNED_CONSUMER_SUCCESS\")))"
                                consumer-home archive-dir pub-key-file))
                       (output-buf (generate-new-buffer " *signed-sub-output*"))
             (process-environment (append (list (concat "HOME=" consumer-home)
