@@ -841,7 +841,10 @@ source's last commit time rather than the time of the build."
        (should (equal (elpaish-recipe-source-directory-path (gethash "pkg-one" elpaish-registry)) "pkg-one"))))))
 
 (ert-deftest elpaish-test-recipe-path-local-and-remote-fallback ()
-  "Test local checkout search and remote URL fallback for `elpaish-recipe-path'."
+  "Test local checkout search, remote URL fallback, and 1-argument URL derivation."
+  (should (equal (elpaish-recipe-name-from-url "https://github.com/nailuoGG/ollama.el.git") "ollama"))
+  (should (equal (elpaish-recipe-name-from-url "https://github.com/zackattackz/agent-shell-notifications.git") "agent-shell-notifications"))
+  (should (equal (elpaish-recipe-name-from-url "https://github.com/tychoish/xtdlib.el") "xtdlib"))
   (elpaish-test-with-temp-env
    (let* ((search-root (expand-file-name "search-root" temp-dir))
           (elpaish-recipe-local-search-dirs (list search-root)))
@@ -849,8 +852,42 @@ source's last commit time rather than the time of the build."
      (should (equal (elpaish-recipe-path "found-pkg" "https://example.com/found-pkg.git")
                     (expand-file-name "found-pkg" search-root)))
      (should (equal (elpaish-recipe-path "missing-pkg" "https://example.com/missing-pkg.git")
+                    "https://example.com/missing-pkg.git"))
+     (should (equal (elpaish-recipe-path "https://example.com/found-pkg.git")
+                    (expand-file-name "found-pkg" search-root)))
+     (should (equal (elpaish-recipe-path "https://example.com/missing-pkg.git")
                     "https://example.com/missing-pkg.git")))))
 
+(ert-deftest elpaish-test-external-package-flag-and-website ()
+  "Test :external flag on package registration and website rendering."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "ext-pkg" temp-dir)))
+     (elpaish-test-create-dummy-pkg pkg-dir "ext-pkg" "1.0.0" "External Package Test")
+     (elpaish-register-package 'ext-pkg pkg-dir :external t)
+     (let ((recipe (gethash "ext-pkg" elpaish-registry)))
+       (should (elpaish-recipe-external-p recipe))
+       (elpaish-build-package recipe 'snapshot)
+       (elpaish-generate-stream-index 'snapshot)
+       (let ((index-file (expand-file-name "snapshot/index.html" elpaish-output-dir)))
+         (with-temp-buffer
+           (insert-file-contents index-file)
+           (goto-char (point-min))
+           (should (search-forward "pkg-external-tag" nil t))
+           (goto-char (point-min))
+           (should (search-forward "External package" nil t))))))))
+
+(ert-deftest elpaish-test-ollama-package-registration-and-build ()
+  "Test that the registered ollama package recipe builds locally."
+  (elpaish-test-with-temp-env
+   (elpaish-load-packages)
+   (let ((recipe (gethash "ollama" elpaish-registry)))
+     (should recipe)
+     (should (elpaish-recipe-external-p recipe))
+     (should (equal (elpaish-recipe-branch recipe) "master"))
+     (let ((built (elpaish-build-package recipe 'snapshot)))
+       (should built)
+       (should (file-exists-p built))
+       (should (string-suffix-p ".tar" built))))))
 (ert-deftest elpaish-test-disabled-streams ()
   "Test suppressing/disabling package builds on specific release streams."
   (elpaish-test-with-temp-env

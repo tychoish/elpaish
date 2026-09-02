@@ -8,8 +8,7 @@
 
 (elpaish-register-package
  'annotated-completing-read
- (elpaish-recipe-path "annotated-completing-read"
-                      "https://github.com/tychoish/annotated-completing-read.git")
+ (elpaish-recipe-path "https://github.com/tychoish/annotated-completing-read.git")
  :branch "main"
  :files '("annotated-completing-read.el")
  :test-dir "test"
@@ -19,8 +18,7 @@
 
 (elpaish-register-package
  'agent-shell-queue
- (elpaish-recipe-path "agent-shell-queue"
-                      "https://github.com/tychoish/agent-shell-queue.git")
+ (elpaish-recipe-path "https://github.com/tychoish/agent-shell-queue.git")
  :branch "main"
  :test-dir "test"
  :summary "Emacs queue manager for AI agent tasks"
@@ -29,8 +27,8 @@
 
 (elpaish-register-package
  'agent-shell-notifications
- (elpaish-recipe-path "agent-shell-notifications"
-                      "https://github.com/zackattackz/agent-shell-notifications.git")
+ (elpaish-recipe-path "https://github.com/zackattackz/agent-shell-notifications.git")
+ :external t
  :preflight-skip t ;; it's external -- yolo
  :branch "main"
  :files '("agent-shell-notifications.el"
@@ -41,8 +39,23 @@
  :keywords '("tools" "agent-shell"))
 
 (elpaish-register-package
+ 'ollama
+ (elpaish-recipe-path "https://github.com/nailuoGG/ollama.el.git")
+ :external t
+ :preflight-skip t ;; it's external -- yolo
+ :branch "master"
+ :files '("ollama.el"
+	  "ollama-api.el"
+	  "ollama-status.el"
+	  "ollama-transient.el"
+	  "ollama-utils.el")
+ :summary "Manage Ollama models from Emacs"
+ :url "https://github.com/nailuoGG/ollama.el"
+ :keywords '("tools" "ai" "ollama"))
+
+(elpaish-register-package
  'magit-dash
- (elpaish-recipe-path "magit-dash" "https://github.com/tychoish/magit-dash.git")
+ (elpaish-recipe-path "https://github.com/tychoish/magit-dash.git")
  :branch "main"
  :test-dir "test"
  :requires '(magit projectile)
@@ -52,7 +65,7 @@
 
 (elpaish-register-package
  'sprite
- (elpaish-recipe-path "sprite" "https://github.com/tychoish/sprite.git")
+ (elpaish-recipe-path "https://github.com/tychoish/sprite.git")
  :branch "main"
  :test-dir "test"
  :summary "System process management, telemetry, and supervision interface"
@@ -61,7 +74,7 @@
 
 (elpaish-register-package
  'xtdlib
- (elpaish-recipe-path "xtdlib" "https://github.com/tychoish/xtdlib.el.git")
+ (elpaish-recipe-path "https://github.com/tychoish/xtdlib.el.git")
  :branch "main"
  :test-dir "test"
  :preflight-skip '(package-lint)
@@ -71,7 +84,7 @@
 
 (elpaish-register-package
  'elpaish-keyring
- (elpaish-recipe-path "elpaish" "https://github.com/tychoish/elpaish.git")
+ (elpaish-recipe-path "https://github.com/tychoish/elpaish.git")
  :source-dir "pkg"
  :branch "main"
  :files '("elpaish.pub.asc" "elpaish-keyring-pkg.el")
@@ -82,7 +95,7 @@
 
 (elpaish-register-package
  'elpaish
- (elpaish-recipe-path "elpaish" "https://github.com/tychoish/elpaish.git")
+ (elpaish-recipe-path "https://github.com/tychoish/elpaish.git")
  :source-dir "pkg"
  :branch "main"
  :test-dir "test"

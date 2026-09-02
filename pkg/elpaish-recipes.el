@@ -39,20 +39,41 @@ Each entry can be an absolute or relative path, or a glob pattern (e.g. \"packag
   "Filename or path of the top-level package definitions file."
   :type 'string
   :group 'elpaish)
-(defun elpaish-recipe-path (name remote-url)
-  "Return the first existing local checkout of NAME, or REMOTE-URL.
-NAME is a bare directory name (e.g. \"xtdlib\"), not a full path — this
-searches `elpaish-recipe-local-search-dirs', then \"external/NAME\" under
-`user-emacs-directory' and under `default-directory', so recipes never
-hardcode where any particular maintainer's checkouts happen to live."
-  (let ((roots (append elpaish-recipe-local-search-dirs
-                       (list (expand-file-name "external/" user-emacs-directory)
-                             (expand-file-name "external/" default-directory)))))
+
+;;;###autoload
+(defun elpaish-recipe-name-from-url (url)
+  "Derive bare package name from remote URL (e.g. \"xtdlib\" from \".../xtdlib.el.git\")."
+  (let* ((clean-url (string-trim-right url "/+"))
+         (base (file-name-nondirectory clean-url))
+         (sans-git (string-remove-suffix ".git" base))
+         (sans-el (string-remove-suffix ".el" sans-git)))
+    sans-el))
+
+;;;###autoload
+(defun elpaish-recipe-path (name-or-url &optional remote-url)
+  "Return the first existing local checkout of NAME-OR-URL, or REMOTE-URL.
+If REMOTE-URL is omitted, NAME-OR-URL is treated as the remote URL, and the
+bare directory name is derived automatically from the URL to avoid stuttering.
+
+Searches `elpaish-recipe-local-search-dirs', then \"external/NAME\" under
+`user-emacs-directory' and under `default-directory'."
+  (let* ((url (or remote-url name-or-url))
+         (name (if remote-url
+                   name-or-url
+                 (elpaish-recipe-name-from-url name-or-url)))
+         (alt-name (unless (string-suffix-p ".el" name) (concat name ".el")))
+         (roots (append elpaish-recipe-local-search-dirs
+                        (list (expand-file-name "external/" user-emacs-directory)
+                              (expand-file-name "external/" default-directory)))))
     (or (seq-some (lambda (root)
-                    (let ((cand (expand-file-name name (expand-file-name root))))
-                      (and (file-directory-p cand) cand)))
+                    (let* ((r-dir (expand-file-name root))
+                           (cand1 (expand-file-name name r-dir))
+                           (cand2 (and alt-name (expand-file-name alt-name r-dir))))
+                      (cond
+                       ((file-directory-p cand1) cand1)
+                       ((and cand2 (file-directory-p cand2)) cand2))))
                   roots)
-        remote-url)))
+        url)))
 
 (defun elpaish-find-packages-files (&optional files)
   "Locate all package definition files matching FILES or `elpaish-packages-files'.

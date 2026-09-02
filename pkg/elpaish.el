@@ -130,6 +130,7 @@ or `elpaish-staging' (pre-release tags and git describe)."
   (test-directory-path nil :type (choice null string) :documentation "Optional custom test directory path.")
   (preflight-skip nil :type (choice boolean list) :documentation "Checks to skip in preflight.")
   (disabled-streams nil :type list :documentation "List of stream symbols where this package is suppressed/disabled.")
+  (external-p nil :type boolean :documentation "Non-nil if package is externally maintained.")
   (summary nil :type (choice null string) :documentation "Package summary description.")
   (url nil :type (choice null string) :documentation "Upstream homepage or repository URL.")
   (doc nil :type (choice null string) :documentation "Documentation URL or path.")
@@ -178,6 +179,8 @@ publishing an incomplete archive.")
                                     source-dir
                                     test-dir
 				    preflight-skip
+                                    external
+                                    external-p
 				    summary
 				    url
 				    doc
@@ -222,10 +225,10 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                   :source-directory-path effective-source
                   :test-directory-path effective-test
                   :preflight-skip preflight-skip
+                  :external-p (and (or external external-p) t)
                   :disabled-streams dis-streams
                   :summary (or summary "No description")
                   :url url
-                  :doc (or doc docs-url)
                   :keywords (or keywords '("tools"))
                   :requires requires
                   :built-version-snapshot nil
