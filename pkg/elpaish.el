@@ -596,6 +596,72 @@ are forwarded to `elpaish--generate-pkg-file' for the bundled descriptor."
           (let ((default-directory temp-dir))
             (call-process "tar" nil nil nil "-cf" dest-file pkg-name-ver)))
       (delete-directory temp-dir t))))
+;;; Dependency Verification
+
+;;;###autoload
+(defun elpaish-dependency-valid-p (dep)
+  "Return non-nil if package dependency DEP is builtin, in MELPA, or in `elpaish-registry'."
+  (let* ((sym (cond ((symbolp dep) dep)
+                    ((stringp dep) (intern dep))
+                    ((consp dep) (if (symbolp (car dep)) (car dep) (intern (car dep))))
+                    (t nil))))
+    (when sym
+      (or (eq sym 'emacs)
+          (package-built-in-p sym)
+          (and (fboundp 'locate-library) (locate-library (symbol-name sym)))
+          (and (boundp 'elpaish-registry)
+               (hash-table-p elpaish-registry)
+               (or (gethash (symbol-name sym) elpaish-registry)
+                   (gethash (concat (symbol-name sym) ".el") elpaish-registry)))
+          (and (bound-and-true-p package-archive-contents)
+               (assq sym package-archive-contents))
+          ;; Common MELPA packages fallback when package-archive-contents is not initialized
+          (memq sym '(request transient magit projectile htmlize web-server modus-themes
+                              compat package-lint async dash s f yaml markdown-mode))))))
+
+;;;###autoload
+(defun elpaish-check-recipe-dependencies (recipe)
+  "Check that all dependencies of RECIPE are builtin, in MELPA, or registered in ELPAish.
+Returns a list of invalid dependency symbols if any are invalid, or nil if all are valid."
+  (let* ((recipe-obj (cond ((and (fboundp 'elpaish-recipe-p) (elpaish-recipe-p recipe)) recipe)
+                           ((stringp recipe) (and (boundp 'elpaish-registry) (gethash recipe elpaish-registry)))
+                           ((symbolp recipe) (and (boundp 'elpaish-registry) (gethash (symbol-name recipe) elpaish-registry)))
+                           (t nil)))
+         (reqs (when recipe-obj
+                 (append (when (fboundp 'elpaish-recipe-requires)
+                           (elpaish-recipe-requires recipe-obj))
+                         (when-let* ((repo-dir (and (fboundp 'elpaish--recipe-source-path)
+                                                    (file-directory-p (elpaish--recipe-source-path recipe-obj))
+                                                    (elpaish--recipe-source-path recipe-obj)))
+                                     (name (elpaish-recipe-name recipe-obj))
+                                     (main-file (expand-file-name
+                                                 (if (string-suffix-p ".el" name) name (concat name ".el"))
+                                                 repo-dir)))
+                           (when (and (file-exists-p main-file) (fboundp 'elpaish-install--extract-header-requires))
+                             (elpaish-install--extract-header-requires main-file))))))
+         (invalid nil))
+    (dolist (req reqs)
+      (let ((dep-sym (if (consp req) (car req) req)))
+        (unless (elpaish-dependency-valid-p dep-sym)
+          (push dep-sym invalid))))
+    (nreverse (delete-dups invalid))))
+
+;;;###autoload
+(defun elpaish-validate-all-dependencies ()
+  "Validate that all dependencies of all registered packages are builtin, in MELPA, or in ELPAish.
+Returns an alist of (package . invalid-deps) for any packages with invalid dependencies."
+  (interactive)
+  (let ((invalid-map nil))
+    (dolist (recipe (hash-table-values elpaish-registry))
+      (when-let* ((invalid (elpaish-check-recipe-dependencies recipe)))
+        (push (cons (elpaish-recipe-name recipe) invalid) invalid-map)))
+    (if invalid-map
+        (progn
+          (message "Invalid dependencies found: %S" invalid-map)
+          invalid-map)
+      (when (called-interactively-p 'any)
+        (message "✓ All registered package dependencies are valid (builtin, MELPA, or ELPAish)."))
+      nil)))
 
 (defvar elpaish--preflight-cache (make-hash-table :test 'equal)
   "Cache of recipe name -> preflight result (t or nil) for current build run.
@@ -619,31 +685,37 @@ Returns t if checks pass, nil if quarantined."
   (let ((skip (elpaish-recipe-preflight-skip recipe)))
     (if (or (eq skip t) (eq skip 't) (and (listp skip) (memq 'all skip)))
         t
-      (elpaish-install-ensure-package-dependencies recipe)
-      (unless (featurep 'elpaish-check)
-        (require 'elpaish-check nil t))
-      (if (fboundp 'elpaish-check-package)
-          (let* ((repo-dir (elpaish--recipe-source-path recipe))
-                 (name (elpaish-recipe-name recipe))
-                 (main-file (if (string-suffix-p ".el" name) name (concat name ".el")))
-                 (sibling-dirs (thread-last (hash-table-values elpaish-registry)
-                                 (seq-remove (lambda (r) (eq r recipe)))
-                                 (seq-map #'elpaish--recipe-source-path)))
-                 (tdir (elpaish-recipe-test-directory-path recipe))
-                 (res (elpaish-check-package repo-dir
-                                             :main-file (and (file-exists-p (expand-file-name main-file repo-dir)) main-file)
-                                             :test-dir tdir
-                                             :skip-checks skip
-                                             :extra-load-path sibling-dirs))
-                 (passed (plist-get res :passed))
-                 (errs (plist-get res :errors)))
-            (unless passed
-              (message "PREFLIGHT QUARANTINE for %s: %d error(s)"
-                       name (length errs))
-              (dolist (e errs)
-                (message "   - %s" e)))
-            passed)
-        t))))
+      (if-let* ((invalid-deps (elpaish-check-recipe-dependencies recipe)))
+          (progn
+            (message "PREFLIGHT QUARANTINE for %s: invalid dependency (%s) — must be builtin, in MELPA, or registered in ELPAish"
+                     (elpaish-recipe-name recipe)
+                     (mapconcat #'symbol-name invalid-deps ", "))
+            nil)
+        (elpaish-install-ensure-package-dependencies recipe)
+        (unless (featurep 'elpaish-check)
+          (require 'elpaish-check nil t))
+        (if (fboundp 'elpaish-check-package)
+            (let* ((repo-dir (elpaish--recipe-source-path recipe))
+                   (name (elpaish-recipe-name recipe))
+                   (main-file (if (string-suffix-p ".el" name) name (concat name ".el")))
+                   (sibling-dirs (thread-last (hash-table-values elpaish-registry)
+                                   (seq-remove (lambda (r) (eq r recipe)))
+                                   (seq-map #'elpaish--recipe-source-path)))
+                   (tdir (elpaish-recipe-test-directory-path recipe))
+                   (res (elpaish-check-package repo-dir
+                                               :main-file (and (file-exists-p (expand-file-name main-file repo-dir)) main-file)
+                                               :test-dir tdir
+                                               :skip-checks skip
+                                               :extra-load-path sibling-dirs))
+                   (passed (plist-get res :passed))
+                   (errs (plist-get res :errors)))
+              (unless passed
+                (message "PREFLIGHT QUARANTINE for %s: %d error(s)"
+                         name (length errs))
+                (dolist (e errs)
+                  (message "   - %s" e)))
+              passed)
+          t)))))
 
 ;;; GPG Package & Archive Signing Pipeline
 
