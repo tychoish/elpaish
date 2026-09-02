@@ -173,11 +173,12 @@ If REFRESH is non-nil, call `package-refresh-contents' first."
   "Generate Lisp form for remote sprite execution of PKG with ACTION ('install or 'upgrade).
 PARENT-USER-DIR and PARENT-ARCHIVES configure the remote package environment.
 If REFRESH is non-nil, refreshes package contents remotely."
-  `(let ((package-user-dir ,parent-user-dir)
-         (package-archives ',parent-archives))
+  `(progn
      (require 'package)
-     (require 'elpaish-install)
-     (elpaish-install--process-package ',pkg ',action ,refresh)))
+     (let ((package-user-dir ,parent-user-dir)
+           (package-archives ',parent-archives))
+       (require 'elpaish-install)
+       (elpaish-install--process-package ',pkg ',action ,refresh))))
 
 (defun elpaish-install--on-async-complete (res-list action callback)
   "Handle completion of async package operations RES-LIST for ACTION ('install or 'upgrade).

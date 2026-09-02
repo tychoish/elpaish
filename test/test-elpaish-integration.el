@@ -215,14 +215,13 @@ used to."
          (url-copy-file (concat base-url "elpaish-keyring.gpg") keyring-file t)
          (let* ((default-directory consumer-home)
                 (sub-code
-                 (format "(let ((package-user-dir \"%s/elpa\")
+                 (format "(progn (require (quote package)) (let ((package-user-dir \"%s/elpa\")
        (package-archives
         (list (cons \"gnu\" \"https://elpa.gnu.org/packages/\")
               (cons \"nongnu\" \"https://elpa.nongnu.org/nongnu/\")
               (cons \"melpa\" \"https://melpa.org/packages/\")
               (cons \"elpaish-live\" \"%s\")))
        (package-check-signature (quote allow-unsigned)))
-  (require (quote package))
   (package-initialize)
   (package-import-keyring \"%s\")
   (package-refresh-contents)
@@ -234,7 +233,7 @@ used to."
       (error \"No packages found in live elpaish archive\"))
     (package-install first-pkg)
     (require first-pkg)
-    (message \"LIVE_CONSUMER_SUCCESS for %%S\" first-pkg)))"
+    (message \"LIVE_CONSUMER_SUCCESS for %%S\" first-pkg))))"
                          consumer-home live-url keyring-file))
                 (output-buf (generate-new-buffer " *live-sub-output*"))
                 (process-environment (cons (concat "HOME=" consumer-home) process-environment))
