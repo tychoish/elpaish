@@ -720,12 +720,18 @@ Returns t if checks pass, nil if quarantined."
                    (sibling-dirs (thread-last (hash-table-values elpaish-registry)
                                    (seq-remove (lambda (r) (eq r recipe)))
                                    (seq-map #'elpaish--recipe-source-path)))
+                   (elpa-dirs (when (and (boundp 'package-user-dir)
+                                         package-user-dir
+                                         (file-directory-p package-user-dir))
+                                (seq-filter #'file-directory-p
+                                            (directory-files package-user-dir t "\\`[^.]" t))))
+                   (extra-dirs (delete-dups (append sibling-dirs elpa-dirs)))
                    (tdir (elpaish-recipe-test-directory-path recipe))
                    (res (elpaish-check-package repo-dir
                                                :main-file (and (file-exists-p (expand-file-name main-file repo-dir)) main-file)
                                                :test-dir tdir
                                                :skip-checks skip
-                                               :extra-load-path sibling-dirs))
+                                               :extra-load-path extra-dirs))
                    (passed (plist-get res :passed))
                    (errs (plist-get res :errors)))
               (unless passed
