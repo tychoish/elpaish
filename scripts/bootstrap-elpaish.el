@@ -5,7 +5,7 @@
 
 ;;; Commentary:
 ;; Initializes package archives, package-user-dir, and derives core dependencies
-;; for the ELPAish package itself by processing pkg/elpaish.el.
+;; for ELPAish and all registered packages in packages.el.
 
 ;;; Code:
 
@@ -19,12 +19,19 @@
   (unless (bound-and-true-p package-archive-contents)
     (package-refresh-contents))
 
-  ;; Load minimal installer (0 external dependencies) and derive/install elpaish's own dependencies
+  ;; Load minimal installer and install dependencies for elpaish and all registered packages
   (let* ((pkg-dir (expand-file-name "pkg" default-directory))
          (main-file (expand-file-name "elpaish.el" pkg-dir)))
     (add-to-list 'load-path pkg-dir)
     (require 'elpaish-install)
-    (elpaish-install-ensure-package-dependencies main-file)))
+    (elpaish-install-ensure-package-dependencies main-file)
+    (package-initialize)
+    (require 'elpaish)
+    (require 'elpaish-recipes)
+    (elpaish-load-packages)
+    (dolist (recipe (hash-table-values elpaish-registry))
+      (elpaish-install-ensure-package-dependencies recipe))
+    (package-initialize)))
 
 (provide 'bootstrap-elpaish)
 ;;; bootstrap-elpaish.el ends here

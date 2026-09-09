@@ -4,7 +4,7 @@
 ;; Version: 0.1.0
 ;; URL: https://github.com/tychoish/elpaish
 ;; Keywords: maint, tools, local, package, elpa
-;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (htmlize "1.34") (map "3.0") (modus-themes "4.0.0") (seq "2.0") (web-server "0.1.2") (transient "0.3.0"))
+;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (htmlize "1.34") (map "3.0") (modus-themes "4.0.0") (seq "2.0") (web-server "0.1.2") (transient "0.8.0"))
 
 ;;; Commentary:
 ;; ELPAish is a toolkit for building (and a prototype application of) an
@@ -710,7 +710,8 @@ Returns t if checks pass, nil if quarantined."
                      (elpaish-recipe-name recipe)
                      (mapconcat #'symbol-name invalid-deps ", "))
             nil)
-        (elpaish-install-ensure-package-dependencies recipe)
+        (dolist (r (hash-table-values elpaish-registry))
+          (elpaish-install-ensure-package-dependencies r))
         (unless (featurep 'elpaish-check)
           (require 'elpaish-check nil t))
         (if (fboundp 'elpaish-check-package)
@@ -724,7 +725,7 @@ Returns t if checks pass, nil if quarantined."
                                          package-user-dir
                                          (file-directory-p package-user-dir))
                                 (seq-filter #'file-directory-p
-                                            (directory-files package-user-dir t "\\`[^.]" t))))
+                                            (directory-files package-user-dir t "^[^.]" t))))
                    (extra-dirs (delete-dups (append sibling-dirs elpa-dirs)))
                    (tdir (elpaish-recipe-test-directory-path recipe))
                    (res (elpaish-check-package repo-dir

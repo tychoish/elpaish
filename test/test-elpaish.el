@@ -574,7 +574,55 @@
          (should (eq (elpaish-recipe-preflight-skip rec) t))
          (should (elpaish-preflight-package rec))
          (should (plist-get (elpaish-check-package pkg-dir) :passed)))))))
+(ert-deftest elpaish-test-preflight-sibling-dependency-resolution ()
+  "Test preflight handles optional sibling requires whose dependencies must be installed."
+  (elpaish-test-with-temp-env
+   (let ((pkg-a-dir (expand-file-name "pkg-a" temp-dir))
+         (pkg-b-dir (expand-file-name "pkg-b" temp-dir))
+         (elpa-dir (expand-file-name "elpa-mock" temp-dir))
+         (installed-pkgs nil)
+         (elpaish-run-preflight t))
+     (make-directory pkg-a-dir t)
+     (make-directory pkg-b-dir t)
+     (make-directory elpa-dir t)
+     ;; Create pkg-a which optionally requires pkg-b
+     (with-temp-file (expand-file-name "pkg-a.el" pkg-a-dir)
+       (insert ";;; pkg-a.el --- Pkg A -*- lexical-binding: t; -*-\n")
+       (insert ";;; Commentary:\n;; Pkg A commentary.\n")
+       (insert ";;; Code:\n")
+       (insert "(require 'pkg-b nil t)\n")
+       (insert "(defun pkg-a-fn () t)\n")
+       (insert "(provide 'pkg-a)\n")
+       (insert ";;; pkg-a.el ends here\n"))
 
+     ;; Create pkg-b which requires external agent-shell
+     (with-temp-file (expand-file-name "pkg-b.el" pkg-b-dir)
+       (insert ";;; pkg-b.el --- Pkg B -*- lexical-binding: t; -*-\n")
+       (insert ";;; Package-Requires: ((agent-shell \"1.0\"))\n")
+       (insert ";;; Commentary:\n;; Pkg B commentary.\n")
+       (insert ";;; Code:\n")
+       (insert "(require 'agent-shell)\n")
+       (insert "(defun pkg-b-fn () t)\n")
+       (insert "(provide 'pkg-b)\n")
+       (insert ";;; pkg-b.el ends here\n"))
+
+     (let ((recipe-a (elpaish-register-package 'pkg-a pkg-a-dir)))
+       (elpaish-register-package 'pkg-b pkg-b-dir :requires '((agent-shell "1.0")))
+
+       (cl-letf (((symbol-function 'package-installed-p)
+                  (lambda (p &rest _) (member p installed-pkgs)))
+                 ((symbol-function 'package-install)
+                  (lambda (p &rest _)
+                    (push p installed-pkgs)
+                    ;; Create mock installed package directory in package-user-dir
+                    (let ((dep-dir (expand-file-name (format "%s-1.0" p) elpa-dir)))
+                      (make-directory dep-dir t)
+                      (with-temp-file (expand-file-name (format "%s.el" p) dep-dir)
+                        (insert (format ";;; %s.el --- Mock -*- lexical-binding: t; -*-\n(provide '%s)\n" p p)))))))
+         (let ((package-user-dir elpa-dir))
+           ;; Preflight pkg-a. It should ensure dependencies for all registered packages (including pkg-b -> agent-shell).
+           (should (elpaish-preflight-package recipe-a))
+           (should (member 'agent-shell installed-pkgs))))))))
 (ert-deftest elpaish-test-staging-version-edge-cases ()
   "Test edge cases in version normalization and staging version derivation."
   (should (equal (elpaish--normalize-staging-version "v1.2.0-4-gabcdef") "1.2.0.4"))
