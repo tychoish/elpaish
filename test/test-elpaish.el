@@ -922,7 +922,7 @@ source's last commit time rather than the time of the build."
            (goto-char (point-min))
            (should (search-forward "pkg-external-tag" nil t))
            (goto-char (point-min))
-           (should (search-forward "External package" nil t))))))))
+           (should (search-forward "Third-party package" nil t))))))))
 
 (ert-deftest elpaish-test-ollama-package-registration-and-build ()
   "Test that the registered ollama package recipe builds locally."
@@ -930,7 +930,7 @@ source's last commit time rather than the time of the build."
    (elpaish-load-packages)
    (let ((recipe (gethash "ollama" elpaish-registry)))
      (should recipe)
-     (should (elpaish-recipe-external-p recipe))
+     (should (elpaish-recipe-fork-p recipe))
      (let ((built (elpaish-build-package recipe 'snapshot)))
        (should built)
        (should (file-exists-p built))
@@ -1118,7 +1118,7 @@ source's last commit time rather than the time of the build."
        (goto-char (point-min))
        (should (search-forward "class=\"pkg-detail-row\"" nil t))
        (goto-char (point-min))
-       (should (search-forward "colspan=\"4\"" nil t))))))
+       (should (search-forward "colspan=\"5\"" nil t))))))
 
 (ert-deftest elpaish-test-build-recompile-command ()
   "Test that `recompile' or `g' in `*elpaish-build*' re-runs `elpaish-build-all'."
@@ -1517,3 +1517,45 @@ source's last commit time rather than the time of the build."
 
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here
+
+(ert-deftest elpaish-test-package-origin-labels-and-column ()
+  "Test origin classification and rendering for fork, third-party, and tychoish."
+  (elpaish-test-with-temp-env
+   (let ((f-dir (expand-file-name "fork-pkg" temp-dir))
+         (tp-dir (expand-file-name "tp-pkg" temp-dir))
+         (ty-dir (expand-file-name "tycho-pkg" temp-dir)))
+     (elpaish-test-create-dummy-pkg f-dir "fork-pkg" "1.0.0" "Fork Test")
+     (elpaish-test-create-dummy-pkg tp-dir "tp-pkg" "1.0.0" "Third Party Test")
+     (elpaish-test-create-dummy-pkg ty-dir "tycho-pkg" "1.0.0" "Tychoish Test")
+     (elpaish-register-package 'fork-pkg f-dir :fork t)
+     (elpaish-register-package 'tp-pkg tp-dir :external t)
+     (elpaish-register-package 'tycho-pkg ty-dir)
+     (let ((r-fork (gethash "fork-pkg" elpaish-registry))
+           (r-tp (gethash "tp-pkg" elpaish-registry))
+           (r-ty (gethash "tycho-pkg" elpaish-registry)))
+       (should (elpaish-recipe-fork-p r-fork))
+       (should (equal (elpaish-recipe-origin-label r-fork) "fork"))
+       (should (elpaish-recipe-external-p r-tp))
+       (should (equal (elpaish-recipe-origin-label r-tp) "third-party"))
+       (should-not (elpaish-recipe-fork-p r-ty))
+       (should-not (elpaish-recipe-external-p r-ty))
+       (should (equal (elpaish-recipe-origin-label r-ty) "tychoish"))
+       (elpaish-build-all 'snapshot)
+       (elpaish-generate-stream-index 'snapshot)
+       (let ((index-file (expand-file-name "snapshot/index.html" elpaish-output-dir)))
+         (with-temp-buffer
+           (insert-file-contents index-file)
+           (goto-char (point-min))
+           (should (search-forward "<th class=\"pkg-origin-cell\">Source</th>" nil t))
+           (goto-char (point-min))
+           (should (search-forward "pkg-fork-tag" nil t))
+           (goto-char (point-min))
+           (should (search-forward ">fork</span>" nil t))
+           (goto-char (point-min))
+           (should (search-forward "pkg-third-party-tag" nil t))
+           (goto-char (point-min))
+           (should (search-forward ">third-party</span>" nil t))
+           (goto-char (point-min))
+           (should (search-forward "pkg-tychoish-tag" nil t))
+           (goto-char (point-min))
+           (should (search-forward ">tychoish</span>" nil t))))))))

@@ -132,6 +132,8 @@ or `elpaish-staging' (pre-release tags and git describe)."
   (preflight-skip nil :type (choice boolean list) :documentation "Checks to skip in preflight.")
   (disabled-streams nil :type list :documentation "List of stream symbols where this package is suppressed/disabled.")
   (external-p nil :type boolean :documentation "Non-nil if package is externally maintained.")
+  (fork-p nil :type boolean :documentation "Non-nil if package is a maintained fork.")
+  (origin 'tychoish :type symbol :documentation "Package origin: \='fork, \='third-party, or \='tychoish.")
   (summary nil :type (choice null string) :documentation "Package summary description.")
   (url nil :type (choice null string) :documentation "Upstream homepage or repository URL.")
   (doc nil :type (choice null string) :documentation "Documentation URL or path.")
@@ -182,6 +184,10 @@ publishing an incomplete archive.")
 				    preflight-skip
                                     external
                                     external-p
+                                    third-party
+                                    fork
+                                    fork-p
+                                    origin
 				    summary
 				    url
 				    doc
@@ -217,6 +223,13 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                                (not (string-match-p "\\`git@" repository-path)))
                           (expand-file-name repository-path)
                         repository-path))
+         (is-fork (and (or fork fork-p (eq origin 'fork)) t))
+         (is-third-party (and (or external external-p third-party (eq origin 'third-party) (eq origin 'external)) t))
+         (effective-origin (cond
+                            (is-fork 'fork)
+                            (is-third-party 'third-party)
+                            (origin origin)
+                            (t 'tychoish)))
          (recipe (elpaish-recipe-create
                   :name name-str
                   :repository-path repo-target
@@ -226,7 +239,9 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                   :source-directory-path effective-source
                   :test-directory-path effective-test
                   :preflight-skip preflight-skip
-                  :external-p (and (or external external-p) t)
+                  :external-p (and (or is-third-party is-fork (not (eq effective-origin 'tychoish))) t)
+                  :fork-p is-fork
+                  :origin effective-origin
                   :disabled-streams dis-streams
                   :summary (or summary "No description")
                   :url url
@@ -240,6 +255,18 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                   :built-type 'single)))
     (puthash name-str recipe elpaish-registry)
     recipe))
+
+
+(defun elpaish-recipe-origin-label (recipe)
+  "Return origin string label for RECIPE: \"fork\", \"third-party\", or \"tychoish\"."
+  (cond
+   ((elpaish-recipe-fork-p recipe) "fork")
+   ((eq (elpaish-recipe-origin recipe) 'fork) "fork")
+   ((or (elpaish-recipe-external-p recipe)
+        (eq (elpaish-recipe-origin recipe) 'third-party)
+        (eq (elpaish-recipe-origin recipe) 'external))
+    "third-party")
+   (t "tychoish")))
 
 (defun elpaish-recipe-disabled-for-stream-p (recipe stream)
   "Return non-nil if RECIPE is disabled/suppressed on STREAM."

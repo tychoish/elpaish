@@ -41,8 +41,8 @@
 (elpaish-register-package
  'ollama
  (elpaish-recipe-path "https://github.com/tychoish/ollama.el.git")
- :external t
- :preflight-skip t ;; it's external -- yolo
+ :fork t
+ :preflight-skip t ;; it's a fork -- yolo
  :branch "patch-1"
  :files '("ollama.el"
 	  "ollama-api.el"
