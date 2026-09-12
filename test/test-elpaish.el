@@ -105,6 +105,26 @@
      (should (equal (elpaish-recipe-test-directory-path recipe-b) "test"))
      (should (equal (elpaish-recipe-preflight-skip recipe-b) '(checkdoc))))))
 
+(ert-deftest elpaish-test-registration-remote-urls ()
+  "Test package registration preserving remote Git URLs without local file expansion."
+  (elpaish-test-with-temp-env
+   (elpaish-register-package 'pkg-https "https://github.com/tychoish/elpaish.git")
+   (elpaish-register-package 'pkg-http "http://example.com/repo.git")
+   (elpaish-register-package 'pkg-ssh "git@github.com:tychoish/elpaish.git")
+   (elpaish-register-package 'pkg-git "git://github.com/tychoish/elpaish.git")
+   (elpaish-register-package 'pkg-local "relative/path/to/pkg")
+
+   (let ((rec-https (gethash "pkg-https" elpaish-registry))
+         (rec-http (gethash "pkg-http" elpaish-registry))
+         (rec-ssh (gethash "pkg-ssh" elpaish-registry))
+         (rec-git (gethash "pkg-git" elpaish-registry))
+         (rec-local (gethash "pkg-local" elpaish-registry)))
+     (should (equal (elpaish-recipe-repository-path rec-https) "https://github.com/tychoish/elpaish.git"))
+     (should (equal (elpaish-recipe-repository-path rec-http) "http://example.com/repo.git"))
+     (should (equal (elpaish-recipe-repository-path rec-ssh) "git@github.com:tychoish/elpaish.git"))
+     (should (equal (elpaish-recipe-repository-path rec-git) "git://github.com/tychoish/elpaish.git"))
+     (should (equal (elpaish-recipe-repository-path rec-local) (expand-file-name "relative/path/to/pkg"))))))
+
 (ert-deftest elpaish-test-pure-date-version ()
   "Test pure UTC date versioning on elpaish snapshot track."
   (elpaish-test-with-temp-env

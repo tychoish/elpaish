@@ -172,6 +172,12 @@ publishing an incomplete archive.")
   `(setf (elpaish-recipe-built-version-snapshot ,recipe) ,val))
 
 ;;;###autoload
+(defun elpaish--remote-url-p (path)
+  "Return non-nil if PATH appears to be a remote repository URL or Git spec."
+  (and (stringp path)
+       (string-match-p "\\`\\(?:https?://\\|git@\\|git://\\|ssh://\\)" path)))
+
+;;;###autoload
 (cl-defun elpaish-register-package (name
 				    repository-path
 				    &key branch
@@ -225,8 +231,7 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                                (when (symbolp suppress-streams) (list suppress-streams))))
          (dis-streams (seq-uniq (mapcar #'elpaish-canonical-stream (delq nil raw-disabled))))
          (repo-target (if (and (stringp repository-path)
-                               (not (string-match-p "\`https?://" repository-path))
-                               (not (string-match-p "\`git@" repository-path)))
+                               (not (elpaish--remote-url-p repository-path)))
                           (expand-file-name repository-path)
                         repository-path))
          (is-fork (and (or fork fork-p (eq origin 'fork)) t))
@@ -350,8 +355,7 @@ is resolved more than once (its own preflight/build, plus as a sibling
   "Uncached implementation of `elpaish--resolve-repo-path' for RECIPE."
   (let ((repo-target (elpaish-recipe-repository-path recipe)))
     (if (and (stringp repo-target)
-             (not (string-match-p "\\`https?://" repo-target))
-             (not (string-match-p "\\`git@" repo-target))
+             (not (elpaish--remote-url-p repo-target))
              (file-directory-p (expand-file-name repo-target)))
         (expand-file-name repo-target)
       ;; Remote Git repository target
