@@ -1,0 +1,127 @@
+#+TITLE: Testing and Updating Packages in ELPAish
+#+OPTIONS: toc:2 num:nil
+
+* Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+
+ELPAish incorporates preflight quality validation gates and multi-stream version derivation to ensure that package updates are safe, well-linted, and reproducible before they are published to archives.
+
+* Features
+:PROPERTIES:
+:CUSTOM_ID: features
+:END:
+
+- *Isolated Preflight Quality Gates*: Automated verification across parenthesis balance (=check-parens=), docstring standards (=checkdoc=), packaging compliance (=package-lint=), byte compilation, and ERT unit tests.
+- *Compilation Buffer Integration*: Results from quality checks stream directly to an interactive compilation buffer (=*<project>-checks*=) supporting =recompile= and error navigation.
+- *Multi-Stream Version Derivation*: Automatic version calculation based on Git commit timestamps, clean semver tags, or pre-release qualifiers.
+- *Tabulated Status Dashboard*: Comprehensive interactive buffer (=*elpaish-status*=) showing commit hashes, release streams, and unbuilt commit deltas.
+
+* Key Functions and Commands
+:PROPERTIES:
+:CUSTOM_ID: key-functions-and-commands
+:END:
+
+- [[file:api.org::#elpaish-status][~elpaish-status~]]: Open the tabulated package management dashboard.
+- [[file:api.org::#elpaish-menu][~elpaish-menu~]]: Open the transient dispatch menu for builds, checks, and logs.
+- [[file:api.org::#elpaish-run-checks][~elpaish-run-checks~]]: Execute the quality check suite on the current project or directory.
+- [[file:api.org::#elpaish-preflight-single][~elpaish-preflight-single~]]: Interactively run quality gates against a specific registered package.
+- [[file:api.org::#elpaish-build-single][~elpaish-build-single~]]: Build and package an individual package across chosen release streams.
+- [[file:api.org::#elpaish-check-enable-builder][~elpaish-check-enable-builder~]]: Set up ~compile-command~ in Emacs Lisp buffers to run ELPAish checks.
+
+* Preflight Quality Gates
+:PROPERTIES:
+:CUSTOM_ID: preflight-quality-gates
+:END:
+
+Before building or publishing an artifact, ELPAish evaluates registered quality gates defined in =elpaish-check.el=:
+
+1. *Parenthesis Balance*: Runs ~check-parens~ across all package source files to prevent syntax breakage.
+2. *Docstring Linting*: Executes ~checkdoc~ to verify comment conventions and docstring formatting.
+3. *Package Lint*: Validates package metadata, dependency declarations, and naming conventions via ~package-lint~.
+4. *Byte Compilation*: Compiles all package files in an isolated environment with dependencies added to ~load-path~, capturing warnings and errors.
+5. *ERT Unit Tests*: Discovers and executes ERT test suites located under the package's ~:test-dir~ in a fresh Emacs subprocess.
+
+If a package fails preflight during a full repository build, it is automatically placed in quarantine and omitted from the generated =archive-contents= to protect downstream users from broken releases.
+
+** Running Checks Interactively
+:PROPERTIES:
+:CUSTOM_ID: running-checks-interactively
+:END:
+
+To run checks against the current package repository:
+
+#+BEGIN_SRC emacs-lisp
+M-x elpaish-run-checks
+#+END_SRC
+
+This opens the compilation buffer (=*<package>-checks*=). Press ~g~ or ~r~ in that buffer to rerun checks after editing code.
+
+To test a specific package from your registry:
+
+#+BEGIN_SRC emacs-lisp
+M-x elpaish-preflight-single RET <package-name> RET
+#+END_SRC
+
+* Release Stream Version Mechanics
+:PROPERTIES:
+:CUSTOM_ID: release-stream-version-mechanics
+:END:
+
+ELPAish calculates release versions deterministically according to the active stream:
+
+| Stream | Version Pattern | Derivation Logic |
+|--------+-----------------+------------------|
+| *Snapshot* | =YYYYMMDD.HHMM= | Derived from the UTC commit timestamp of the tracked Git branch tip. |
+| *Stable* | =X.Y.Z= | Strictly requires a clean semantic version Git tag matching current HEAD. Packages without a semver tag are omitted from the stable stream. |
+| *Staging* | =X.Y.Z-pre= / =git describe= | Captures pre-release tags (e.g. =v1.0.0-rc1=) or commit offsets past the last tag. |
+
+* Managing Updates with the Status Dashboard
+:PROPERTIES:
+:CUSTOM_ID: managing-updates-with-the-status-dashboard
+:END:
+
+Open the status dashboard with [[file:api.org::#elpaish-status][~M-x elpaish-status~]].
+
+#+BEGIN_EXAMPLE
+Package Name              Path / Repository               Snapshot            Stable      Staging         Hash      Delta
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+annotated-completing-read ~/src/annotated-completing-read 20260823.1118       1.0.0       —               a1b2c3d   +0
+magit-dash                ~/src/magit-dash                20260824.1645       —           —               e5f6g7h   +2
+xtdlib                    ~/src/xtdlib                    20260825.0930       0.4.1       0.4.2-rc1       98a7b6c   +0
+#+END_EXAMPLE
+
+** Dashboard Keybindings
+:PROPERTIES:
+:CUSTOM_ID: dashboard-keybindings
+:END:
+
+| Key | Command | Action |
+|-----+---------+--------|
+| ~g~ | [[file:api.org::#elpaish-status-refresh][~elpaish-status-refresh~]] | Refresh table and recalculate Git commit deltas |
+| ~b~ | [[file:api.org::#elpaish-status-build-at-point][~elpaish-status-build-at-point~]] | Rebuild package at point across all release streams |
+| ~B~ | [[file:api.org::#elpaish-build-single][~elpaish-build-single~]] | Prompt for a package and stream to build |
+| ~p~ | [[file:api.org::#elpaish-status-preflight-at-point][~elpaish-status-preflight-at-point~]] | Run preflight check on package at point |
+| ~P~ | [[file:api.org::#elpaish-status-preflight-all][~elpaish-status-preflight-all~]] | Run preflight check across all registered packages |
+| ~a~ | [[file:api.org::#elpaish-build-all][~elpaish-build-all~]] | Rebuild all registered packages across all streams |
+| ~l~ | [[file:api.org::#elpaish-view-build-log][~elpaish-view-build-log~]] | Switch to the build compilation log buffer |
+| ~m~ / ~?~ | [[file:api.org::#elpaish-menu][~elpaish-menu~]] | Open transient dispatch menu |
+
+** Updating a Package Workflow
+:PROPERTIES:
+:CUSTOM_ID: updating-a-package-workflow
+:END:
+
+1. *Push Commits or Tags*: Push new commits or release tags to the upstream repository.
+2. *Inspect Deltas*: In =*elpaish-status*=, press ~g~. The ~Delta~ column indicates unbuilt commits (e.g. ~+2~).
+3. *Run Preflight*: Press ~p~ on the package row to ensure all quality gates pass.
+4. *Build Package*: Press ~b~ on the row to rebuild artifacts, regenerate stream indexes, and sign packages.
+5. *Deploy*: Commit generated artifacts or let CI publish the updated public directory.
+
+* Reference
+:PROPERTIES:
+:CUSTOM_ID: reference
+:END:
+
+See the [[file:api.org][API Reference]] for complete function signatures and options.

@@ -1,0 +1,268 @@
+#+TITLE: elpaish.el -- Multi-Stream Signed ELPA Package Archive Builder and Server
+#+OPTIONS: toc:2 num:nil
+
+[[https://github.com/tychoish/elpaish/actions][file:https://github.com/tychoish/elpaish/actions/workflows/pages.yml/badge.svg]]
+[[https://www.gnu.org/licenses/gpl-3.0.txt][file:https://img.shields.io/badge/license-GPL_3-blue.svg]]
+
+* Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+
+=elpaish= is a multi-channel Emacs Lisp package archive builder, server, and
+management toolkit. It orchestrates automated recipe discovery, version
+derivation across snapshot, stable, and staging streams, isolated preflight
+quality checks, detached OpenPGP cryptographic signing, and static HTML catalog
+generation. Open the primary management dashboard with ~elpaish-status~ or
+dispatch commands via ~elpaish-menu~.
+
+* Contents                                                       :TOC:
+:PROPERTIES:
+:CUSTOM_ID: contents
+:END:
+- [[#overview][Overview]]
+- [[#installation][Installation]]
+  - [[#elpaish-recommended][ELPAish (Recommended)]]
+  - [[#use-package-with-vc][use-package with VC]]
+  - [[#manual-installation][Manual Installation]]
+- [[#configuration][Configuration]]
+  - [[#key-options--customization][Key Options & Customization]]
+- [[#core-workflows][Core Workflows]]
+- [[#example-configurations][Example Configurations]]
+  - [[#developer-machine-with-local-checkouts][Developer Machine with Local Checkouts]]
+  - [[#ci-batch-runner-script][CI Batch Runner Script]]
+- [[#user-guides][User Guides]]
+- [[#api-reference][API Reference]]
+- [[#related-packages][Related Packages]]
+- [[#license][License]]
+
+* Installation
+:PROPERTIES:
+:CUSTOM_ID: installation
+:END:
+
+** ELPAish (Recommended)
+:PROPERTIES:
+:CUSTOM_ID: elpaish-recommended
+:END:
+
+Add the ELPAish package repository to ~package-archives~:
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'package-archives
+             '("elpaish" . "https://tychoish.github.io/elpaish/snapshot/") t)
+(package-refresh-contents)
+#+END_SRC
+
+Install with =package-install=:
+
+#+BEGIN_SRC emacs-lisp
+(package-install 'elpaish)
+#+END_SRC
+
+To verify package signatures, import the ELPAish signing key into =package.el='s keyring and enable signature checking:
+
+#+BEGIN_SRC emacs-lisp
+(url-copy-file "https://tychoish.github.io/elpaish/elpaish-keyring.gpg"
+               "elpaish-keyring.gpg" t)
+(package-import-keyring "elpaish-keyring.gpg")
+(setq package-check-signature t)
+#+END_SRC
+
+** use-package with VC
+:PROPERTIES:
+:CUSTOM_ID: use-package-with-vc
+:END:
+
+Requires Emacs 30+. Installs directly from Git on first load:
+
+#+BEGIN_SRC emacs-lisp
+(use-package elpaish
+  :vc (:url "https://github.com/tychoish/elpaish")
+  :defer t)
+#+END_SRC
+
+** Manual Installation
+:PROPERTIES:
+:CUSTOM_ID: manual-installation
+:END:
+
+#+BEGIN_SRC sh
+git clone https://github.com/tychoish/elpaish ~/.emacs.d/site-lisp/elpaish
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'load-path "~/.emacs.d/site-lisp/elpaish/pkg")
+(require 'elpaish)
+#+END_SRC
+
+With Emacs 29.1+, you can also use ~package-vc-install~:
+
+#+BEGIN_SRC emacs-lisp
+(package-vc-install '(elpaish
+                      :url "https://github.com/tychoish/elpaish"))
+#+END_SRC
+
+* Configuration
+:PROPERTIES:
+:CUSTOM_ID: configuration
+:END:
+
+Below is a complete ~use-package~ configuration setting standard options, defaults, and keybindings:
+
+#+BEGIN_SRC emacs-lisp
+(use-package elpaish
+  :ensure t
+  :commands (elpaish-status
+             elpaish-menu
+             elpaish-build-all
+             elpaish-run-checks)
+  :bind (("C-c t e" . elpaish-menu)
+         ("C-c t s" . elpaish-status))
+  :config
+  ;; Custom output and publishing URLs
+  (setq elpaish-output-dir (expand-file-name "public/" default-directory)) ; default: "public/"
+  (setq elpaish-base-url "https://username.github.io/my-elpa/")          ; default: "https://tychoish.github.io/elpaish/"
+  (setq elpaish-release-mode 'all)                                        ; default: 'all (snapshot, stable, staging)
+  (setq elpaish-sign-packages t)                                          ; default: t (requires GPG)
+  (setq elpaish-preview-server-port 9001)                                 ; default: 9001 (local preview port)
+  (setq elpaish-recipe-local-search-dirs '("~/src/")))                    ; default: '("~/src/")
+#+END_SRC
+
+** Key Options & Customization
+:PROPERTIES:
+:CUSTOM_ID: key-options--customization
+:END:
+
+- *Output Directory*: [[file:docs/api.org::#elpaish-output-dir][~elpaish-output-dir~]] defines the root filesystem
+  destination for generated archive artifacts, indexes, and HTML catalogs.
+- *Base URL*: [[file:docs/api.org::#elpaish-base-url][~elpaish-base-url~]] specifies the canonical public URL used for web
+  links and metadata.
+- *Release Mode*: [[file:docs/api.org::#elpaish-release-mode][~elpaish-release-mode~]] governs which release streams are built
+  (~'all~, ~'snapshot~, ~'stable~, or ~'staging~).
+- *Package Signing*: [[file:docs/api.org::#elpaish-sign-packages][~elpaish-sign-packages~]] controls whether detached OpenPGP
+  signatures are generated for archive files and =archive-contents=.
+- *Local Search Roots*: [[file:docs/api.org::#elpaish-recipe-local-search-dirs][~elpaish-recipe-local-search-dirs~]] lists directories
+  checked by [[file:docs/api.org::#elpaish-recipe-path][~elpaish-recipe-path~]] before falling back to remote Git checkouts.
+
+* Core Workflows
+:PROPERTIES:
+:CUSTOM_ID: core-workflows
+:END:
+
+1. *Registering Packages*: Declare package recipes in =packages.el= with
+   [[file:docs/api.org::#elpaish-register-package][~elpaish-register-package~]]. ELPAish handles single-file vs multi-file tarball
+   packaging, local directory resolution via [[file:docs/api.org::#elpaish-recipe-path][~elpaish-recipe-path~]], and monorepo
+   discovery with [[file:docs/api.org::#elpaish-discover-recipes][~elpaish-discover-recipes~]].
+2. *Spinning Up and Hosting an Archive*: Configure headless batch runners with
+   [[file:docs/api.org::#elpaish-build-all][~elpaish-build-all~]], initialize signing via [[file:docs/api.org::#elpaish-init-signing-from-env][~elpaish-init-signing-from-env~]],
+   preview locally with [[file:docs/api.org::#elpaish-serve-local][~elpaish-serve-local~]], and publish to GitHub Pages using
+   automated CI workflows.
+3. *Testing and Updating Packages*: Execute preflight quality gates (=checkdoc=,
+   =package-lint=, byte compilation, ERT) using [[file:docs/api.org::#elpaish-run-checks][~elpaish-run-checks~]], track
+   commit deltas via [[file:docs/api.org::#elpaish-status][~elpaish-status~]], and automatically derive release versions
+   across snapshot, stable, and staging streams.
+
+* Example Configurations
+:PROPERTIES:
+:CUSTOM_ID: example-configurations
+:END:
+
+** Developer Machine with Local Checkouts
+:PROPERTIES:
+:CUSTOM_ID: developer-machine-with-local-checkouts
+:END:
+
+Configure recipe discovery to search personal project directories:
+
+#+BEGIN_SRC emacs-lisp
+(use-package elpaish
+  :config
+  (setq elpaish-recipe-local-search-dirs '("~/src/" "~/projects/emacs/"))
+  (elpaish-load-packages "~/src/my-elpa/packages.el"))
+#+END_SRC
+
+** CI Batch Runner Script
+:PROPERTIES:
+:CUSTOM_ID: ci-batch-runner-script
+:END:
+
+Automate headless builds in GitHub Actions workflows:
+
+#+BEGIN_SRC emacs-lisp
+  ;; scripts/build.el (require 'package) (package-initialize) (require
+  'elpaish) (require 'elpaish-recipes) (require 'elpaish-website)
+
+  (elpaish-load-packages "packages.el") (elpaish-init-signing-from-env)
+  (elpaish-build-all 'all "public/")
+#+END_SRC
+
+* User Guides
+:PROPERTIES:
+:CUSTOM_ID: user-guides
+:END:
+
+Detailed workflow guides are located under [[file:docs/][docs/]]:
+
+- [[file:docs/registering-packages.org][Registering Packages]]: Managing =packages.el=, single/multi-file packaging,
+  local checkout resolution, and monorepo discovery.
+- [[file:docs/hosting-repository.org][Hosting and Deploying Repositories]]: Setting up an archive repository or fork,
+  CI deployment to GitHub Pages, GPG signing setup, and key rotation.
+- [[file:docs/testing-and-updating.org][Testing and Updating Packages]]: Preflight linting and testing, stream version
+  derivation rules, and package updates via =*elpaish-status*=.
+
+* API Reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+
+The following table summarizes the primary public entry points, commands, and
+configuration options in ELPAish. Detailed docstrings and signatures are
+available in the [[file:docs/api.org][API Reference]].
+
+| Symbol / Command                   | Kind     | Description                                                             |
+|------------------------------------+----------+-------------------------------------------------------------------------|
+| [[file:docs/api.org::#elpaish-status][~elpaish-status~]]                   | Command  | Open the interactive package management dashboard                       |
+| [[file:docs/api.org::#elpaish-menu][~elpaish-menu~]]                     | Command  | Open the transient dispatch menu for builds and checks                  |
+| [[file:docs/api.org::#elpaish-register-package][~elpaish-register-package~]]         | Macro    | Register a package recipe with files, branch, and metadata              |
+| [[file:docs/api.org::#elpaish-recipe-path][~elpaish-recipe-path~]]              | Function | Resolve local workspace checkouts with fallback to remote Git URL       |
+| [[file:docs/api.org::#elpaish-discover-recipes][~elpaish-discover-recipes~]]         | Command  | Automatically scan a monorepo and register subpackages                  |
+| [[file:docs/api.org::#elpaish-load-packages][~elpaish-load-packages~]]            | Command  | Load package definitions from recipe files or glob patterns             |
+| [[file:docs/api.org::#elpaish-build-all][~elpaish-build-all~]]                | Command  | Build packages, generate indexes, and sign archive streams              |
+| [[file:docs/api.org::#elpaish-build-single][~elpaish-build-single~]]             | Command  | Interactively build and sign an individual package                      |
+| [[file:docs/api.org::#elpaish-run-checks][~elpaish-run-checks~]]               | Command  | Execute the quality check suite on the current project                  |
+| [[file:docs/api.org::#elpaish-preflight-single][~elpaish-preflight-single~]]         | Command  | Interactively run quality gates against a specific package              |
+| [[file:docs/api.org::#elpaish-serve-local][~elpaish-serve-local~]]              | Command  | Start the local HTTP preview server on specified port                   |
+| [[file:docs/api.org::#elpaish-stop-server][~elpaish-stop-server~]]              | Command  | Stop the local preview server process                                   |
+| [[file:docs/api.org::#elpaish-setup-signing][~elpaish-setup-signing~]]            | Command  | Interactive wizard to configure a GPG signing key                       |
+| [[file:docs/api.org::#elpaish-rotate-keys][~elpaish-rotate-keys~]]              | Function | Rotate signing subkey and synchronize with GitHub Secrets               |
+| [[file:docs/api.org::#elpaish-init-signing-from-env][~elpaish-init-signing-from-env~]]    | Function | Initialize GPG signing non-interactively from environment variables     |
+| [[file:docs/api.org::#elpaish-output-dir][~elpaish-output-dir~]]               | Option   | Root destination directory for generated archive streams                |
+| [[file:docs/api.org::#elpaish-release-mode][~elpaish-release-mode~]]             | Option   | Active release stream mode (~'all~, ~'snapshot~, ~'stable~, ~'staging~) |
+| [[file:docs/api.org::#elpaish-sign-packages][~elpaish-sign-packages~]]            | Option   | Boolean flag indicating whether to create OpenPGP signatures            |
+| [[file:docs/api.org::#elpaish-base-url][~elpaish-base-url~]]                 | Option   | Canonical public base URL for published archive                         |
+| [[file:docs/api.org::#elpaish-recipe-local-search-dirs][~elpaish-recipe-local-search-dirs~]] | Option   | Directory roots searched for local repository checkouts                 |
+
+* Related Packages
+:PROPERTIES:
+:CUSTOM_ID: related-packages
+:END:
+
+- [[https://elpa.gnu.org/][GNU ELPA]]: The official default package repository for GNU Emacs, maintained by
+  the FSF.
+- [[https://elpa.nongnu.org/][NonGNU ELPA]]: The official package archive for Emacs packages that do not
+  require copyright assignment to the FSF.
+- [[https://melpa.org/][MELPA]]: Milkypostman's Emacs Lisp Package Archive, the largest
+  community-maintained rolling-release archive for Emacs packages.
+- [[https://www.gnu.org/software/emacs/manual/html_node/emacs/Packages.html][package.el]]: Built-in Emacs package manager and client library.
+- [[https://www.gnu.org/software/emacs/manual/html_node/epa/index.html][epg / EasyPG]]: Emacs GnuPG interface utilized by ELPAish for key management and
+  signing.
+- [[https://github.com/skeeto/emacs-web-server][web-server]]: Simple HTTP server library used for local catalog previews.
+
+* License
+:PROPERTIES:
+:CUSTOM_ID: license
+:END:
+
+Copyright (C) 2026 tychoish. Distributed under the GNU General Public License
+v3.0 or later. See the source file headers for license text.

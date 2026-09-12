@@ -1,0 +1,38 @@
+#+TITLE: ELPAish Documentation
+#+OPTIONS: toc:2 num:nil
+
+* Documentation Index
+:PROPERTIES:
+:CUSTOM_ID: documentation-index
+:END:
+
+Welcome to the ELPAish documentation guide. ELPAish is a multi-channel Emacs Lisp
+package archive builder and server providing snapshot, stable, and staging
+streams with automated versioning, GPG signing, preflight quality testing, and
+static catalog generation.
+
+* Use-Case Guides
+:PROPERTIES:
+:CUSTOM_ID: use-case-guides
+:END:
+
+- [[file:registering-packages.org][Registering Packages]]: Complete guide to defining package recipes in
+  =packages.el=, configuring single and multi-file packages, resolving local
+  checkouts, monorepo subpackage discovery, and setting metadata.
+
+- [[file:hosting-repository.org][Hosting and Deploying Repositories]]: Walkthrough for spinning up an archive
+  repository or fork, writing batch build runners, deploying to GitHub Pages,
+  setting up GPG signing infrastructure, and running the local preview server.
+
+- [[file:testing-and-updating.org][Testing and Updating Packages]]: Guide for running preflight quality gates
+  (=checkdoc=, =package-lint=, byte compilation, ERT suites), understanding
+  stream version derivation, and updating packages using the tabulated status
+  dashboard.
+
+* Reference
+:PROPERTIES:
+:CUSTOM_ID: reference
+:END:
+
+- [[file:api.org][API Reference]]: Comprehensive docstring-generated reference for public
+  commands, registration functions, and configuration options.

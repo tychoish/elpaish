@@ -1,0 +1,182 @@
+#+TITLE: Registering Packages in ELPAish
+#+OPTIONS: toc:2 num:nil
+
+* Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+
+ELPAish uses declarative recipe definitions written in Emacs Lisp to index,
+package, and distribute Emacs packages. Package definitions typically reside in
+a top-level =packages.el= file and are registered via
+[[file:api.org::#elpaish-register-package][~elpaish-register-package~]].
+
+* Features
+:PROPERTIES:
+:CUSTOM_ID: features
+:END:
+
+- *Declarative Recipe Definitions*: Register packages using Git URLs or local
+  paths with explicit branches, file globs, dependencies, and metadata.
+- *Automatic Packaging Format*: Packages containing a single file are packaged
+  as standard =.el= releases; packages with multiple files or explicit
+  dependencies are automatically packaged into =.tar= bundles with generated
+  =-pkg.el= descriptors.
+- *Local-First Recipe Resolution*: Use [[file:api.org::#elpaish-recipe-path][~elpaish-recipe-path~]] to seamlessly
+  resolve local working directories during development while falling back to
+  remote Git remotes for production CI builds.
+- *Monorepo Subpackage Discovery*: Scan monorepos containing multiple packages
+  across subdirectories using [[file:api.org::#elpaish-discover-recipes][~elpaish-discover-recipes~]].
+- *Granular Stream & Quality Control*: Suppress packages from specific release
+  streams (such as omitting unreleased work from =stable=) or skip specific
+  preflight linters for unmaintained upstream forks.
+
+* Key Functions and Options
+:PROPERTIES:
+:CUSTOM_ID: key-functions-and-options
+:END:
+
+- [[file:api.org::#elpaish-register-package][~elpaish-register-package~]]: Primary macro to register a package recipe in the
+  ELPAish registry.
+- [[file:api.org::#elpaish-recipe-path][~elpaish-recipe-path~]]: Resolve local checkouts against
+  [[file:api.org::#elpaish-recipe-local-search-dirs][~elpaish-recipe-local-search-dirs~]] before falling back to remote URLs.
+- [[file:api.org::#elpaish-load-packages][~elpaish-load-packages~]]: Load package recipes from files matching
+  [[file:api.org::#elpaish-packages-file][~elpaish-packages-file~]] or [[file:api.org::#elpaish-packages-files][~elpaish-packages-files~]].
+- [[file:api.org::#elpaish-discover-recipes][~elpaish-discover-recipes~]]: Scan a monorepo directory and register subpackages
+  automatically.
+
+* Defining Package Recipes
+:PROPERTIES:
+:CUSTOM_ID: defining-package-recipes
+:END:
+
+Package recipes are declared in =packages.el=. Below is an annotated registration:
+
+#+BEGIN_SRC emacs-lisp
+(require 'elpaish)
+(require 'elpaish-recipes)
+
+(elpaish-register-package
+ 'magit-dash
+ (elpaish-recipe-path "https://github.com/tychoish/magit-dash.git")
+ :branch "main"
+ :files '("magit-dash.el" "magit-dash-faces.el")
+ :test-dir "test"
+ :requires '(magit projectile)
+ :summary "Status and management dashboard for Magit repositories and worktrees"
+ :url "https://github.com/tychoish/magit-dash"
+ :keywords '("tools" "vc" "git"))
+#+END_SRC
+
+** Recipe Parameter Reference
+:PROPERTIES:
+:CUSTOM_ID: recipe-parameter-reference
+:END:
+
+| Parameter           | Type                  | Default     | Description                                                           |
+|---------------------+-----------------------+-------------+-----------------------------------------------------------------------|
+| ~NAME~              | symbol or string      | /required/  | Package name (e.g. ~'magit-dash~)                                     |
+| ~REPOSITORY-PATH~   | string                | /required/  | Local filesystem path or remote Git URL                               |
+| ~:branch~           | string                | ="main"=    | Git branch to track for builds                                        |
+| ~:files~            | list of strings       | ='("*.el")= | File globs or paths to package into the artifact                      |
+| ~:exclude-files~    | list of strings       | =nil=       | Globs to exclude (e.g. test files or fixtures)                        |
+| ~:source-dir~       | string                | ="."=       | Subdirectory within repository containing package files               |
+| ~:test-dir~         | string                | =nil=       | Directory containing ERT test files                                   |
+| ~:requires~         | list of symbols/pairs | =nil=       | Explicit dependencies to inject into package headers                  |
+| ~:disabled-streams~ | list of symbols       | =nil=       | Release streams to omit (~snapshot~, ~stable~, ~staging~)             |
+| ~:preflight-skip~   | boolean or list       | =nil=       | Checks to skip (~checkdoc~, ~package-lint~, ~ert~, etc.) or ~t~ (all) |
+| ~:summary~          | string                | derived     | Brief single-line package summary                                     |
+| ~:url~              | string                | derived     | Upstream homepage or repository URL                                   |
+| ~:keywords~         | list of strings       | derived     | Topics/keywords for search index and HTML catalog                     |
+
+* Recipe Patterns and Best Practices
+:PROPERTIES:
+:CUSTOM_ID: recipe-patterns-and-best-practices
+:END:
+
+** Single-File vs. Multi-File Bundles
+:PROPERTIES:
+:CUSTOM_ID: single-file-vs-multi-file-bundles
+:END:
+
+When ELPAish builds an artifact:
+- If ~:files~ resolves to a single =.el= file matching =<name>.el=, ELPAish
+  packages it as a single-file package (=<name>-<version>.el=).
+- If ~:files~ resolves to multiple files, or if an explicit =<name>-pkg.el= is
+  included, ELPAish bundles the files into a standard multi-file tarball
+  (=<name>-<version>.tar=) with an auto-generated package description
+  descriptor.
+
+** Local Checkouts and Recipe Path Resolution
+:PROPERTIES:
+:CUSTOM_ID: local-checkouts-and-recipe-path-resolution
+:END:
+
+To avoid hardcoding personal directory paths into a shared =packages.el=, wrap URLs in [[file:api.org::#elpaish-recipe-path][~elpaish-recipe-path~]]:
+
+#+BEGIN_SRC emacs-lisp
+(elpaish-register-package
+ 'annotated-completing-read
+ (elpaish-recipe-path "https://github.com/tychoish/annotated-completing-read.git")
+ :branch "main"
+ :files '("annotated-completing-read.el"))
+#+END_SRC
+
+Maintainers configure [[file:api.org::#elpaish-recipe-local-search-dirs][~elpaish-recipe-local-search-dirs~]] in their private Emacs config:
+
+#+BEGIN_SRC emacs-lisp
+(setq elpaish-recipe-local-search-dirs '("~/src/" "~/work/"))
+#+END_SRC
+
+When ~elpaish-recipe-path~ evaluates, it looks for directories named
+~annotated-completing-read~ under each search directory. If found on disk, the
+local working tree is used; otherwise, it falls back to the remote Git clone.
+
+** Monorepo Subpackage Discovery
+:PROPERTIES:
+:CUSTOM_ID: monorepo-subpackage-discovery
+:END:
+
+When managing a repository that houses multiple subpackages:
+
+#+BEGIN_SRC emacs-lisp
+;; Automatically discover all subdirectories containing <dir-name>.el with a package header
+(elpaish-discover-recipes "~/src/my-monorepo" :branch "main")
+#+END_SRC
+
+Or declare subpackages individually by specifying ~:source-dir~:
+
+#+BEGIN_SRC emacs-lisp
+(elpaish-register-package
+ 'my-subtool
+ "https://github.com/example/monorepo.git"
+ :source-dir "lisp/my-subtool"
+ :branch "main"
+ :files '("*.el"))
+#+END_SRC
+
+** Stream Suppression and Fork Overrides
+:PROPERTIES:
+:CUSTOM_ID: stream-suppression-and-fork-overrides
+:END:
+
+For experimental tools, release candidates, or third-party forks:
+
+#+BEGIN_SRC emacs-lisp
+  ;; Omit from stable release stream until tag stabilization
+  (elpaish-register-package 'experimental-editor
+  "https://github.com/example/experimental-editor.git" :branch "develop"
+  :disabled-streams '(stable) :summary "Experimental editor features")
+
+  ;; Third-party fork with non-compliant linting bypassed
+  (elpaish-register-package 'upstream-fork
+  "https://github.com/my-org/upstream-fork.git" :fork t :preflight-skip
+  '(package-lint checkdoc) :branch "main")
+#+END_SRC
+
+* Reference
+:PROPERTIES:
+:CUSTOM_ID: reference
+:END:
+
+See the [[file:api.org][API Reference]] for complete function signatures and docstrings.

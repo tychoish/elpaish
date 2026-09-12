@@ -1,0 +1,272 @@
+#+TITLE: Hosting and Deploying ELPAish Repositories
+#+OPTIONS: toc:2 num:nil
+
+* Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+
+ELPAish enables individuals, teams, and organizations to spin up and host their
+own private or public Emacs package archives. An ELPAish archive serves static
+package files, index catalogs, and GPG cryptographic signatures compatible with
+Emacs's standard =package.el= and third-party managers.
+
+* Features
+:PROPERTIES:
+:CUSTOM_ID: features
+:END:
+
+- *Multi-Stream Release Channels*: Generates three distinct package streams
+  concurrently: =snapshot= (latest Git tip), =stable= (clean semantic version
+  tags), and =staging= (pre-releases and release candidates).
+- *End-to-End Cryptographic Signing*: Generates detached OpenPGP signatures for
+  package artifacts and =archive-contents= indexes, with automated subkey
+  rotation tools.
+- *Static Site & Catalog Generation*: Generates accessible, responsive HTML
+  indexes and package detail pages alongside standard ELPA archives.
+- *Headless CI/CD Automation*: Integrates seamlessly with GitHub Actions to
+  build and deploy static web assets to GitHub Pages or S3/Nginx.
+- *Built-in Local Preview Server*: Includes an embedded HTTP server via
+  [[file:api.org::#elpaish-serve-local][~elpaish-serve-local~]] to preview the generated catalog and test installations
+  locally before deploying.
+
+* Key Functions and Options
+:PROPERTIES:
+:CUSTOM_ID: key-functions-and-options
+:END:
+
+- [[file:api.org::#elpaish-build-all][~elpaish-build-all~]]: Build packages, generate indexes, and produce signed
+  archives across specified channels.
+- [[file:api.org::#elpaish-output-dir][~elpaish-output-dir~]]: Destination root directory for generated archive streams
+  and HTML pages (default: ="public/"=).
+- [[file:api.org::#elpaish-base-url][~elpaish-base-url~]]: Canonical URL for the published archive.
+- [[file:api.org::#elpaish-serve-local][~elpaish-serve-local~]]: Spin up a local HTTP preview server serving the output
+  directory.
+- [[file:api.org::#elpaish-setup-signing][~elpaish-setup-signing~]]: Interactive wizard to configure a GPG key for signing
+  packages.
+- [[file:api.org::#elpaish-init-signing-from-env][~elpaish-init-signing-from-env~]]: Initialize GPG signing non-interactively from
+  environment variables in CI runners.
+- [[file:api.org::#elpaish-rotate-keys][~elpaish-rotate-keys~]]: Rotate signing subkeys and automatically synchronize
+  with GitHub repository secrets.
+
+* Initializing an Archive Repository
+:PROPERTIES:
+:CUSTOM_ID: initializing-an-archive-repository
+:END:
+
+A standard ELPAish repository layout consists of:
+
+#+BEGIN_EXAMPLE
+my-elpa/
+├── packages.el           # Package registration definitions
+├── scripts/
+│   └── build.el          # Headless batch build runner
+├── public/               # Output directory (deployed to static web host)
+│   ├── index.html        # Main landing page
+│   ├── snapshot/         # Snapshot stream archive
+│   ├── stable/           # Stable stream archive
+│   └── staging/          # Staging stream archive
+└── .github/workflows/
+    └── pages.yml         # CI/CD deployment pipeline
+#+END_EXAMPLE
+
+Create the workspace layout and initialize a Git repository:
+
+#+BEGIN_SRC sh
+mkdir -p my-elpa/scripts
+cd my-elpa
+git init
+#+END_SRC
+
+* Batch Build Runner
+:PROPERTIES:
+:CUSTOM_ID: batch-build-runner
+:END:
+
+Create =scripts/build.el= as the entry point for CI pipelines and local batch executions:
+
+#+BEGIN_SRC emacs-lisp
+;;; scripts/build.el --- Headless ELPAish build runner -*- lexical-binding: t; -*-
+
+(require 'package)
+(package-initialize)
+
+(require 'elpaish)
+(require 'elpaish-recipes)
+(require 'elpaish-website)
+
+;; 1. Load package recipes from packages.el
+(elpaish-load-packages "packages.el")
+
+;; 2. Initialize GPG signing keys from environment (if set)
+(elpaish-init-signing-from-env)
+
+;; 3. Configure output directory
+(let ((out-dir (or (getenv "ELPAISH_OUTPUT_DIR")
+                   (expand-file-name "public/" default-directory))))
+  (message "Building ELPAish archive into %s..." out-dir)
+  (elpaish-build-all 'all out-dir)
+  (message "Archive build complete!"))
+#+END_SRC
+
+Execute a batch build locally from your terminal:
+
+#+BEGIN_SRC sh
+emacs --batch -L pkg -l scripts/build.el
+#+END_SRC
+
+* Local Preview and Testing
+:PROPERTIES:
+:CUSTOM_ID: local-preview-and-testing
+:END:
+
+Start the local HTTP preview server within Emacs:
+
+#+BEGIN_SRC emacs-lisp
+(elpaish-serve-local 9001 "public/")
+#+END_SRC
+
+Navigate to =http://127.0.0.1:9001/= in your web browser to browse the generated catalog and package metadata.
+
+To test package installation in an Emacs session:
+
+#+BEGIN_SRC emacs-lisp
+(setq package-check-signature nil)
+(add-to-list 'package-archives '("local-elpa" . "http://127.0.0.1:9001/snapshot/") t)
+(package-refresh-contents)
+(package-install 'my-package)
+#+END_SRC
+
+Stop the preview server when finished:
+
+#+BEGIN_SRC emacs-lisp
+(elpaish-stop-server)
+#+END_SRC
+
+* Cryptographic Signing Infrastructure
+:PROPERTIES:
+:CUSTOM_ID: cryptographic-signing-infrastructure
+:END:
+
+ELPAish signs =archive-contents= and each =.el= / =.tar= package bundle with detached GPG signatures (=.sig=).
+
+** Interactive Setup
+:PROPERTIES:
+:CUSTOM_ID: interactive-setup
+:END:
+
+Run [[file:api.org::#elpaish-setup-signing][~M-x elpaish-setup-signing~]]. ELPAish will inspect your secret keyring and prompt you to select an OpenPGP signing key.
+
+** Headless CI Signing Setup
+:PROPERTIES:
+:CUSTOM_ID: headless-ci-signing-setup
+:END:
+
+For automated CI builds, export your secret signing subkey:
+
+#+BEGIN_SRC sh
+gpg --armor --export-secret-subkeys <SUBKEY-ID> > signing-key.asc
+#+END_SRC
+
+Store the contents of =signing-key.asc= as the secret =ELPAISH_SIGNING_KEY= in your repository settings (e.g. GitHub Actions Secrets). If your key is passphrase-protected, store the passphrase as =ELPAISH_GPG_PASSPHRASE=.
+
+When [[file:api.org::#elpaish-init-signing-from-env][~elpaish-init-signing-from-env~]] executes in CI, it imports the key into an ephemeral keyring, configures loopback pinentry, and enables signing.
+
+** Subkey Rotation and Revocation
+:PROPERTIES:
+:CUSTOM_ID: subkey-rotation-and-revocation
+:END:
+
+To rotate a signing subkey on an active repository:
+
+#+BEGIN_SRC emacs-lisp
+;; Generates a new 1-year ed25519 signing subkey and syncs to GitHub Secrets
+(elpaish-rotate-keys :master-key-id "FINGERPRINT"
+                     :repo-slug "username/my-elpa")
+#+END_SRC
+
+If a key is compromised, generate and publish a revocation certificate:
+
+#+BEGIN_SRC emacs-lisp
+(elpaish-revoke-key "KEY-ID")
+#+END_SRC
+
+* Deploying to GitHub Pages
+:PROPERTIES:
+:CUSTOM_ID: deploying-to-github-pages
+:END:
+
+Automate building and deploying to GitHub Pages with =.github/workflows/pages.yml=:
+
+#+BEGIN_SRC yaml
+name: Deploy Package Repository
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 */6 * * *' # Rebuild every 6 hours
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: purcell/setup-emacs@master
+        with:
+          version: 29.4
+      - name: Build Repository
+        env:
+          ELPAISH_OUTPUT_DIR: public/
+          ELPAISH_SIGNING_KEY: ${{ secrets.ELPAISH_SIGNING_KEY }}
+          ELPAISH_GPG_PASSPHRASE: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
+        run: emacs --batch -L pkg -l scripts/build.el
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public/
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/deploy-pages@v4
+#+END_SRC
+
+* Downstream User Setup
+:PROPERTIES:
+:CUSTOM_ID: downstream-user-setup
+:END:
+
+Downstream Emacs users configure your archive in their =init.el=:
+
+#+BEGIN_SRC emacs-lisp
+;; Add your repository snapshot channel
+(add-to-list 'package-archives
+             '("my-elpa" . "https://username.github.io/my-elpa/snapshot/") t)
+
+;; Import and trust public keyring for signature verification
+(url-copy-file "https://username.github.io/my-elpa/elpaish-keyring.gpg"
+               "my-elpa-keyring.gpg" t)
+(package-import-keyring "my-elpa-keyring.gpg")
+(setq package-check-signature t)
+
+(package-refresh-contents)
+#+END_SRC
+
+* Reference
+:PROPERTIES:
+:CUSTOM_ID: reference
+:END:
+
+See the [[file:api.org][API Reference]] for complete module options and commands.

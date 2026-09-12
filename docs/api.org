@@ -1,0 +1,316 @@
+#+TITLE: ELPAish API Reference
+#+OPTIONS: toc:3 num:nil
+
+API documentation for user-facing commands, registration functions, and configuration options in ELPAish, generated from source docstrings.
+
+* API Reference
+#+BEGIN_SRC emacs-lisp :results output raw :exports none
+  (require 'org-docsgen)
+  (let ((base (expand-file-name "../pkg" default-directory)))
+    (org-docsgen-run
+     :el-files
+     (delq nil
+           (mapcar (lambda (f) (file-relative-name (expand-file-name f base) default-directory))
+                   '("elpaish.el"
+                     "elpaish-recipes.el"
+                     "elpaish-check.el")))
+     :scope '("elpaish-register-package"
+              "elpaish-recipe-path"
+              "elpaish-recipe-local-search-dirs"
+              "elpaish-load-packages"
+              "elpaish-discover-recipes"
+              "elpaish-packages-file"
+              "elpaish-packages-files"
+              "elpaish-build-all"
+              "elpaish-build-single"
+              "elpaish-build-recompile"
+              "elpaish-output-dir"
+              "elpaish-base-url"
+              "elpaish-release-mode"
+              "elpaish-view-build-log"
+              "elpaish-status"
+              "elpaish-status-refresh"
+              "elpaish-status-build-at-point"
+              "elpaish-status-preflight-at-point"
+              "elpaish-status-preflight-all"
+              "elpaish-preflight-single"
+              "elpaish-menu"
+              "elpaish-setup-signing"
+              "elpaish-init-signing-from-env"
+              "elpaish-rotate-keys"
+              "elpaish-revoke-key"
+              "elpaish-export-keyring"
+              "elpaish-sign-packages"
+              "elpaish-serve-local"
+              "elpaish-stop-server"
+              "elpaish-preview-server-port"
+              "elpaish-check-package"
+              "elpaish-check-all"
+              "elpaish-run-checks"
+              "elpaish-view-check-log"
+              "elpaish-check-enable-builder")
+     :include-kinds '(variables customs)
+     :namespace "elpaish"
+     :section-style 'triple-semi
+     :link-style 'org
+     :group-by '("elpaish" "elpaish-recipes" "elpaish-check")))
+#+END_SRC
+
+#+RESULTS:
+** [[file:../pkg/elpaish.el::181][elpaish-register-package]]
+:PROPERTIES:
+:CUSTOM_ID: elpaish-register-package
+:END:
+
+: (fn NAME REPOSITORY-PATH &key BRANCH (FILES '("*.el")) EXCLUDE-FILES EXCLUDE SOURCE-DIRECTORY-PATH TEST-DIRECTORY-PATH SOURCE-DIR TEST-DIR PREFLIGHT-SKIP EXTERNAL EXTERNAL-P THIRD-PARTY FORK FORK-P ORIGIN SUMMARY URL DOC KEYWORDS REQUIRES DISABLED-STREAMS SUPPRESS-STREAMS DOCS-URL (ORG-FILES :default) (INCLUDE-ORG :default) ORG-EXCLUDE &allow-other-keys)
+
+Register package /NAME/ with /REPOSITORY-PATH/ (local directory or Git /URL/). /BRANCH/ defaults to ~elpaish-default-branch~ and FILES to '("*.el"). /SOURCE-DIRECTORY-PATH/ (or /SOURCE-DIR/) is the subdirectory within /REPOSITORY-PATH/ holding the package (default "."), for monorepos or nested folders. /TEST-DIRECTORY-PATH/ (or /TEST-DIR/) is an optional custom test directory path. /EXCLUDE-FILES/ (or /EXCLUDE/) is an optional list of file patterns to exclude. /PREFLIGHT-SKIP/ is t (or 't) to skip all checks, or a list of check symbols to bypass during preflight. /DISABLED-STREAMS/ (or /SUPPRESS-STREAMS/) is a list of suppressed stream symbols. /DOC/ (or /DOCS-URL/) is an optional /URL/ or path to documentation. ORG-FILES (or INCLUDE-ORG) controls org docs inclusion (t, nil, or list of patterns). /ORG-EXCLUDE/ adds patterns to exclude from org documentation. /SUMMARY/, /URL/, /KEYWORDS/, and /REQUIRES/ provide package metadata.
+
+** [[file:../pkg/elpaish-recipes.el::53][elpaish-recipe-path]]
+:PROPERTIES:
+:CUSTOM_ID: elpaish-recipe-path
+:END:
+
+Return the first existing local checkout of NAME-OR-URL, or REMOTE-URL. If REMOTE-URL is omitted, NAME-OR-URL is treated as the remote URL, and the bare directory name is derived automatically from the URL to avoid stuttering.
+
+Searches ~elpaish-recipe-local-search-dirs~, then "external/NAME" under ~user-emacs-directory~ and under ~default-directory~.
+
+** elpaish-recipe-local-search-dirs
+:PROPERTIES:
+:CUSTOM_ID: elpaish-recipe-local-search-dirs
+:END:
+
+Local checkout root directories searched by ~elpaish-recipe-path~. Each recipe’s bare directory NAME is looked up under every root, in order (after which "external/NAME" is tried under ~user-emacs-directory~ and under ~default-directory~) — the first match that exists on disk is used.  Falls back to the recipe’s remote URL if no local directory matches.
+
+Customizing this lets a developer work against their personal local checkouts without baking any assumptions about one maintainer’s personal directory layout into individual recipes.
+
+** [[file:../pkg/elpaish-recipes.el::119][elpaish-load-packages]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-load-packages
+:END:
+
+Load package recipe definitions from FILES (defaults to ~elpaish-packages-files~). FILES can be a single file/glob or a list of files/globs. Returns the number of registered recipes.
+
+** [[file:../pkg/elpaish-recipes.el::162][elpaish-discover-recipes]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-discover-recipes
+:END:
+
+: (fn ROOT &key BRANCH FILES)
+
+Scan /ROOT/ for monorepo subpackages and register a recipe for each. Looks for immediate subdirectories containing a ‘<dir-name>.el’ file with a package header, and registers each with the appropriate ~:source-dir~. /BRANCH/ defaults to ~elpaish-default-branch~. /FILES/ overrides the default wildcard ‘("*.el")’ pattern used for every discovered package, so multi-file packages are picked up automatically at build time without enumerating every file here.
+
+** elpaish-packages-file
+:PROPERTIES:
+:CUSTOM_ID: elpaish-packages-file
+:END:
+
+Filename or path of the top-level package definitions file.
+
+** elpaish-packages-files
+:PROPERTIES:
+:CUSTOM_ID: elpaish-packages-files
+:END:
+
+List of filenames or wildcard patterns from which to load package recipes. Each entry can be an absolute or relative path, or a glob pattern (e.g. "packages.el", "recipes/*.el", "packages.d/*.el").
+
+** [[file:../pkg/elpaish.el::1329][elpaish-build-all]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-build-all
+:END:
+
+Build registered packages, generate indexes, and sign archives. MODE can be ~all~, ‘snapshot’, ‘stable’, or ‘staging’. Defaults to ~elpaish-release-mode~.  OUTPUT-DIRECTORY-PATH defaults to ~elpaish-output-dir~.  Every registered package is rebuilt unconditionally on every call; see ~elpaish-build-package~.
+
+** [[file:../pkg/elpaish.el::1380][elpaish-build-single]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-build-single
+:END:
+
+Interactively build and sign a single package RECIPE-OR-NAME for STREAM. OUTPUT-DIRECTORY-PATH overrides destination directory.
+
+** [[file:../pkg/elpaish.el::1159][elpaish-build-recompile]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-build-recompile
+:END:
+
+Re-run ~elpaish-build-all~ from the build compilation buffer.
+
+** elpaish-output-dir
+:PROPERTIES:
+:CUSTOM_ID: elpaish-output-dir
+:END:
+
+Root directory where package archives, keys, and indexes are written.
+
+** elpaish-base-url
+:PROPERTIES:
+:CUSTOM_ID: elpaish-base-url
+:END:
+
+Base URL for the ELPAish package repository site.
+
+** elpaish-release-mode
+:PROPERTIES:
+:CUSTOM_ID: elpaish-release-mode
+:END:
+
+Default release mode / track for building packages. Can be ~all~ (builds elpaish, elpaish-stable, and elpaish-staging), ‘elpaish’ (snapshot date versions), ‘elpaish-stable’ (semver tags only), or ‘elpaish-staging’ (pre-release tags and git describe).
+
+** [[file:../pkg/elpaish.el::1459][elpaish-view-build-log]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-view-build-log
+:END:
+
+Switch to the ELPAish build compilation log buffer.
+
+** [[file:../pkg/elpaish.el::1751][elpaish-status]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-status
+:END:
+
+Open the ELPAish Builder management buffer.
+
+** [[file:../pkg/elpaish.el::1685][elpaish-status-refresh]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-status-refresh
+:END:
+
+Refresh the package registry status table.
+
+** [[file:../pkg/elpaish.el::1713][elpaish-status-build-at-point]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-status-build-at-point
+:END:
+
+Build the package at point across all release streams.
+
+** [[file:../pkg/elpaish.el::1728][elpaish-status-preflight-at-point]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-status-preflight-at-point
+:END:
+
+Execute preflight check for package at point.
+
+** [[file:../pkg/elpaish.el::1739][elpaish-status-preflight-all]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-status-preflight-all
+:END:
+
+Execute preflight check suite for all registered packages.
+
+** [[file:../pkg/elpaish.el::1436][elpaish-preflight-single]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-preflight-single
+:END:
+
+Run preflight quality gates on a single package RECIPE-OR-NAME.
+
+** [[file:../pkg/elpaish.el::1782][elpaish-menu]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-menu
+:END:
+
+Transient dispatch menu for ELPAish package repository management.
+
+** [[file:../pkg/elpaish.el::974][elpaish-setup-signing]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-setup-signing
+:END:
+
+Interactive wizard to guide the user through selecting a GPG signing key.
+
+** [[file:../pkg/elpaish.el::956][elpaish-init-signing-from-env]]
+:PROPERTIES:
+:CUSTOM_ID: elpaish-init-signing-from-env
+:END:
+
+Initialize GPG signing from ‘ELPAISH_SIGNING_KEY’ environment variable. Imports key armor, configures loopback pinentry, detects secret key ID, and enables signing.  Return the detected signing key ID or nil.
+
+** [[file:../pkg/elpaish.el::1013][elpaish-rotate-keys]]
+:PROPERTIES:
+:CUSTOM_ID: elpaish-rotate-keys
+:END:
+
+: (fn &key MASTER-KEY-ID REPO-SLUG (OUTPUT-DIR elpaish-output-dir))
+
+Rotate GPG signing subkey [S] for /MASTER-KEY-ID/ and export to OUTPUT-DIR. Syncs with GitHub secrets on /REPO-SLUG/.
+
+** [[file:../pkg/elpaish.el::1049][elpaish-revoke-key]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-revoke-key
+:END:
+
+Publish revocation certificate for KEY-ID to ‘elpaish.rev.asc’ in OUTPUT-DIR.
+
+** [[file:../pkg/elpaish.el::994][elpaish-export-keyring]]
+:PROPERTIES:
+:CUSTOM_ID: elpaish-export-keyring
+:END:
+
+Export binary ‘elpaish-keyring.gpg’ and armored keys for KEY-ID to OUTPUT-DIR.
+
+** elpaish-sign-packages
+:PROPERTIES:
+:CUSTOM_ID: elpaish-sign-packages
+:END:
+
+When non-nil, sign generated package archives and ‘archive-contents’ with GPG.
+
+** [[file:../pkg/elpaish.el::1578][elpaish-serve-local]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-serve-local
+:END:
+
+Start local HTTP server serving OUTPUT-DIR (defaults to public/) at PORT. PORT defaults to ~elpaish-preview-server-port~.
+
+** [[file:../pkg/elpaish.el::1595][elpaish-stop-server]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-stop-server
+:END:
+
+Stop local preview HTTP server if active.
+
+** elpaish-preview-server-port
+:PROPERTIES:
+:CUSTOM_ID: elpaish-preview-server-port
+:END:
+
+Default TCP port for ~elpaish-serve-local~ when none is specified.
+
+** [[file:../pkg/elpaish-check.el::358][elpaish-check-package]]
+:PROPERTIES:
+:CUSTOM_ID: elpaish-check-package
+:END:
+
+: (fn &optional DIR &key MAIN-FILE TEST-DIR SKIP-CHECKS VERBOSE EXTRA-LOAD-PATH)
+
+Execute preflight quality check suite for package located at /DIR/. /MAIN-FILE/ explicitly overrides main file detection. /TEST-DIR/ explicitly specifies directory containing ERT test files. /SKIP-CHECKS/ is a list of check symbols to bypass, or t to skip all. Supported check symbols: ‘parens’, ~checkdoc~, ‘package-lint’, ~byte-compile~, ~ert~. /VERBOSE/ is toggles extra output. /EXTRA-LOAD-PATH/ is a list of directories added to ~load-path~ during byte-compilation and tests.
+
+** [[file:../pkg/elpaish-check.el::469][elpaish-check-all]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-check-all
+:END:
+
+Execute preflight quality check suite for DIR (defaults to ~default-directory~). Pipes all output into ‘function:elpaish-check-buffer-name’ compilation buffer.
+
+** [[file:../pkg/elpaish.el::1761][elpaish-run-checks]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-run-checks
+:END:
+
+Execute package quality check suite for current repository or DIR.
+
+** [[file:../pkg/elpaish.el::1769][elpaish-view-check-log]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-view-check-log
+:END:
+
+Switch to the ELPAish check compilation log buffer for DIR.
+
+** [[file:../pkg/elpaish-check.el::536][elpaish-check-enable-builder]] :command:
+:PROPERTIES:
+:CUSTOM_ID: elpaish-check-enable-builder
+:END:
+
+Enable ~elpaish-run-checks~ as the default build command for projects with .el files.
+

@@ -100,7 +100,7 @@
  :branch "main"
  :test-dir "test"
  :exclude-files '("elpaish-keyring-pkg.el")
- :summary "Multi-track signed ELPA package archive builder and server"
+ :summary "Multi-stream signed ELPA package archive builder and server"
  :url "https://github.com/tychoish/elpaish"
  :keywords '("tools" "elpa" "package" "distribution"))
 
