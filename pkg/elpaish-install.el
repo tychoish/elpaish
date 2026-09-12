@@ -345,6 +345,9 @@ When no packages are specified in ARGS, defaults to `elpaish-install-bootstrap-p
   (interactive)
   (elpaish-install--execute args 'upgrade))
 
+;;;###autoload
+(defalias 'elpaish-upgrade-packages 'elpaish-install-upgrade-packages)
+
 (provide 'elpaish-install)
 
 ;; Local Variables:

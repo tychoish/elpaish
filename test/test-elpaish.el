@@ -14,9 +14,10 @@
                          (t (and (boundp 'package-user-dir) package-user-dir))))
        (package-user-dir (or target-user-dir (expand-file-name "elpa" default-directory))))
   (package-initialize))
-(let ((pkg-dir (expand-file-name "pkg" default-directory)))
+(let* ((this-dir (file-name-directory (or load-file-name buffer-file-name (expand-file-name "test/dummy" default-directory))))
+       (pkg-dir (expand-file-name "../pkg" this-dir)))
   (when (file-directory-p pkg-dir)
-    (push pkg-dir load-path)))
+    (setq load-path (cons (file-name-as-directory pkg-dir) load-path))))
 (require 'ert)
 (require 'elpaish)
 (require 'elpaish-recipes)
@@ -990,6 +991,73 @@ source's last commit time rather than the time of the build."
        (should (member "LICENSE" files))
        (let ((artifact (elpaish-build-package recipe 'snapshot)))
          (should (string-suffix-p ".tar" artifact)))))))
+
+(ert-deftest elpaish-test-bundle-org-files-default ()
+  "Test that org documentation files in root and docs/ are bundled by default."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "org-doc-pkg" temp-dir)))
+     (elpaish-test-create-dummy-pkg pkg-dir "org-doc-pkg" "1.0.0" "Org Doc Bundle Test")
+     (make-directory (expand-file-name "docs" pkg-dir) t)
+     (make-directory (expand-file-name "tests" pkg-dir) t)
+     (make-directory (expand-file-name ".hidden" pkg-dir) t)
+     ;; Write org doc files
+     (with-temp-file (expand-file-name "README.org" pkg-dir)
+       (insert "* Org Doc Package\nDocumentation in root.\n"))
+     (with-temp-file (expand-file-name "docs/guide.org" pkg-dir)
+       (insert "* User Guide\nDetailed guide.\n"))
+     (with-temp-file (expand-file-name "docs/api.org" pkg-dir)
+       (insert "* API Reference\nGenerated API.\n"))
+     ;; Files that must NOT be bundled
+     (with-temp-file (expand-file-name "tests/test.org" pkg-dir)
+       (insert "* Test notes\n"))
+     (with-temp-file (expand-file-name ".hidden/internal.org" pkg-dir)
+       (insert "* Hidden\n"))
+     (elpaish-register-package 'org-doc-pkg pkg-dir)
+     (let* ((recipe (gethash "org-doc-pkg" elpaish-registry))
+            (files (elpaish--collect-files pkg-dir (elpaish-recipe-files recipe) "org-doc-pkg" recipe)))
+       (should (member "README.org" files))
+       (should (member "docs/guide.org" files))
+       (should (member "docs/api.org" files))
+       (should-not (member "tests/test.org" files))
+       (should-not (member ".hidden/internal.org" files))
+       (let ((artifact (elpaish-build-package recipe 'snapshot)))
+         (should (string-suffix-p ".tar" artifact)))))))
+
+(ert-deftest elpaish-test-bundle-org-files-filtering-and-exclusion ()
+  "Test filtering and exclusion options for org documentation bundling."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "org-filter-pkg" temp-dir)))
+     (elpaish-test-create-dummy-pkg pkg-dir "org-filter-pkg" "1.0.0" "Org Filter Test")
+     (make-directory (expand-file-name "docs" pkg-dir) t)
+     (make-directory (expand-file-name "drafts" pkg-dir) t)
+     (with-temp-file (expand-file-name "docs/public.org" pkg-dir)
+       (insert "* Public\n"))
+     (with-temp-file (expand-file-name "docs/internal.org" pkg-dir)
+       (insert "* Internal\n"))
+     (with-temp-file (expand-file-name "drafts/wip.org" pkg-dir)
+       (insert "* Draft\n"))
+
+     ;; 1. Test :org-files nil (opt-out)
+     (elpaish-register-package 'org-no-docs pkg-dir :org-files nil)
+     (let* ((rec (gethash "org-no-docs" elpaish-registry))
+            (files (elpaish--collect-files pkg-dir (elpaish-recipe-files rec) "org-no-docs" rec)))
+       (should-not (member "docs/public.org" files))
+       (should-not (member "drafts/wip.org" files)))
+
+     ;; 2. Test :org-files with prefix list
+     (elpaish-register-package 'org-prefix-docs pkg-dir :org-files '("docs"))
+     (let* ((rec (gethash "org-prefix-docs" elpaish-registry))
+            (files (elpaish--collect-files pkg-dir (elpaish-recipe-files rec) "org-prefix-docs" rec)))
+       (should (member "docs/public.org" files))
+       (should-not (member "drafts/wip.org" files)))
+
+     ;; 3. Test :exclude-files on org documentation
+     (elpaish-register-package 'org-ex-docs pkg-dir :exclude-files '("docs/internal.org" "drafts/*"))
+     (let* ((rec (gethash "org-ex-docs" elpaish-registry))
+            (files (elpaish--collect-files pkg-dir (elpaish-recipe-files rec) "org-ex-docs" rec)))
+       (should (member "docs/public.org" files))
+       (should-not (member "docs/internal.org" files))
+       (should-not (member "drafts/wip.org" files))))))
 
 (ert-deftest elpaish-test-multi-glob-packages-files ()
   "Test loading package definitions from a list of globs."

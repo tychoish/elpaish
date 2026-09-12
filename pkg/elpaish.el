@@ -139,6 +139,7 @@ or `elpaish-staging' (pre-release tags and git describe)."
   (doc nil :type (choice null string) :documentation "Documentation URL or path.")
   (keywords nil :type list :documentation "List of keywords.")
   (requires nil :type list :documentation "Declared dependencies ((dep min-ver) ...).")
+  (org-files t :type (choice boolean list) :documentation "Org documentation files to bundle: t (all), nil (none), or list of globs/prefixes.")
   (built-version-snapshot nil :type (choice null string) :documentation "Last built version for snapshot stream.")
   (built-version-stable nil :type (choice null string) :documentation "Last built version for stable stream.")
   (built-version-staging nil :type (choice null string) :documentation "Last built version for staging stream.")
@@ -196,6 +197,9 @@ publishing an incomplete archive.")
 				    disabled-streams
                                     suppress-streams
                                     docs-url
+                                    (org-files :default)
+                                    (include-org :default)
+                                    org-exclude
                                     &allow-other-keys)
   "Register package NAME with REPOSITORY-PATH (local directory or Git URL).
 BRANCH defaults to `elpaish-default-branch' and FILES to \\='(\"*.el\").
@@ -208,6 +212,8 @@ PREFLIGHT-SKIP is t (or \\='t) to skip all checks, or a list of check
 symbols to bypass during preflight.
 DISABLED-STREAMS (or SUPPRESS-STREAMS) is a list of suppressed stream symbols.
 DOC (or DOCS-URL) is an optional URL or path to documentation.
+ORG-FILES (or INCLUDE-ORG) controls org docs inclusion (t, nil, or list of patterns).
+ORG-EXCLUDE adds patterns to exclude from org documentation.
 SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
   (let* ((raw-name (if (symbolp name) (symbol-name name) (string-trim name)))
          (name-str (string-remove-suffix ".el" raw-name))
@@ -219,8 +225,8 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                                (when (symbolp suppress-streams) (list suppress-streams))))
          (dis-streams (seq-uniq (mapcar #'elpaish-canonical-stream (delq nil raw-disabled))))
          (repo-target (if (and (stringp repository-path)
-                               (not (string-match-p "\\`https?://" repository-path))
-                               (not (string-match-p "\\`git@" repository-path)))
+                               (not (string-match-p "\`https?://" repository-path))
+                               (not (string-match-p "\`git@" repository-path)))
                           (expand-file-name repository-path)
                         repository-path))
          (is-fork (and (or fork fork-p (eq origin 'fork)) t))
@@ -230,12 +236,24 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                             (is-third-party 'third-party)
                             (origin origin)
                             (t 'tychoish)))
+         (resolved-org (cond
+                        ((not (eq include-org :default)) include-org)
+                        ((not (eq org-files :default)) org-files)
+                        (t t)))
+         (effective-exclude (append
+                             (when (listp exclude-files) exclude-files)
+                             (when (stringp exclude-files) (list exclude-files))
+                             (when (listp exclude) exclude)
+                             (when (stringp exclude) (list exclude))
+                             (when (listp org-exclude) org-exclude)
+                             (when (stringp org-exclude) (list org-exclude))))
          (recipe (elpaish-recipe-create
                   :name name-str
                   :repository-path repo-target
                   :branch (or branch elpaish-default-branch)
                   :files (or files '("*.el"))
-                  :exclude-files (or exclude-files exclude)
+                  :exclude-files effective-exclude
+                  :org-files resolved-org
                   :source-directory-path effective-source
                   :test-directory-path effective-test
                   :preflight-skip preflight-skip
@@ -531,6 +549,56 @@ point when two recipes are registered against the same directory."
                           (if (string-suffix-p ".el" oname) oname (concat oname ".el")))))
                     (hash-table-values elpaish-registry))))))
 
+(defcustom elpaish-include-org-files t
+  "Whether to include org documentation files in built packages by default.
+When non-nil, .org files in the package directory tree (such as docs/*.org)
+are bundled into package archives unless excluded by recipe configuration."
+  :type 'boolean
+  :group 'elpaish)
+
+(defun elpaish--collect-org-files (repo-dir recipe)
+  "Collect relative paths of org documentation files in REPO-DIR for RECIPE."
+  (let* ((org-cfg (if recipe (elpaish-recipe-org-files recipe) elpaish-include-org-files))
+         (exclude-patterns (when recipe (elpaish-recipe-exclude-files recipe)))
+         (test-dir (when recipe (elpaish-recipe-test-directory-path recipe))))
+    (when org-cfg
+      (let* ((all-org (when (file-directory-p repo-dir)
+                        (directory-files-recursively repo-dir "\\.org\\'")))
+             (rel-org (mapcar (lambda (p) (file-relative-name p repo-dir)) all-org)))
+        (seq-filter
+         (lambda (rel)
+           (let ((base (file-name-nondirectory rel)))
+             (and
+              ;; Exclude hidden files and directories (.git, .agent-shell, .#..., etc.)
+              (not (string-match-p "\\(?:\\`\\|/\\)\\." rel))
+              ;; Exclude autosave and backup files
+              (not (string-prefix-p "#" base))
+              (not (string-suffix-p "~" base))
+              ;; Exclude test directories
+              (not (string-match-p "\\`tests?/" rel))
+              (not (and test-dir (string-prefix-p (file-name-as-directory test-dir) rel)))
+              (not (string-prefix-p "test-" base))
+              ;; Exclude build/cache directories
+              (not (string-match-p "\\`\\(?:elpa\\|elpa-ci\\|_build\\|public\\|dist\\)/" rel))
+              ;; If org-cfg is a list of patterns/prefixes, ensure rel matches at least one
+              (or (eq org-cfg t)
+                  (seq-some
+                   (lambda (pat)
+                     (or (string-prefix-p pat rel)
+                         (string-prefix-p (file-name-as-directory pat) rel)
+                         (string-match-p (wildcard-to-regexp pat) rel)
+                         (string-match-p (wildcard-to-regexp pat) base)))
+                   (if (listp org-cfg) org-cfg (list org-cfg))))
+              ;; Exclude explicit recipe exclude patterns
+              (not (and exclude-patterns
+                        (seq-some (lambda (epat)
+                                    (or (string= rel epat)
+                                        (string= base epat)
+                                        (string-match-p (wildcard-to-regexp epat) rel)
+                                        (string-match-p (wildcard-to-regexp epat) base)))
+                                  exclude-patterns))))))
+         rel-org)))))
+
 (defconst elpaish-bundled-doc-patterns
   '("README" "README.*" "readme" "readme.*"
     "LICENSE" "LICENSE.*" "license" "license.*"
@@ -540,8 +608,8 @@ point when two recipes are registered against the same directory."
 
 (defun elpaish--collect-files (repo-dir patterns &optional pkg-name recipe)
   "Collect relative file paths in REPO-DIR matching PATTERNS.
-Also includes README and LICENSE files.  Excludes tests and generated
-descriptor files.  PKG-NAME overrides base name detection.
+Also includes README, LICENSE, and org documentation files.
+Excludes tests and generated descriptor files.  PKG-NAME overrides base name detection.
 When RECIPE is given, also excludes any sibling recipe's main file that
 shares RECIPE's source directory, other packages' descriptor files,
 and any patterns in RECIPE's `:exclude-files'."
@@ -558,8 +626,9 @@ and any patterns in RECIPE's `:exclude-files'."
                (when (file-exists-p pat) (list pat))))
            user-patterns))
          (doc-files
-          (seq-mapcat #'file-expand-wildcards elpaish-bundled-doc-patterns)))
-    (thread-last (append explicit-files doc-files)
+          (seq-mapcat #'file-expand-wildcards elpaish-bundled-doc-patterns))
+         (org-files (elpaish--collect-org-files repo-dir recipe)))
+    (thread-last (append explicit-files doc-files org-files)
       (seq-filter #'file-regular-p)
       (seq-remove (lambda (f)
                     (let ((base (file-name-nondirectory f)))
