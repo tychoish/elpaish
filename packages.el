@@ -145,6 +145,15 @@
  :keywords '("comm" "tools" "mcp" "rpc"))
 
 (elpaish-register-package
+ 'gen
+ (elpaish-recipe-path "https://github.com/tychoish/gen.el.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Generator iterators as lazy seq.el sequences"
+ :url "https://github.com/tychoish/gen.el"
+ :keywords '("extensions" "lisp" "sequences" "generators"))
+
+(elpaish-register-package
  'tailscale
  (elpaish-recipe-path "https://github.com/tychoish/tailscale.git")
  :branch "main"
