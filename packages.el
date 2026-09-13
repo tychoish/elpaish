@@ -114,5 +114,15 @@
  :url "https://github.com/tychoish/telega-bot"
  :keywords '("comm" "tools" "telegram"))
 
+(elpaish-register-package
+ 'ollama-tailnet
+ (elpaish-recipe-path "https://github.com/tychoish/ollama-tailnet.git")
+ :branch "main"
+ :test-dir "test"
+ :requires '(gptel annotated-completing-read transient)
+ :summary "Ollama tailnet orchestration, gptel integration, and model dashboard in Emacs"
+ :url "https://github.com/tychoish/ollama-tailnet"
+ :keywords '("hypermedia" "tools" "ai" "tailscale" "systemd" "gptel"))
+
 (provide 'packages)
 ;;; packages.el ends here
