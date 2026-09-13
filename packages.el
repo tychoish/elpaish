@@ -176,11 +176,11 @@
 
 (elpaish-register-package
  'tailscale
- (elpaish-recipe-path "https://github.com/tychoish/tailscale.git")
+ (elpaish-recipe-path "https://github.com/tychoish/tailscale.el.git")
  :branch "main"
  :test-dir "test"
  :summary "Tailscale CLI integration and network control"
- :url "https://github.com/tychoish/tailscale"
+ :url "https://github.com/tychoish/tailscale.el"
  :keywords '("comm" "network" "tools"))
 
 (elpaish-register-package
