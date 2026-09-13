@@ -9,6 +9,13 @@
 
 ;;; Code:
 
+(unless (macrop 'static-when)
+  (defmacro static-when (condition &rest body)
+    "A conditional compilation macro."
+    (declare (indent 1) (debug t))
+    (when (eval condition lexical-binding)
+      (cons 'progn body))))
+
 (let ((dir (file-name-directory (or load-file-name buffer-file-name default-directory))))
   (add-to-list 'load-path (expand-file-name "../pkg" dir))
   (add-to-list 'load-path (expand-file-name "../scripts" dir))
@@ -18,6 +25,13 @@
 ;; Initialize package infrastructure so dependencies installed by bootstrap-elpaish.el
 ;; or present in elpa/ are activated.
 (require 'package)
+
+(let ((ci-dir (expand-file-name "elpa-ci" default-directory)))
+  (when (file-directory-p ci-dir)
+    (setq package-user-dir ci-dir)
+    (dolist (d (file-expand-wildcards (expand-file-name "*" ci-dir)))
+      (when (file-directory-p d)
+        (add-to-list 'load-path d)))))
 
 (let* ((ci-elpa (expand-file-name "elpa-ci" default-directory))
        (local-elpa (expand-file-name "elpa" default-directory))

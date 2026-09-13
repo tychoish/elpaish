@@ -5,9 +5,22 @@
 
 ;;; Code:
 
+(unless (macrop 'static-when)
+  (defmacro static-when (condition &rest body)
+    "A conditional compilation macro."
+    (declare (indent 1) (debug t))
+    (when (eval condition lexical-binding)
+      (cons 'progn body))))
+
 (require 'package)
-(let* ((ci-elpa (expand-file-name "elpa-ci" default-directory))
-       (local-elpa (expand-file-name "elpa" default-directory))
+(let ((ci-dir (expand-file-name "elpa-ci" default-directory)))
+  (when (file-directory-p ci-dir)
+    (setq package-user-dir ci-dir)
+    (dolist (d (file-expand-wildcards (expand-file-name "*" ci-dir)))
+      (when (file-directory-p d)
+        (add-to-list 'load-path d)))))
+(let* ((local-elpa (expand-file-name "elpa" default-directory))
+       (ci-elpa (expand-file-name "elpa-ci" default-directory))
        (target-user-dir (cond
                          ((file-directory-p ci-elpa) ci-elpa)
                          ((file-directory-p local-elpa) local-elpa)

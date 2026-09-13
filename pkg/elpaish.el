@@ -43,9 +43,16 @@
 (require 'compile)
 (require 'web-server)
 
+(unless (macrop 'static-when)
+  (defmacro static-when (condition &rest body)
+    "A conditional compilation macro."
+    (declare (indent 1) (debug t))
+    (when (eval condition lexical-binding)
+      (cons 'progn body))))
+
 (require 'annotated-completing-read)
 (require 'htmlize)
-(require 'compat)
+(require 'compat nil t)
 (require 'transient)
 
 (require 'elpaish-check)
