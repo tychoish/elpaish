@@ -124,5 +124,15 @@
  :url "https://github.com/tychoish/ollama-tailnet"
  :keywords '("hypermedia" "tools" "ai" "tailscale" "systemd" "gptel"))
 
+(elpaish-register-package
+ 'arch
+ (elpaish-recipe-path "https://github.com/tychoish/arch.el.git")
+ :branch "main"
+ :test-dir "test"
+ :requires '(transient annotated-completing-read yaml compat)
+ :summary "Arch Linux package management UI, package sets, and ELPA manager in Emacs"
+ :url "https://github.com/tychoish/arch.el"
+ :keywords '("tools" "package" "arch" "elpa"))
+
 (provide 'packages)
 ;;; packages.el ends here
