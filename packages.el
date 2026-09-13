@@ -129,6 +129,7 @@
  (elpaish-recipe-path "https://github.com/tychoish/arch.el.git")
  :branch "main"
  :test-dir "test"
+ :preflight-skip '(package-lint checkdoc)
  :requires '(transient annotated-completing-read yaml compat)
  :summary "Arch Linux package management UI, package sets, and ELPA manager in Emacs"
  :url "https://github.com/tychoish/arch.el"

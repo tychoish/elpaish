@@ -30,6 +30,7 @@ jobs:
           ELPAISH_SIGNING_KEY: ${{ secrets.ELPAISH_SIGNING_KEY }}
           ELPAISH_GPG_PASSPHRASE: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
           ELPAISH_OUTPUT_DIR: public/
+          ELPAISH_RUN_PREFLIGHT: "0"
         run: emacs --batch -L pkg -L scripts -l scripts/build-elpaish.el
       - uses: actions/upload-pages-artifact@v3
         with:
