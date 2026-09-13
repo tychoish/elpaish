@@ -144,5 +144,15 @@
  :url "https://github.com/tychoish/mcpkit.el"
  :keywords '("comm" "tools" "mcp" "rpc"))
 
+(elpaish-register-package
+ 'org-docsgen
+ (elpaish-recipe-path "https://github.com/tychoish/org-docsgen.git")
+ :branch "main"
+ :test-dir "test"
+ :requires '(xtdlib compat)
+ :summary "Generate org API documentation from Emacs Lisp source"
+ :url "https://github.com/tychoish/org-docsgen"
+ :keywords '("docs" "lisp" "org" "tools"))
+
 (provide 'packages)
 ;;; packages.el ends here
