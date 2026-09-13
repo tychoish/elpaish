@@ -145,6 +145,16 @@
  :keywords '("comm" "tools" "mcp" "rpc"))
 
 (elpaish-register-package
+ 'eglot-test-at-point
+ (elpaish-recipe-path "https://github.com/tychoish/eglot-test-at-point.git")
+ :branch "main"
+ :test-dir "test"
+ :requires '(annotated-completing-read)
+ :summary "Test discovery and test runner at point for Eglot"
+ :url "https://github.com/tychoish/eglot-test-at-point"
+ :keywords '("tools" "languages" "eglot" "testing"))
+
+(elpaish-register-package
  'gen
  (elpaish-recipe-path "https://github.com/tychoish/gen.el.git")
  :branch "main"
