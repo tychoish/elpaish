@@ -145,6 +145,16 @@
  :keywords '("comm" "tools" "mcp" "rpc"))
 
 (elpaish-register-package
+ 'denote-notion
+ (elpaish-recipe-path "https://github.com/tychoish/denote-notion.git")
+ :branch "main"
+ :test-dir "test"
+ :requires '(denote annotated-completing-read)
+ :summary "Two-way sync between Denote notes and Notion pages"
+ :url "https://github.com/tychoish/denote-notion"
+ :keywords '("docs" "notion" "denote" "tools"))
+
+(elpaish-register-package
  'eglot-test-at-point
  (elpaish-recipe-path "https://github.com/tychoish/eglot-test-at-point.git")
  :branch "main"
