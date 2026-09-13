@@ -30,6 +30,7 @@
     (push pkg-dir load-path)))
 (require 'cl-lib)
 (require 'ert)
+(require 'compat)
 (require 'elpaish)
 (require 'elpaish-recipes)
 (require 'elpaish-website)

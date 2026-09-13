@@ -19,6 +19,13 @@
   (unless (bound-and-true-p package-archive-contents)
     (package-refresh-contents))
 
+  ;; Ensure compat is installed early
+  (unless (package-installed-p 'compat)
+    (condition-case nil
+        (package-install 'compat)
+      (error nil)))
+  (require 'compat nil t)
+
   ;; Load minimal installer and install dependencies for elpaish and all registered packages
   (let* ((pkg-dir (expand-file-name "pkg" default-directory))
          (main-file (expand-file-name "elpaish.el" pkg-dir)))
@@ -26,6 +33,7 @@
     (require 'elpaish-install)
     (elpaish-install-ensure-package-dependencies main-file)
     (package-initialize)
+    (require 'compat)
     (require 'elpaish)
     (require 'elpaish-recipes)
     (elpaish-load-packages)

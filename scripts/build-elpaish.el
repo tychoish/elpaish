@@ -34,6 +34,7 @@
   ;; Ensure current repository's pkg/ directory takes precedence over installed packages
   (let ((pkg-dir (expand-file-name "pkg" default-directory)))
     (setq load-path (cons pkg-dir (delete pkg-dir load-path))))
+  (require 'compat)
   (require 'elpaish)
   (require 'elpaish-recipes)
   (require 'elpaish-website)

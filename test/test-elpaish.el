@@ -19,6 +19,7 @@
   (when (file-directory-p pkg-dir)
     (setq load-path (cons (file-name-as-directory pkg-dir) load-path))))
 (require 'ert)
+(require 'compat)
 (require 'elpaish)
 (require 'elpaish-recipes)
 (require 'elpaish-check)
