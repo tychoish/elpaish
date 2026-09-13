@@ -145,6 +145,15 @@
  :keywords '("comm" "tools" "mcp" "rpc"))
 
 (elpaish-register-package
+ 'tailscale
+ (elpaish-recipe-path "https://github.com/tychoish/tailscale.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Tailscale CLI integration and network control"
+ :url "https://github.com/tychoish/tailscale"
+ :keywords '("comm" "network" "tools"))
+
+(elpaish-register-package
  'org-docsgen
  (elpaish-recipe-path "https://github.com/tychoish/org-docsgen.git")
  :branch "main"
