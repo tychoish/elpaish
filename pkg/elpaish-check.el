@@ -334,7 +334,7 @@ VERBOSE enables logging.  Return list of error strings."
       (push tf load-args))
     (setq load-args (nreverse load-args))
     (unwind-protect
-        (let* ((selector (format "\\`%s" (regexp-quote pkg-name)))
+                (let* ((selector (format "\\`%s" (regexp-quote pkg-name)))
                (args (append (list "-Q" "--batch")
                              load-args
                              (list "--eval"
@@ -342,6 +342,8 @@ VERBOSE enables logging.  Return list of error strings."
                (exit-code (apply #'call-process emacs-bin nil buf nil args))
                (output (with-current-buffer buf (buffer-string))))
           (unless (= exit-code 0)
+            (when verbose
+              (elpaish-check--log t "%s" output))
             (with-temp-buffer
               (insert output)
               (goto-char (point-min))
@@ -376,7 +378,7 @@ byte-compilation and tests."
          (pkg-file (or (and main-file (expand-file-name main-file package-dir))
                        (seq-find (lambda (f)
                                    (string= (file-name-sans-extension (file-name-nondirectory f))
-                                            dir-pkg-name))
+                                            (file-name-sans-extension dir-pkg-name)))
                                  pkg-files)
                        (car pkg-files)))
          (pkg-name-str (or (and pkg-file (file-name-sans-extension (file-name-nondirectory pkg-file)))
@@ -539,6 +541,22 @@ Only applies when the current buffer or DIR belongs to a project with .el files.
   (add-hook 'emacs-lisp-mode-hook #'elpaish-check-setup-compile-command)
   (add-hook 'find-file-hook #'elpaish-check-maybe-setup-builder)
   (message "ELPAish builder command enabled for Emacs Lisp files."))
+
+
+;;;###autoload
+(defun elpaish-test-package-batch (&optional dir)
+  "Batch test runner for package in DIR (defaults to `default-directory').
+Initializes `package.el', resolves package dependencies via `Package-Requires'
+headers, and executes ERT test suites, exiting with 0 on success and 1 on error."
+  (let* ((package-dir (expand-file-name (or dir default-directory)))
+         (default-directory package-dir))
+    (require 'package)
+    (package-initialize)
+    (when (fboundp 'elpaish-install-ensure-package-dependencies)
+      (elpaish-install-ensure-package-dependencies package-dir))
+    (let* ((res (elpaish-check-package package-dir :skip-checks '(parens checkdoc package-lint byte-compile) :verbose t))
+           (passed (plist-get res :passed)))
+      (kill-emacs (if passed 0 1)))))
 
 (provide 'elpaish-check)
 
