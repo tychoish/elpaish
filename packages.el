@@ -134,5 +134,15 @@
  :url "https://github.com/tychoish/arch.el"
  :keywords '("tools" "package" "arch" "elpa"))
 
+(elpaish-register-package
+ 'mcpkit
+ (elpaish-recipe-path "https://github.com/tychoish/mcpkit.el.git")
+ :branch "main"
+ :test-dir "test"
+ :requires '(web-server compat)
+ :summary "Model Context Protocol (MCP) service framework"
+ :url "https://github.com/tychoish/mcpkit.el"
+ :keywords '("comm" "tools" "mcp" "rpc"))
+
 (provide 'packages)
 ;;; packages.el ends here
