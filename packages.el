@@ -104,5 +104,15 @@
  :url "https://github.com/tychoish/elpaish"
  :keywords '("tools" "elpa" "package" "distribution"))
 
+(elpaish-register-package
+ 'telega-bot
+ (elpaish-recipe-path "https://github.com/tychoish/telega-bot.git")
+ :branch "main"
+ :test-dir "test"
+ :requires '(telega alert)
+ :summary "High-level event-driven Telegram Bot engine with Telega"
+ :url "https://github.com/tychoish/telega-bot"
+ :keywords '("comm" "tools" "telegram"))
+
 (provide 'packages)
 ;;; packages.el ends here
