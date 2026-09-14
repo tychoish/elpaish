@@ -1515,6 +1515,28 @@ source's last commit time rather than the time of the build."
        (should refresh-called)
        (should (equal upgraded-log '(upgrade-pkg)))))))
 
+(ert-deftest elpaish-test-install-packages-noop-when-installed ()
+  "Test `elpaish-install-packages' is a silent no-op when all packages are already installed."
+  (elpaish-test-with-temp-env
+   (let ((installed-log nil)
+         (refresh-called nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) t))
+               ((symbol-function 'package-install) (lambda (pkg) (push pkg installed-log)))
+               ((symbol-function 'package-refresh-contents) (lambda () (setq refresh-called t))))
+       (let ((res (elpaish-install-packages 'pkg-a 'pkg-b)))
+         (should-not res)
+         (should-not installed-log)
+         (should-not refresh-called))))))
+
+(ert-deftest elpaish-test-install-packages-nested-lists ()
+  "Test `elpaish-install-packages' flattens nested package lists and deduplicates."
+  (elpaish-test-with-temp-env
+   (let ((installed-log nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
+               ((symbol-function 'package-install) (lambda (pkg) (push pkg installed-log))))
+       (elpaish-install-packages 'pkg-a '((pkg-b (pkg-c))) 'pkg-a)
+       (should (equal installed-log '(pkg-c pkg-b pkg-a)))))))
+
 (ert-deftest elpaish-test-add-bootstrap-packages ()
   "Test `elpaish-install-add-bootstrap-packages' appends unique symbols."
   (elpaish-test-with-temp-env
@@ -1570,6 +1592,82 @@ source's last commit time rather than the time of the build."
        (elpaish-install-packages :async t :callback (lambda (_) (setq callback-called t)))
        (should reloaded)
        (should callback-called)))))
+
+(ert-deftest elpaish-test-install-packages-async-noop-when-installed ()
+  "Test `elpaish-install-packages' async is a no-op when all packages are installed."
+  (elpaish-test-with-temp-env
+   (let ((callback-called nil)
+         (callback-result 'unset))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) t)))
+       (elpaish-install-packages 'pkg-a 'pkg-b
+                                 :async t
+                                 :callback (lambda (res)
+                                             (setq callback-called t)
+                                             (setq callback-result res)))
+       (should callback-called)
+       (should-not callback-result)))))
+
+(ert-deftest elpaish-test-install-packages-async-fallback-timer ()
+  "Test `elpaish-install-packages' async path falls back to `run-at-time' when sprite unavailable."
+  (elpaish-test-with-temp-env
+   (let ((timer-called nil)
+         (callback-called nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
+               ((symbol-function 'require)
+                (lambda (feature &optional filename noerror)
+                  (if (memq feature '(sprite sprite-fleet))
+                      nil
+                    (apply #'require feature filename noerror))))
+               ((symbol-function 'run-at-time)
+                (lambda (_secs _repeat fn)
+                  (setq timer-called t)
+                  (funcall fn)))
+               ((symbol-function 'elpaish-install--do-packages)
+                (lambda (pkgs &rest _)
+                  (mapcar (lambda (p) (list :status :installed :pkg p)) pkgs))))
+       (elpaish-install-packages 'pkg-a :async t :callback (lambda (_) (setq callback-called t)))
+       (should timer-called)
+       (should callback-called)))))
+
+(ert-deftest elpaish-test-upgrade-packages-alias-and-execution ()
+  "Test `elpaish-upgrade-packages' alias calls upgrade sequence properly."
+  (elpaish-test-with-temp-env
+   (let ((upgraded nil)
+         (refresh-called nil))
+     (cl-letf (((symbol-function 'package-refresh-contents) (lambda () (setq refresh-called t)))
+               ((symbol-function 'package-installed-p) (lambda (_) t))
+               ((symbol-function 'package-upgrade) (lambda (p) (push p upgraded))))
+       (elpaish-upgrade-packages 'pkg-a 'pkg-b)
+       (should refresh-called)
+       (should (equal upgraded '(pkg-b pkg-a)))))))
+
+(ert-deftest elpaish-test-add-bootstrap-packages-nested-and-dedup ()
+  "Test `elpaish-install-add-bootstrap-packages' flattens arbitrary nesting and dedups."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-install-bootstrap-packages '(pkg-a pkg-b)))
+     (elpaish-install-add-bootstrap-packages '((pkg-c (pkg-d pkg-a)) "non-symbol" nil (pkg-e (pkg-b pkg-f))))
+     (should (equal elpaish-install-bootstrap-packages '(pkg-a pkg-b pkg-c pkg-d pkg-e pkg-f))))))
+
+(ert-deftest elpaish-test-process-package-legacy-upgrade ()
+  "Test `elpaish-install--process-package' upgrade path when `package-upgrade' is unbound."
+  (elpaish-test-with-temp-env
+   (let* ((desc-old-inst (package-desc-create :name 'pkg-old :version '(1 0 0)))
+          (desc-old-arch (package-desc-create :name 'pkg-old :version '(2 0 0)))
+          (desc-cur-inst (package-desc-create :name 'pkg-cur :version '(1 0 0)))
+          (desc-cur-arch (package-desc-create :name 'pkg-cur :version '(1 0 0)))
+          (package-alist `((pkg-old ,desc-old-inst) (pkg-cur ,desc-cur-inst)))
+          (package-archive-contents `((pkg-old ,desc-old-arch) (pkg-cur ,desc-cur-arch)))
+          (installed-log nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (p) (memq p '(pkg-old pkg-cur))))
+               ((symbol-function 'fboundp) (lambda (fn) (if (eq fn 'package-upgrade) nil (fboundp fn))))
+               ((symbol-function 'package-install) (lambda (p) (push p installed-log))))
+       ;; pkg-old has newer version in archive -> should install
+       (let ((res (elpaish-install--process-package 'pkg-old 'upgrade)))
+         (should (equal (plist-get res :status) :upgraded))
+         (should (equal installed-log '(pkg-old))))
+       ;; pkg-cur has same version -> up to date
+       (let ((res (elpaish-install--process-package 'pkg-cur 'upgrade)))
+         (should (equal (plist-get res :status) :up-to-date)))))))
 
 (ert-deftest elpaish-test-ensure-package-dependencies ()
   "Test `elpaish-install-ensure-package-dependencies' implicitly installs missing header dependencies."
