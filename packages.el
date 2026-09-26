@@ -18,11 +18,11 @@
 
 (elpaish-register-package
  'hitl
- (elpaish-recipe-path "https://github.com/tychoish/hitl.el.git")
+ (elpaish-recipe-path "https://github.com/tychoish/hitl.git")
  :branch "main"
  :test-dir "test"
  :summary "Universal Human-in-the-Loop interaction engine for Emacs"
- :url "https://github.com/tychoish/hitl.el"
+ :url "https://github.com/tychoish/hitl"
  :keywords '("tools" "convenience"))
 
 (elpaish-register-package
