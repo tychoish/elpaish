@@ -17,6 +17,25 @@
  :keywords '("convenience" "completion" "matching"))
 
 (elpaish-register-package
+ 'hitl
+ (elpaish-recipe-path "https://github.com/tychoish/hitl.el.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Universal Human-in-the-Loop interaction engine for Emacs"
+ :url "https://github.com/tychoish/hitl.el"
+ :keywords '("tools" "convenience"))
+
+(elpaish-register-package
+ 'agent-shell-prompt
+ (elpaish-recipe-path "https://github.com/tychoish/agent-shell-prompt.git")
+ :branch "main"
+ :test-dir "test"
+ :requires '(agent-shell transient annotated-completing-read)
+ :summary "Dynamic prompt composition and template library for agent-shell"
+ :url "https://github.com/tychoish/agent-shell-prompt"
+ :keywords '("tools" "agent-shell"))
+
+(elpaish-register-package
  'agent-shell-queue
  (elpaish-recipe-path "https://github.com/tychoish/agent-shell-queue.git")
  :branch "main"
