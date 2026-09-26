@@ -165,6 +165,16 @@
  :keywords '("comm" "tools" "mcp" "rpc"))
 
 (elpaish-register-package
+ 'denote-mcp
+ (elpaish-recipe-path "https://github.com/tychoish/denote-mcp.git")
+ :branch "main"
+ :test-dir "test"
+ :requires '(mcpkit denote)
+ :summary "Denote knowledge-base integration for Model Context Protocol (MCP)"
+ :url "https://github.com/tychoish/denote-mcp"
+ :keywords '("tools" "mcp" "denote" "notes"))
+
+(elpaish-register-package
  'denote-notion
  (elpaish-recipe-path "https://github.com/tychoish/denote-notion.git")
  :branch "main"
