@@ -62,9 +62,9 @@ API documentation for user-facing commands, registration functions, and configur
 :CUSTOM_ID: elpaish-register-package
 :END:
 
-: (fn NAME REPOSITORY-PATH &key BRANCH (FILES '("*.el")) EXCLUDE-FILES EXCLUDE SOURCE-DIRECTORY-PATH TEST-DIRECTORY-PATH SOURCE-DIR TEST-DIR PREFLIGHT-SKIP EXTERNAL EXTERNAL-P THIRD-PARTY FORK FORK-P ORIGIN SUMMARY URL DOC KEYWORDS REQUIRES DISABLED-STREAMS SUPPRESS-STREAMS DOCS-URL (ORG-FILES :default) (INCLUDE-ORG :default) ORG-EXCLUDE &allow-other-keys)
+: (fn NAME REPOSITORY-PATH &key BRANCH (FILES '("*.el")) EXCLUDE-FILES EXCLUDE SOURCE-DIRECTORY-PATH TEST-DIRECTORY-PATH SOURCE-DIR TEST-DIR PREFLIGHT-SKIP INFO-SKIP INFO-FILES EXTERNAL EXTERNAL-P THIRD-PARTY FORK FORK-P ORIGIN SUMMARY URL DOC KEYWORDS REQUIRES DISABLED-STREAMS SUPPRESS-STREAMS DOCS-URL (ORG-FILES :default) (INCLUDE-ORG :default) ORG-EXCLUDE &allow-other-keys)
 
-Register package /NAME/ with /REPOSITORY-PATH/ (local directory or Git /URL/). /BRANCH/ defaults to ~elpaish-default-branch~ and FILES to '("*.el"). /SOURCE-DIRECTORY-PATH/ (or /SOURCE-DIR/) is the subdirectory within /REPOSITORY-PATH/ holding the package (default "."), for monorepos or nested folders. /TEST-DIRECTORY-PATH/ (or /TEST-DIR/) is an optional custom test directory path. /EXCLUDE-FILES/ (or /EXCLUDE/) is an optional list of file patterns to exclude. /PREFLIGHT-SKIP/ is t (or 't) to skip all checks, or a list of check symbols to bypass during preflight. /DISABLED-STREAMS/ (or /SUPPRESS-STREAMS/) is a list of suppressed stream symbols. /DOC/ (or /DOCS-URL/) is an optional /URL/ or path to documentation. ORG-FILES (or INCLUDE-ORG) controls org docs inclusion (t, nil, or list of patterns). /ORG-EXCLUDE/ adds patterns to exclude from org documentation. /SUMMARY/, /URL/, /KEYWORDS/, and /REQUIRES/ provide package metadata.
+Register package /NAME/ with /REPOSITORY-PATH/ (local directory or Git /URL/). /BRANCH/ defaults to ~elpaish-default-branch~ and FILES to '("*.el"). /SOURCE-DIRECTORY-PATH/ (or /SOURCE-DIR/) is the subdirectory within /REPOSITORY-PATH/ holding the package (default "."), for monorepos or nested folders. /TEST-DIRECTORY-PATH/ (or /TEST-DIR/) is an optional custom test directory path. /EXCLUDE-FILES/ (or /EXCLUDE/) is an optional list of file patterns to exclude. /PREFLIGHT-SKIP/ is t (or 't) to skip all checks, or a list of check symbols to bypass during preflight. /INFO-FILES/ (or /INFO-DOC/, /INFO-DOCS/, /INFO-MANUAL/, /INFO-MANUALS/) opts into Info manual generation; specify a file string, list of file strings, or t. /INFO-SKIP/ is a boolean; when non-nil, suppresses Info manual generation for this package. /DISABLED-STREAMS/ (or /SUPPRESS-STREAMS/) is a list of suppressed stream symbols. /DOC/ (or /DOCS-URL/) is an optional /URL/ or path to documentation. ORG-FILES (or INCLUDE-ORG) controls org docs inclusion (t, nil, or list of patterns). /ORG-EXCLUDE/ adds patterns to exclude from org documentation. /SUMMARY/, /URL/, /KEYWORDS/, and /REQUIRES/ provide package metadata.
 
 ** [[file:../pkg/elpaish-recipes.el::53][elpaish-recipe-path]]
 :PROPERTIES:
@@ -134,6 +134,13 @@ Interactively build and sign a single package RECIPE-OR-NAME for STREAM. OUTPUT-
 :END:
 
 Re-run ~elpaish-build-all~ from the build compilation buffer.
+
+** elpaish-generate-info-manuals
+:PROPERTIES:
+:CUSTOM_ID: elpaish-generate-info-manuals
+:END:
+
+When non-nil, generate Info manuals and dir index from Org/Texinfo doc files during package builds.
 
 ** elpaish-output-dir
 :PROPERTIES:

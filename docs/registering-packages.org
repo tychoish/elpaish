@@ -85,6 +85,8 @@ Package recipes are declared in =packages.el=. Below is an annotated registratio
 | ~:requires~         | list of symbols/pairs | =nil=       | Explicit dependencies to inject into package headers                  |
 | ~:disabled-streams~ | list of symbols       | =nil=       | Release streams to omit (~snapshot~, ~stable~, ~staging~)             |
 | ~:preflight-skip~   | boolean or list       | =nil=       | Checks to skip (~checkdoc~, ~package-lint~, ~ert~, etc.) or ~t~ (all) |
+| ~:info-files~       | string, list, boolean | =nil=       | Opt-in file(s) for Info manual generation (~"docs/pkg.org"~, list, or ~t~) |
+| ~:info-skip~        | boolean               | =nil=       | Non-nil to skip Info manual generation (override)                     |
 | ~:summary~          | string                | derived     | Brief single-line package summary                                     |
 | ~:url~              | string                | derived     | Upstream homepage or repository URL                                   |
 | ~:keywords~         | list of strings       | derived     | Topics/keywords for search index and HTML catalog                     |
@@ -106,6 +108,31 @@ When ELPAish builds an artifact:
   included, ELPAish bundles the files into a standard multi-file tarball
   (=<name>-<version>.tar=) with an auto-generated package description
   descriptor.
+
+** Documentation & Info Manual Generation
+:PROPERTIES:
+:CUSTOM_ID: documentation-and-info-manual-generation
+:END:
+
+Info manual generation in ELPAish is *opt-in*. By default, documentation files (such as =README.org= or files in a =docs/= directory) are bundled into the package archive as regular source files without conversion.
+
+A package opts into GNU Info manual generation by specifying ~:info-files~ (or aliases ~:info-doc~ / ~:info-manual~):
+
+#+BEGIN_SRC emacs-lisp
+(elpaish-register-package
+ 'magit-dash
+ (elpaish-recipe-path "https://github.com/tychoish/magit-dash.git")
+ :branch "main"
+ :files '("magit-dash.el" "magit-dash-faces.el" "README.org")
+ :info-files "docs/magit-dash.org")
+#+END_SRC
+
+- *Targeted conversion*: You can specify a single file string (e.g. ~"docs/manual.org"~), a list of file strings (e.g. ~'("docs/manual.org" "docs/guide.org")~), or ~t~ to convert all documentation files in ~:files~.
+- *Preservation of other documentation*: Files not specified in ~:info-files~ (such as =README.org=) remain untouched in the package tarball as raw files. The converted files are replaced with the generated =.info= manual and top-level =dir= index.
+- *Conversion pipeline*: Org files are exported to Texinfo format via ~ox-texinfo~, compiled to =.info= using ~makeinfo~, and indexed into =dir= using ~install-info~ via ~package-build.el~.
+- *Opt-out override*: If needed, ~:info-skip t~ can be set to override and bypass conversion.
+- *Global toggle*: Manual generation across all packages can be globally disabled by setting ~elpaish-generate-info-manuals~ to =nil=.
+- *Prerequisites*: Requires ~texinfo~ (~makeinfo~ and ~install-info~) installed on the host or build container. If missing, a warning is logged once per build run and documentation files are preserved as-is.
 
 ** Local Checkouts and Recipe Path Resolution
 :PROPERTIES:

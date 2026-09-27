@@ -25,6 +25,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: Ensure texinfo tools are installed
+        run: which makeinfo >/dev/null 2>&1 || (apt-get update && apt-get install -y texinfo)
       - run: emacs --batch -l scripts/bootstrap-elpaish.el
       - env:
           ELPAISH_SIGNING_KEY: ${{ secrets.ELPAISH_SIGNING_KEY }}

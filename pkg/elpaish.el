@@ -4,7 +4,7 @@
 ;; Version: 0.1.0
 ;; URL: https://github.com/tychoish/elpaish
 ;; Keywords: maint, tools, local, package, elpa
-;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (compat "30.0.0.0") (htmlize "1.34") (map "3.0") (modus-themes "4.0.0") (seq "2.0") (web-server "0.1.2") (transient "0.8.0"))
+;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (compat "30.0.0.0") (htmlize "1.34") (map "3.0") (modus-themes "4.0.0") (package-build "0.1") (seq "2.0") (web-server "0.1.2") (transient "0.8.0"))
 
 ;;; Commentary:
 ;; ELPAish is a toolkit for building (and a prototype application of) an
@@ -70,6 +70,7 @@
 (require 'annotated-completing-read)
 (require 'htmlize)
 (require 'compat nil t)
+(require 'package-build)
 (require 'transient)
 
 (require 'elpaish-check)
@@ -130,6 +131,11 @@ or `elpaish-staging' (pre-release tags and git describe)."
   :type 'boolean
   :group 'elpaish)
 
+(defcustom elpaish-generate-info-manuals t
+  "When non-nil, generate Info manuals and dir index from Org/Texinfo doc files."
+  :type 'boolean
+  :group 'elpaish)
+
 (defcustom elpaish-default-branch "main"
   "Default Git branch to track for recipes that do not specify one."
   :type 'string
@@ -155,6 +161,8 @@ or `elpaish-staging' (pre-release tags and git describe)."
   (source-directory-path "." :type string :documentation "Subdirectory within REPOSITORY-PATH holding the package source.")
   (test-directory-path nil :type (choice null string) :documentation "Optional custom test directory path.")
   (preflight-skip nil :type (choice boolean list) :documentation "Checks to skip in preflight.")
+  (info-files nil :type (choice null boolean string list) :documentation "Opt-in documentation file or list of files for Info manual generation.")
+  (info-skip nil :type boolean :documentation "When non-nil, skip generation of Info manual for this package.")
   (disabled-streams nil :type list :documentation "List of stream symbols where this package is suppressed/disabled.")
   (external-p nil :type boolean :documentation "Non-nil if package is externally maintained.")
   (fork-p nil :type boolean :documentation "Non-nil if package is a maintained fork.")
@@ -214,6 +222,12 @@ publishing an incomplete archive.")
                                     source-dir
                                     test-dir
 				    preflight-skip
+                                    info-skip
+                                    info-files
+                                    info-doc
+                                    info-docs
+                                    info-manual
+                                    info-manuals
                                     external
                                     external-p
                                     third-party
@@ -241,6 +255,10 @@ TEST-DIRECTORY-PATH (or TEST-DIR) is an optional custom test directory path.
 EXCLUDE-FILES (or EXCLUDE) is an optional list of file patterns to exclude.
 PREFLIGHT-SKIP is t (or \\='t) to skip all checks, or a list of check
 symbols to bypass during preflight.
+INFO-FILES (or INFO-DOC, INFO-DOCS, INFO-MANUAL, INFO-MANUALS) opts into
+Info manual generation; specify a file string, list of file strings, or t.
+INFO-SKIP is a boolean; when non-nil, suppresses Info manual generation
+for this package.
 DISABLED-STREAMS (or SUPPRESS-STREAMS) is a list of suppressed stream symbols.
 DOC (or DOCS-URL) is an optional URL or path to documentation.
 ORG-FILES (or INCLUDE-ORG) controls org docs inclusion (t, nil, or list of patterns).
@@ -266,6 +284,13 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                             (is-third-party 'third-party)
                             (origin origin)
                             (t 'tychoish)))
+         (raw-info (or info-files info-doc info-docs info-manual info-manuals))
+         (resolved-info-files (cond
+                               ((null raw-info) nil)
+                               ((eq raw-info t) t)
+                               ((stringp raw-info) (list raw-info))
+                               ((listp raw-info) raw-info)
+                               (t nil)))
          (resolved-org (cond
                         ((not (eq include-org :default)) include-org)
                         ((not (eq org-files :default)) org-files)
@@ -287,6 +312,8 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                   :source-directory-path effective-source
                   :test-directory-path effective-test
                   :preflight-skip preflight-skip
+                  :info-skip (and info-skip t)
+                  :info-files resolved-info-files
                   :external-p (and (or is-third-party is-fork (not (eq effective-origin 'tychoish))) t)
                   :fork-p is-fork
                   :origin effective-origin
@@ -647,6 +674,11 @@ and any patterns in RECIPE's `:exclude-files'."
          (sibling-mains (elpaish--sibling-main-files recipe))
          (user-patterns (or patterns '("*.el")))
          (exclude-patterns (when recipe (elpaish-recipe-exclude-files recipe)))
+         (info-files-input (when recipe (elpaish-recipe-info-files recipe)))
+         (explicit-info-files
+          (when (and info-files-input (not (eq info-files-input t)))
+            (seq-filter #'file-exists-p
+                        (if (listp info-files-input) info-files-input (list info-files-input)))))
          (explicit-files
           (seq-mapcat
            (lambda (pat)
@@ -657,7 +689,7 @@ and any patterns in RECIPE's `:exclude-files'."
          (doc-files
           (seq-mapcat #'file-expand-wildcards elpaish-bundled-doc-patterns))
          (org-files (elpaish--collect-org-files repo-dir recipe)))
-    (thread-last (append explicit-files doc-files org-files)
+    (thread-last (append explicit-files explicit-info-files doc-files org-files)
       (seq-filter #'file-regular-p)
       (seq-remove (lambda (f)
                     (let ((base (file-name-nondirectory f)))
@@ -703,11 +735,33 @@ VERSION, SUMMARY, REQS, URL, and KEYWORDS provide the descriptor metadata."
         (insert (format "  %s" (mapconcat (lambda (x) (format "%S" x)) extra-kws " "))))
       (insert ")\n"))))
 
+(defvar elpaish--texinfo-warned nil
+  "Non-nil if missing texinfo tools warning has already been logged.")
+
+(defun elpaish--texinfo-available-p ()
+  "Return non-nil if both makeinfo and install-info executables exist in `exec-path'."
+  (and (executable-find "makeinfo")
+       (executable-find "install-info")))
+
+(defun elpaish--check-texinfo-prerequisites ()
+  "Warn if texinfo executables are missing and info generation is enabled."
+  (when (and elpaish-generate-info-manuals
+             (not elpaish--texinfo-warned)
+             (not (elpaish--texinfo-available-p)))
+    (setq elpaish--texinfo-warned t)
+    (elpaish--log "Warning: `texinfo' (makeinfo/install-info) not found in PATH; info manual generation will be skipped.")))
+
+(defun elpaish--files-as-package-build-alist (files)
+  "Convert list of relative file paths FILES into a package-build (SRC . REL) alist."
+  (mapcar (lambda (f) (cons f f)) files))
+
 (cl-defun elpaish--create-tar-package (repo-dir dest-file pkg-name-ver name files
-                                                 &key version summary reqs url keywords)
+                                                 &key version summary reqs url keywords
+                                                 recipe info-files info-skip)
   "Create a tar package at DEST-FILE for FILES in REPO-DIR named PKG-NAME-VER.
 NAME is the package's base name.  VERSION, SUMMARY, REQS, URL, and KEYWORDS
-are forwarded to `elpaish--generate-pkg-file' for the bundled descriptor."
+are forwarded to `elpaish--generate-pkg-file' for the bundled descriptor.
+RECIPE or INFO-SKIP governs whether Info manual generation runs."
   (let* ((temp-dir (make-temp-file "elpaish-pkg-" t))
          (pkg-subdir (expand-file-name pkg-name-ver temp-dir)))
     (unwind-protect
@@ -721,6 +775,61 @@ are forwarded to `elpaish--generate-pkg-file' for the bundled descriptor."
           (elpaish--generate-pkg-file (expand-file-name (format "%s-pkg.el" name) pkg-subdir) name
                                        :version version :summary summary :reqs reqs
                                        :url url :keywords keywords)
+          ;; Build-time Info manual generation via package-build.el (opt-in)
+          (let* ((rec-info (if recipe (elpaish-recipe-info-files recipe) info-files))
+                 (skip (or (and recipe (elpaish-recipe-info-skip recipe)) info-skip))
+                 (doc-files
+                  (when (and elpaish-generate-info-manuals
+                             (not skip)
+                             rec-info)
+                    (if (eq rec-info t)
+                        (seq-filter (lambda (f)
+                                      (member (file-name-extension f) '("org" "texi" "texinfo")))
+                                    files)
+                      (let ((specified (mapcar (lambda (f) (string-trim (if (symbolp f) (symbol-name f) f)))
+                                               (if (listp rec-info) rec-info (list rec-info)))))
+                        (seq-filter (lambda (f)
+                                      (or (member f specified)
+                                          (member (file-name-nondirectory f) specified)
+                                          (member (file-relative-name f) specified)))
+                                    files))))))
+            (when doc-files
+              (if (not (elpaish--texinfo-available-p))
+                  (elpaish--check-texinfo-prerequisites)
+                (let* ((doc-staging (expand-file-name "doc-staging" temp-dir))
+                       (org-files (seq-filter (lambda (f) (string-suffix-p ".org" f)) doc-files))
+                       (rcp (make-instance 'package-recipe
+                                           :name (if (symbolp name) (symbol-name name) name)
+                                           :org-exports (or org-files doc-files)))
+                       (package-build-run-recipe-org-exports t)
+                       (package-build--use-sandbox nil)
+                       (package-build-archive-dir temp-dir)
+                       (default-directory doc-staging))
+                  (make-directory doc-staging t)
+                  (dolist (df doc-files)
+                    (let ((src (expand-file-name df pkg-subdir))
+                          (dst (expand-file-name df doc-staging)))
+                      (when (file-exists-p src)
+                        (make-directory (file-name-directory dst) t)
+                        (copy-file src dst t))))
+                  (with-demoted-errors "Info generation error: %S"
+                    (package-build--generate-info-files
+                     rcp
+                     (elpaish--files-as-package-build-alist doc-files)
+                     pkg-subdir))
+                  ;; Clean up converted source doc files from pkg-subdir so only
+                  ;; the generated .info and dir files are bundled into the tarball.
+                  (dolist (df doc-files)
+                    (let ((copied-doc (expand-file-name df pkg-subdir)))
+                      (when (file-exists-p copied-doc)
+                        (delete-file copied-doc)
+                        (let ((parent (file-name-directory copied-doc)))
+                          (while (and (not (equal (directory-file-name parent)
+                                                  (directory-file-name pkg-subdir)))
+                                      (file-directory-p parent)
+                                      (null (directory-files parent nil "^[^.]" t)))
+                            (delete-directory parent)
+                            (setq parent (file-name-directory (directory-file-name parent))))))))))))
           (let ((default-directory temp-dir))
             (call-process "tar" nil nil nil "-cf" dest-file pkg-name-ver)))
       (delete-directory temp-dir t))))
@@ -747,7 +856,7 @@ are forwarded to `elpaish--generate-pkg-file' for the bundled descriptor."
           ;; Known external/MELPA package dependencies fallback
           (memq sym '(agent-shell alert request transient magit projectile htmlize web-server
                                  modus-themes compat package-lint async dash s f yaml markdown-mode
-                                 ht kv llama tempel consult embark marshal))))))
+                                 ht kv llama tempel consult embark marshal package-build package-recipe))))))
 
 (defun elpaish--recipe-provided-features (recipe)
   "Return list of feature/package symbols provided internally by RECIPE."
@@ -1287,7 +1396,8 @@ Version numbers still track the source's last commit (see
           (if is-tar
               (elpaish--create-tar-package repo-dir dest-file pkg-name-ver name files
                                             :version version-str :summary summary
-                                            :reqs reqs :url url :keywords keywords)
+                                            :reqs reqs :url url :keywords keywords
+                                            :recipe recipe)
             (write-region (point-min) (point-max) dest-file nil 'silent)))
 
         ;; 4. Sign artifact and write SHA256 checksum file
@@ -1360,6 +1470,8 @@ on every call; see `elpaish-build-package'."
   (interactive)
   (clrhash elpaish--resolved-repo-path-cache)
   (clrhash elpaish--preflight-cache)
+  (setq elpaish--texinfo-warned nil)
+  (elpaish--check-texinfo-prerequisites)
   (let* ((effective-mode (or mode elpaish-release-mode))
          (target-root (or output-directory-path elpaish-output-dir))
          (streams (if (eq effective-mode 'all)

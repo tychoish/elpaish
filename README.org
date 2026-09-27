@@ -144,6 +144,8 @@ Below is a complete ~use-package~ configuration setting standard options, defaul
   signatures are generated for archive files and =archive-contents=.
 - *Local Search Roots*: [[file:docs/api.org::#elpaish-recipe-local-search-dirs][~elpaish-recipe-local-search-dirs~]] lists directories
   checked by [[file:docs/api.org::#elpaish-recipe-path][~elpaish-recipe-path~]] before falling back to remote Git checkouts.
+- *Info Manual Generation*: [[file:docs/api.org::#elpaish-generate-info-manuals][~elpaish-generate-info-manuals~]] toggles build-time
+  compilation of Org and Texinfo documentation into Info manuals and merged ~dir~ files for recipes opting in via ~:info-files~ (requires system ~texinfo~).
 
 * Core Workflows
 :PROPERTIES:
@@ -153,7 +155,7 @@ Below is a complete ~use-package~ configuration setting standard options, defaul
 1. *Registering Packages*: Declare package recipes in =packages.el= with
    [[file:docs/api.org::#elpaish-register-package][~elpaish-register-package~]]. ELPAish handles single-file vs multi-file tarball
    packaging, local directory resolution via [[file:docs/api.org::#elpaish-recipe-path][~elpaish-recipe-path~]], and monorepo
-   discovery with [[file:docs/api.org::#elpaish-discover-recipes][~elpaish-discover-recipes~]].
+   discovery with [[file:docs/api.org::#elpaish-discover-recipes][~elpaish-discover-recipes~]], and opt-in Info manual compilation for specified documentation files via ~:info-files~.
 2. *Spinning Up and Hosting an Archive*: Configure headless batch runners with
    [[file:docs/api.org::#elpaish-build-all][~elpaish-build-all~]], initialize signing via [[file:docs/api.org::#elpaish-init-signing-from-env][~elpaish-init-signing-from-env~]],
    preview locally with [[file:docs/api.org::#elpaish-serve-local][~elpaish-serve-local~]], and publish to GitHub Pages using
@@ -242,6 +244,7 @@ available in the [[file:docs/api.org][API Reference]].
 | [[file:docs/api.org::#elpaish-sign-packages][~elpaish-sign-packages~]]            | Option   | Boolean flag indicating whether to create OpenPGP signatures            |
 | [[file:docs/api.org::#elpaish-base-url][~elpaish-base-url~]]                 | Option   | Canonical public base URL for published archive                         |
 | [[file:docs/api.org::#elpaish-recipe-local-search-dirs][~elpaish-recipe-local-search-dirs~]] | Option   | Directory roots searched for local repository checkouts                 |
+| [[file:docs/api.org::#elpaish-generate-info-manuals][~elpaish-generate-info-manuals~]]    | Option   | Toggle build-time Org/Texinfo Info manual generation                    |
 
 * Related Packages
 :PROPERTIES:

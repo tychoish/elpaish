@@ -640,6 +640,8 @@
      ;; Create pkg-a which optionally requires pkg-b
      (with-temp-file (expand-file-name "pkg-a.el" pkg-a-dir)
        (insert ";;; pkg-a.el --- Pkg A -*- lexical-binding: t; -*-\n")
+       (insert ";;; Version: 1.0.0\n")
+       (insert ";;; URL: https://example.com/pkg-a\n")
        (insert ";;; Commentary:\n;; Pkg A commentary.\n")
        (insert ";;; Code:\n")
        (insert "(require 'pkg-b nil t)\n")
@@ -650,6 +652,8 @@
      ;; Create pkg-b which requires external agent-shell
      (with-temp-file (expand-file-name "pkg-b.el" pkg-b-dir)
        (insert ";;; pkg-b.el --- Pkg B -*- lexical-binding: t; -*-\n")
+       (insert ";;; Version: 1.0.0\n")
+       (insert ";;; URL: https://example.com/pkg-b\n")
        (insert ";;; Package-Requires: ((agent-shell \"1.0\"))\n")
        (insert ";;; Commentary:\n;; Pkg B commentary.\n")
        (insert ";;; Code:\n")
@@ -1732,8 +1736,6 @@ source's last commit time rather than the time of the build."
          (should (equal (elpaish-recipe-url recipe) "https://example.com/asset"))
          (should (equal (elpaish-recipe-keywords recipe) '("assets"))))))))
 
-(provide 'test-elpaish)
-;;; test-elpaish.el ends here
 
 (ert-deftest elpaish-test-package-origin-labels-and-column ()
   "Test origin classification and rendering for fork, third-party, and tychoish."
@@ -1776,3 +1778,199 @@ source's last commit time rather than the time of the build."
            (should (search-forward "pkg-tychoish-tag" nil t))
            (goto-char (point-min))
            (should (search-forward ">tychoish</span>" nil t))))))))
+
+(ert-deftest elpaish-test-tar-package-info-default-opt-in ()
+  "Test that by default (without :info-files), documentation files are not converted."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "defaultdocpkg" temp-dir))
+         (out-dir (expand-file-name "snapshot" elpaish-output-dir)))
+     (make-directory (expand-file-name "docs" pkg-dir) t)
+     (with-temp-file (expand-file-name "defaultdocpkg.el" pkg-dir)
+       (insert ";;; defaultdocpkg.el --- Default Doc Pkg -*- lexical-binding: t; -*-\n")
+       (insert ";;; Version: 1.0.0\n")
+       (insert ";;; URL: https://example.com/defaultdoc\n")
+       (insert ";;; Commentary:\n;; Default doc commentary.\n")
+       (insert ";;; Code:\n(defun defaultdocpkg-fn () t)\n(provide 'defaultdocpkg)\n;;; defaultdocpkg.el ends here\n"))
+     (with-temp-file (expand-file-name "docs/manual.org" pkg-dir)
+       (insert "#+title: Default Doc Manual\n* Overview\nRaw documentation.\n"))
+     (let* ((elpaish-registry (make-hash-table :test 'equal))
+            (recipe (elpaish-register-package
+                     'defaultdocpkg pkg-dir
+                     :files '("defaultdocpkg.el" "docs/manual.org")
+                     :preflight-skip t)))
+       (cl-letf (((symbol-function 'elpaish-derive-version) (lambda (&rest _) "1.0.0")))
+         (let ((dest (elpaish-build-package recipe 'snapshot out-dir)))
+           (should dest)
+           (should (string-suffix-p ".tar" dest))
+           (let ((members (process-lines "tar" "-tf" dest)))
+             ;; Raw source org file should be preserved
+             (should (seq-some (lambda (m) (string-suffix-p "manual.org" m)) members))
+             ;; No Info manual or dir index should be generated
+             (should-not (seq-some (lambda (m) (string-suffix-p "manual.info" m)) members))
+             (should-not (seq-some (lambda (m) (string-suffix-p "/dir" m)) members)))))))))
+
+(ert-deftest elpaish-test-tar-package-info-generation-opt-in-file ()
+  "Test opt-in Info manual generation for a specific file, preserving other Org files."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "infopkg" temp-dir))
+         (out-dir (expand-file-name "snapshot" elpaish-output-dir)))
+     (make-directory (expand-file-name "docs" pkg-dir) t)
+     (with-temp-file (expand-file-name "infopkg.el" pkg-dir)
+       (insert ";;; infopkg.el --- Info Pkg -*- lexical-binding: t; -*-\n")
+       (insert ";;; Version: 1.0.0\n")
+       (insert ";;; URL: https://example.com/infopkg\n")
+       (insert ";;; Commentary:\n;; Info package commentary.\n")
+       (insert ";;; Code:\n(defun infopkg-fn () t)\n(provide 'infopkg)\n;;; infopkg.el ends here\n"))
+     (with-temp-file (expand-file-name "README.org" pkg-dir)
+       (insert "#+title: Infopkg Readme\n* Readme\nProject readme.\n"))
+     (with-temp-file (expand-file-name "docs/manual.org" pkg-dir)
+       (insert "#+title: Infopkg Manual\n* Overview\nThis is the Infopkg user documentation.\n"))
+     (let* ((elpaish-registry (make-hash-table :test 'equal))
+            (recipe (elpaish-register-package
+                     'infopkg pkg-dir
+                     :files '("infopkg.el" "README.org" "docs/manual.org")
+                     :info-files "docs/manual.org"
+                     :preflight-skip t)))
+       (cl-letf (((symbol-function 'elpaish-derive-version) (lambda (&rest _) "1.0.0")))
+         (let ((dest (elpaish-build-package recipe 'snapshot out-dir)))
+           (should dest)
+           (should (string-suffix-p ".tar" dest))
+           (should (file-exists-p dest))
+           (let ((members (process-lines "tar" "-tf" dest)))
+             ;; Should contain generated Info manual and merged dir file
+             (should (seq-some (lambda (m) (string-suffix-p "manual.info" m)) members))
+             (should (seq-some (lambda (m) (string-suffix-p "/dir" m)) members))
+             ;; Should NOT bundle converted source manual.org
+             (should-not (seq-some (lambda (m) (string-suffix-p "manual.org" m)) members))
+             ;; README.org was not targeted and should remain as-is in the tarball
+             (should (seq-some (lambda (m) (string-suffix-p "README.org" m)) members)))
+           ;; Upstream repo directory should remain completely untouched
+           (should (file-exists-p (expand-file-name "docs/manual.org" pkg-dir)))
+           (should-not (file-exists-p (expand-file-name "docs/manual.texi" pkg-dir)))
+           (should-not (file-exists-p (expand-file-name "docs/manual.info" pkg-dir)))))))))
+
+(ert-deftest elpaish-test-tar-package-info-generation-opt-in-list ()
+  "Test opt-in Info manual generation when a list of files is specified."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "infolistpkg" temp-dir))
+         (out-dir (expand-file-name "snapshot" elpaish-output-dir)))
+     (make-directory (expand-file-name "docs" pkg-dir) t)
+     (with-temp-file (expand-file-name "infolistpkg.el" pkg-dir)
+       (insert ";;; infolistpkg.el --- Info List Pkg -*- lexical-binding: t; -*-\n")
+       (insert ";;; Version: 1.0.0\n")
+       (insert ";;; URL: https://example.com/infolist\n")
+       (insert ";;; Commentary:\n;; Commentary.\n")
+       (insert ";;; Code:\n(defun infolistpkg-fn () t)\n(provide 'infolistpkg)\n;;; infolistpkg.el ends here\n"))
+     (with-temp-file (expand-file-name "docs/manual.org" pkg-dir)
+       (insert "#+title: Infolist Manual\n* Overview\nManual.\n"))
+     (let* ((elpaish-registry (make-hash-table :test 'equal))
+            (recipe (elpaish-register-package
+                     'infolistpkg pkg-dir
+                     :files '("infolistpkg.el" "docs/manual.org")
+                     :info-files '("docs/manual.org")
+                     :preflight-skip t)))
+       (cl-letf (((symbol-function 'elpaish-derive-version) (lambda (&rest _) "1.0.0")))
+         (let ((dest (elpaish-build-package recipe 'snapshot out-dir)))
+           (should dest)
+           (should (string-suffix-p ".tar" dest))
+           (let ((members (process-lines "tar" "-tf" dest)))
+             (should (seq-some (lambda (m) (string-suffix-p "manual.info" m)) members))
+             (should (seq-some (lambda (m) (string-suffix-p "/dir" m)) members))
+             (should-not (seq-some (lambda (m) (string-suffix-p "manual.org" m)) members)))))))))
+
+(ert-deftest elpaish-test-tar-package-info-skip ()
+  "Test :info-skip t suppresses Info manual generation even if :info-files is set."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "skipinfopkg" temp-dir))
+         (out-dir (expand-file-name "snapshot" elpaish-output-dir)))
+     (make-directory (expand-file-name "docs" pkg-dir) t)
+     (with-temp-file (expand-file-name "skipinfopkg.el" pkg-dir)
+       (insert ";;; skipinfopkg.el --- Skip Info Pkg -*- lexical-binding: t; -*-\n")
+       (insert ";;; Version: 1.0.0\n")
+       (insert ";;; URL: https://example.com/skipinfo\n")
+       (insert ";;; Commentary:\n;; Skip Info commentary.\n")
+       (insert ";;; Code:\n(defun skipinfopkg-fn () t)\n(provide 'skipinfopkg)\n;;; skipinfopkg.el ends here\n"))
+     (with-temp-file (expand-file-name "docs/manual.org" pkg-dir)
+       (insert "#+title: Skip Infopkg Manual\n* Overview\nRaw Org manual.\n"))
+     (let* ((elpaish-registry (make-hash-table :test 'equal))
+            (recipe (elpaish-register-package
+                     'skipinfopkg pkg-dir
+                     :files '("skipinfopkg.el" "docs/manual.org")
+                     :info-files "docs/manual.org"
+                     :info-skip t
+                     :preflight-skip t)))
+       (cl-letf (((symbol-function 'elpaish-derive-version) (lambda (&rest _) "1.0.0")))
+         (let ((dest (elpaish-build-package recipe 'snapshot out-dir)))
+           (should dest)
+           (should (string-suffix-p ".tar" dest))
+           (let ((members (process-lines "tar" "-tf" dest)))
+             ;; Raw source org file should be preserved
+             (should (seq-some (lambda (m) (string-suffix-p "manual.org" m)) members))
+             ;; Neither manual.info nor dir should be generated
+             (should-not (seq-some (lambda (m) (string-suffix-p "manual.info" m)) members))
+             (should-not (seq-some (lambda (m) (string-suffix-p "/dir" m)) members)))))))))
+
+(ert-deftest elpaish-test-tar-package-info-global-disable ()
+  "Test elpaish-generate-info-manuals nil globally suppresses Info manual generation."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "globaldispkg" temp-dir))
+         (out-dir (expand-file-name "snapshot" elpaish-output-dir))
+         (elpaish-generate-info-manuals nil))
+     (make-directory (expand-file-name "docs" pkg-dir) t)
+     (with-temp-file (expand-file-name "globaldispkg.el" pkg-dir)
+       (insert ";;; globaldispkg.el --- Global Dis Pkg -*- lexical-binding: t; -*-\n")
+       (insert ";;; Version: 1.0.0\n")
+       (insert ";;; URL: https://example.com/globaldis\n")
+       (insert ";;; Commentary:\n;; Commentary.\n")
+       (insert ";;; Code:\n(defun globaldispkg-fn () t)\n(provide 'globaldispkg)\n;;; globaldispkg.el ends here\n"))
+     (with-temp-file (expand-file-name "docs/manual.org" pkg-dir)
+       (insert "#+title: Global Disable Manual\n* Overview\nOrg manual.\n"))
+     (let* ((elpaish-registry (make-hash-table :test 'equal))
+            (recipe (elpaish-register-package
+                     'globaldispkg pkg-dir
+                     :files '("globaldispkg.el" "docs/manual.org")
+                     :info-files "docs/manual.org"
+                     :preflight-skip t)))
+       (cl-letf (((symbol-function 'elpaish-derive-version) (lambda (&rest _) "1.0.0")))
+         (let ((dest (elpaish-build-package recipe 'snapshot out-dir)))
+           (should dest)
+           (should (string-suffix-p ".tar" dest))
+           (let ((members (process-lines "tar" "-tf" dest)))
+             (should (seq-some (lambda (m) (string-suffix-p "manual.org" m)) members))
+             (should-not (seq-some (lambda (m) (string-suffix-p "manual.info" m)) members))
+             (should-not (seq-some (lambda (m) (string-suffix-p "/dir" m)) members)))))))))
+
+(ert-deftest elpaish-test-tar-package-texinfo-missing-fallback ()
+  "Test graceful degradation when makeinfo/install-info executables are missing."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "missingtexipkg" temp-dir))
+         (out-dir (expand-file-name "snapshot" elpaish-output-dir))
+         (elpaish--texinfo-warned nil))
+     (make-directory (expand-file-name "docs" pkg-dir) t)
+     (with-temp-file (expand-file-name "missingtexipkg.el" pkg-dir)
+       (insert ";;; missingtexipkg.el --- Missing Texi -*- lexical-binding: t; -*-\n")
+       (insert ";;; Version: 1.0.0\n")
+       (insert ";;; URL: https://example.com/missingtexi\n")
+       (insert ";;; Commentary:\n;; Commentary.\n")
+       (insert ";;; Code:\n(defun missingtexipkg-fn () t)\n(provide 'missingtexipkg)\n;;; missingtexipkg.el ends here\n"))
+     (with-temp-file (expand-file-name "docs/manual.org" pkg-dir)
+       (insert "#+title: Missing Texi Manual\n* Overview\nOrg manual.\n"))
+     (let* ((elpaish-registry (make-hash-table :test 'equal))
+            (recipe (elpaish-register-package
+                     'missingtexipkg pkg-dir
+                     :files '("missingtexipkg.el" "docs/manual.org")
+                     :info-files "docs/manual.org"
+                     :preflight-skip t)))
+       (cl-letf (((symbol-function 'elpaish-derive-version) (lambda (&rest _) "1.0.0"))
+                 ((symbol-function 'elpaish--texinfo-available-p) (lambda () nil)))
+         (let ((dest (elpaish-build-package recipe 'snapshot out-dir)))
+           (should dest)
+           (should (string-suffix-p ".tar" dest))
+           (should elpaish--texinfo-warned)
+           (let ((members (process-lines "tar" "-tf" dest)))
+             (should (seq-some (lambda (m) (string-suffix-p "manual.org" m)) members))
+             (should-not (seq-some (lambda (m) (string-suffix-p "manual.info" m)) members))
+             (should-not (seq-some (lambda (m) (string-suffix-p "/dir" m)) members)))))))))
+
+(provide 'test-elpaish)
+;;; test-elpaish.el ends here
