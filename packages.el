@@ -91,6 +91,15 @@
  :keywords '("processes" "tools"))
 
 (elpaish-register-package
+ 'sprite-mcp
+ (elpaish-recipe-path "https://github.com/tychoish/sprite-mcp.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Spawns sprite daemons hosting mcpkit MCP services"
+ :url "https://github.com/tychoish/sprite-mcp"
+ :keywords '("tools" "mcp" "daemon" "processes"))
+
+(elpaish-register-package
  'xtdlib
  (elpaish-recipe-path "https://github.com/tychoish/xtdlib.el.git")
  :branch "main"
@@ -167,6 +176,15 @@
  :summary "Denote knowledge-base integration for Model Context Protocol (MCP)"
  :url "https://github.com/tychoish/denote-mcp"
  :keywords '("tools" "mcp" "denote" "notes"))
+
+(elpaish-register-package
+ 'gptel-mcp
+ (elpaish-recipe-path "https://github.com/tychoish/gptel-mcp.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Bridges mcpkit tool registrations onto gptel's tool-calling framework"
+ :url "https://github.com/tychoish/gptel-mcp"
+ :keywords '("tools" "mcp" "gptel" "llm"))
 
 (elpaish-register-package
  'denote-notion
