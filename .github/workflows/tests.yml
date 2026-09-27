@@ -19,11 +19,12 @@ jobs:
       matrix:
         emacs-version:
           - "30.2"
+          - "31.1"
     steps:
       - uses: actions/checkout@v5
 
       - name: Ensure texinfo tools are installed
-        run: which makeinfo >/dev/null 2>&1 || (apt-get update && apt-get install -y texinfo)
+        run: which makeinfo >/dev/null 2>&1 && which install-info >/dev/null 2>&1 || (apt-get update && apt-get install -y texinfo install-info)
 
       - run: emacs --batch -l scripts/bootstrap-elpaish.el
 

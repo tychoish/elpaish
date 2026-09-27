@@ -145,7 +145,7 @@ Below is a complete ~use-package~ configuration setting standard options, defaul
 - *Local Search Roots*: [[file:docs/api.org::#elpaish-recipe-local-search-dirs][~elpaish-recipe-local-search-dirs~]] lists directories
   checked by [[file:docs/api.org::#elpaish-recipe-path][~elpaish-recipe-path~]] before falling back to remote Git checkouts.
 - *Info Manual Generation*: [[file:docs/api.org::#elpaish-generate-info-manuals][~elpaish-generate-info-manuals~]] toggles build-time
-  compilation of Org and Texinfo documentation into Info manuals and merged ~dir~ files for recipes opting in via ~:info-files~ (requires system ~texinfo~).
+  compilation of Org and Texinfo documentation into Info manuals and merged ~dir~ files for recipes opting in via ~:info-files~ (requires system ~texinfo~ and ~install-info~).
 
 * Core Workflows
 :PROPERTIES:

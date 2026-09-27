@@ -132,7 +132,7 @@ A package opts into GNU Info manual generation by specifying ~:info-files~ (or a
 - *Conversion pipeline*: Org files are exported to Texinfo format via ~ox-texinfo~, compiled to =.info= using ~makeinfo~, and indexed into =dir= using ~install-info~ via ~package-build.el~.
 - *Opt-out override*: If needed, ~:info-skip t~ can be set to override and bypass conversion.
 - *Global toggle*: Manual generation across all packages can be globally disabled by setting ~elpaish-generate-info-manuals~ to =nil=.
-- *Prerequisites*: Requires ~texinfo~ (~makeinfo~ and ~install-info~) installed on the host or build container. If missing, a warning is logged once per build run and documentation files are preserved as-is.
+- *Prerequisites*: Requires ~texinfo~ (~makeinfo~) and ~install-info~ installed on the host or build container (e.g. ~apt install texinfo install-info~ on Debian/Ubuntu). If missing, a warning is logged once per build run and documentation files are preserved as-is.
 
 ** Local Checkouts and Recipe Path Resolution
 :PROPERTIES:
