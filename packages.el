@@ -30,7 +30,7 @@
  (elpaish-recipe-path "https://github.com/tychoish/agent-shell-workflow.git")
  :branch "main"
  :test-dir "test"
- :requires '(agent-shell transient annotated-completing-read)
+ :requires '(transient annotated-completing-read)
  :summary "Dynamic workflow composition and template library for agent-shell"
  :url "https://github.com/tychoish/agent-shell-workflow"
  :keywords '("tools" "agent-shell"))
@@ -77,7 +77,6 @@
  (elpaish-recipe-path "https://github.com/tychoish/magit-dash.git")
  :branch "main"
  :test-dir "test"
- :requires '(magit projectile)
  :summary "Status and management dashboard for Magit repositories and worktrees"
  :url "https://github.com/tychoish/magit-dash"
  :keywords '("tools" "vc" "git"))
@@ -128,7 +127,6 @@
  (elpaish-recipe-path "https://github.com/tychoish/telega-bot.git")
  :branch "main"
  :test-dir "test"
- :requires '(telega alert)
  :summary "High-level event-driven Telegram Bot engine with Telega"
  :url "https://github.com/tychoish/telega-bot"
  :keywords '("comm" "tools" "telegram"))
@@ -138,7 +136,6 @@
  (elpaish-recipe-path "https://github.com/tychoish/ollama-tailnet.git")
  :branch "main"
  :test-dir "test"
- :requires '(gptel annotated-completing-read transient)
  :summary "Ollama tailnet orchestration, gptel integration, and model dashboard in Emacs"
  :url "https://github.com/tychoish/ollama-tailnet"
  :keywords '("hypermedia" "tools" "ai" "tailscale" "systemd" "gptel"))
@@ -149,7 +146,6 @@
  :branch "main"
  :test-dir "test"
  :preflight-skip '(package-lint checkdoc)
- :requires '(transient annotated-completing-read yaml compat)
  :summary "Arch Linux package management UI, package sets, and ELPA manager in Emacs"
  :url "https://github.com/tychoish/arch.el"
  :keywords '("tools" "package" "arch" "elpa"))
@@ -159,7 +155,6 @@
  (elpaish-recipe-path "https://github.com/tychoish/mcpkit.el.git")
  :branch "main"
  :test-dir "test"
- :requires '(web-server compat)
  :summary "Model Context Protocol (MCP) service framework"
  :url "https://github.com/tychoish/mcpkit.el"
  :keywords '("comm" "tools" "mcp" "rpc"))
@@ -169,7 +164,6 @@
  (elpaish-recipe-path "https://github.com/tychoish/denote-mcp.git")
  :branch "main"
  :test-dir "test"
- :requires '(mcpkit denote)
  :summary "Denote knowledge-base integration for Model Context Protocol (MCP)"
  :url "https://github.com/tychoish/denote-mcp"
  :keywords '("tools" "mcp" "denote" "notes"))
@@ -179,7 +173,6 @@
  (elpaish-recipe-path "https://github.com/tychoish/denote-notion.git")
  :branch "main"
  :test-dir "test"
- :requires '(denote annotated-completing-read)
  :summary "Two-way sync between Denote notes and Notion pages"
  :url "https://github.com/tychoish/denote-notion"
  :keywords '("docs" "notion" "denote" "tools"))
@@ -189,7 +182,6 @@
  (elpaish-recipe-path "https://github.com/tychoish/eglot-test-at-point.git")
  :branch "main"
  :test-dir "test"
- :requires '(annotated-completing-read)
  :summary "Test discovery and test runner at point for Eglot"
  :url "https://github.com/tychoish/eglot-test-at-point"
  :keywords '("tools" "languages" "eglot" "testing"))
@@ -217,7 +209,6 @@
  (elpaish-recipe-path "https://github.com/tychoish/org-docsgen.git")
  :branch "main"
  :test-dir "test"
- :requires '(xtdlib compat)
  :summary "Generate org API documentation from Emacs Lisp source"
  :url "https://github.com/tychoish/org-docsgen"
  :keywords '("docs" "lisp" "org" "tools"))
