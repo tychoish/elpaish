@@ -1915,7 +1915,7 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
 
 (declare-function elpaish-load-packages "elpaish-recipes" (&optional files))
 
-;;;###autoload
+;;;###autoload (autoload 'elpaish-menu "elpaish" nil t)
 (transient-define-prefix elpaish-menu ()
   "Transient dispatch menu for ELPAish package repository management."
   [:description "ELPAish Repository Builder"
