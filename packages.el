@@ -26,13 +26,13 @@
  :keywords '("tools" "convenience"))
 
 (elpaish-register-package
- 'agent-shell-prompt
- (elpaish-recipe-path "https://github.com/tychoish/agent-shell-prompt.git")
+ 'agent-shell-workflow
+ (elpaish-recipe-path "https://github.com/tychoish/agent-shell-workflow.git")
  :branch "main"
  :test-dir "test"
  :requires '(agent-shell transient annotated-completing-read)
- :summary "Dynamic prompt composition and template library for agent-shell"
- :url "https://github.com/tychoish/agent-shell-prompt"
+ :summary "Dynamic workflow composition and template library for agent-shell"
+ :url "https://github.com/tychoish/agent-shell-workflow"
  :keywords '("tools" "agent-shell"))
 
 (elpaish-register-package
