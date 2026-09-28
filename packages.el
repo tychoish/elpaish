@@ -187,6 +187,33 @@
  :keywords '("tools" "mcp" "gptel" "llm"))
 
 (elpaish-register-package
+ 'denote-tree
+ (elpaish-recipe-path "https://github.com/tychoish/denote-tree.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Structural sequence tree manipulation, linting, and refactoring for Denote"
+ :url "https://github.com/tychoish/denote-tree"
+ :keywords '("docs" "denote" "sequence" "tools"))
+
+(elpaish-register-package
+ 'denote-convert
+ (elpaish-recipe-path "https://github.com/tychoish/denote-convert.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "File format translation and Org datetree importer for Denote"
+ :url "https://github.com/tychoish/denote-convert"
+ :keywords '("docs" "denote" "convenience" "tools"))
+
+(elpaish-register-package
+ 'denote-dash
+ (elpaish-recipe-path "https://github.com/tychoish/denote-dash.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Unified tabulated-list browser, saved bookmark views, and dispatch menu for Denote"
+ :url "https://github.com/tychoish/denote-dash"
+ :keywords '("docs" "denote" "dashboard" "tools"))
+
+(elpaish-register-package
  'denote-notion
  (elpaish-recipe-path "https://github.com/tychoish/denote-notion.git")
  :branch "main"
