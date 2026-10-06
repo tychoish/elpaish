@@ -667,6 +667,8 @@
 
        (cl-letf (((symbol-function 'package-installed-p)
                   (lambda (p &rest _) (member p installed-pkgs)))
+                 ((symbol-function 'package-refresh-contents) #'ignore)
+                 ((symbol-function 'package-initialize) #'ignore)
                  ((symbol-function 'package-install)
                   (lambda (p &rest _)
                     (push p installed-pkgs)
@@ -1681,7 +1683,9 @@ source's last commit time rather than the time of the build."
                                        :repository-path "demo-pkg"
                                        :requires '((emacs "28.1") (dep-a "1.0") (dep-b "2.0")))))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (p) (eq p 'dep-b)))
-               ((symbol-function 'package-install) (lambda (p) (push p installed-log))))
+               ((symbol-function 'package-install) (lambda (p) (push p installed-log)))
+               ((symbol-function 'package-refresh-contents) #'ignore)
+               ((symbol-function 'package-initialize) #'ignore))
        (elpaish-install-ensure-package-dependencies recipe)
        (should (equal installed-log '(dep-a)))))))
 

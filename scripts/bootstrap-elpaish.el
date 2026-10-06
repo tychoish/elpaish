@@ -46,7 +46,9 @@
                          ("melpa" . "https://melpa.org/packages/")))
 (package-initialize)
 (unless (bound-and-true-p package-archive-contents)
-  (package-refresh-contents))
+  (condition-case err
+      (package-refresh-contents)
+    (error (message "Warning: package-refresh-contents encountered error: %s" (error-message-string err)))))
 
 ;; Ensure compat is installed early
 (unless (package-installed-p 'compat)

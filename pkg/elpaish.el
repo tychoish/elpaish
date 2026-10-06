@@ -70,7 +70,11 @@
 (require 'annotated-completing-read)
 (require 'htmlize)
 (require 'compat nil t)
-(require 'package-build)
+(require 'package-build nil t)
+(declare-function package-build--generate-info-files "package-build" (recipe files target-dir))
+(defvar package-build-run-recipe-org-exports)
+(defvar package-build--use-sandbox)
+(defvar package-build-archive-dir)
 (require 'transient)
 
 (require 'elpaish-check)
@@ -794,8 +798,12 @@ RECIPE or INFO-SKIP governs whether Info manual generation runs."
                                           (member (file-relative-name f) specified)))
                                     files))))))
             (when doc-files
-              (if (not (elpaish--texinfo-available-p))
-                  (elpaish--check-texinfo-prerequisites)
+              (cond
+               ((not (elpaish--texinfo-available-p))
+                (elpaish--check-texinfo-prerequisites))
+               ((not (require 'package-build nil t))
+                (elpaish--log "Warning: `package-build' is not available; info manual generation will be skipped for %s." name))
+               (t
                 (let* ((doc-staging (expand-file-name "doc-staging" temp-dir))
                        (org-files (seq-filter (lambda (f) (string-suffix-p ".org" f)) doc-files))
                        (rcp (make-instance 'package-recipe
@@ -829,7 +837,7 @@ RECIPE or INFO-SKIP governs whether Info manual generation runs."
                                       (file-directory-p parent)
                                       (null (directory-files parent nil "^[^.]" t)))
                             (delete-directory parent)
-                            (setq parent (file-name-directory (directory-file-name parent))))))))))))
+                            (setq parent (file-name-directory (directory-file-name parent)))))))))))))
           (let ((default-directory temp-dir))
             (call-process "tar" nil nil nil "-cf" dest-file pkg-name-ver)))
       (delete-directory temp-dir t))))
@@ -856,7 +864,7 @@ RECIPE or INFO-SKIP governs whether Info manual generation runs."
           ;; Known external/MELPA package dependencies fallback
           (memq sym '(agent-shell alert request transient magit projectile htmlize web-server
                                  modus-themes compat package-lint async dash s f yaml markdown-mode
-                                 ht kv llama tempel consult embark marshal package-build package-recipe))))))
+                                 ht kv llama tempel consult embark marshal package-build package-recipe ox-gfm))))))
 
 (defun elpaish--recipe-provided-features (recipe)
   "Return list of feature/package symbols provided internally by RECIPE."
