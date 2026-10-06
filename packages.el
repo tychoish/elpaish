@@ -214,13 +214,13 @@
  :keywords '("docs" "denote" "dashboard" "tools"))
 
 (elpaish-register-package
- 'denote-notion
- (elpaish-recipe-path "https://github.com/tychoish/denote-notion.git")
+ 'denote-sync
+ (elpaish-recipe-path "https://github.com/tychoish/denote-sync.git")
  :branch "main"
  :test-dir "test"
- :summary "Two-way sync between Denote notes and Notion pages"
- :url "https://github.com/tychoish/denote-notion"
- :keywords '("docs" "notion" "denote" "tools"))
+ :summary "Two-way sync between Denote notes and remote services"
+ :url "https://github.com/tychoish/denote-sync"
+ :keywords '("docs" "notion" "gdocs" "denote" "tools"))
 
 (elpaish-register-package
  'eglot-test-at-point
