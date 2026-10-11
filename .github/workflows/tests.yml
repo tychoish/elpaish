@@ -44,4 +44,5 @@ jobs:
             web-server
             transient
             annotated-completing-read
+            modus-themes
           cache: "true"
