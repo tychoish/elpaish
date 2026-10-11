@@ -26,12 +26,22 @@ jobs:
       - name: Ensure texinfo tools are installed
         run: which makeinfo >/dev/null 2>&1 && which install-info >/dev/null 2>&1 || (apt-get update && apt-get install -y texinfo install-info)
 
-      - run: emacs --batch -l scripts/bootstrap-elpaish.el
-
-      - env:
+      - name: Run ERT Self-Tests
+        uses: tychoish/elisp-ci@main
+        env:
           ELPAISH_SIGNING_KEY: "__testing_value"
           ELPAISH_GPG_PASSPHRASE: ""
-        run: |
-          emacs --batch -L pkg -L scripts -L test \
-            -l test/test-elpaish.el \
-            --eval '(ert-run-tests-batch-and-exit "^elpaish-test-.*")'
+        with:
+          load-paths: |
+            pkg
+            scripts
+            test
+          test-files: "test/test-elpaish.el"
+          dependencies: |
+            compat
+            package-build
+            htmlize
+            web-server
+            transient
+            annotated-completing-read
+          cache: "true"
