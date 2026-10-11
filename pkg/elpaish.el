@@ -170,7 +170,7 @@ or `elpaish-staging' (pre-release tags and git describe)."
   (disabled-streams nil :type list :documentation "List of stream symbols where this package is suppressed/disabled.")
   (external-p nil :type boolean :documentation "Non-nil if package is externally maintained.")
   (fork-p nil :type boolean :documentation "Non-nil if package is a maintained fork.")
-  (origin 'tychoish :type symbol :documentation "Package origin: \='fork, \='third-party, or \='tychoish.")
+  (origin 'tychoish :type symbol :documentation "Package origin: \='fork, \='mirror (or \='third-party), or \='tychoish.")
   (summary nil :type (choice null string) :documentation "Package summary description.")
   (url nil :type (choice null string) :documentation "Upstream homepage or repository URL.")
   (doc nil :type (choice null string) :documentation "Documentation URL or path.")
@@ -235,6 +235,8 @@ publishing an incomplete archive.")
                                     external
                                     external-p
                                     third-party
+                                    mirror
+                                    mirror-p
                                     fork
                                     fork-p
                                     origin
@@ -267,6 +269,10 @@ DISABLED-STREAMS (or SUPPRESS-STREAMS) is a list of suppressed stream symbols.
 DOC (or DOCS-URL) is an optional URL or path to documentation.
 ORG-FILES (or INCLUDE-ORG) controls org docs inclusion (t, nil, or list of patterns).
 ORG-EXCLUDE adds patterns to exclude from org documentation.
+MIRROR (or MIRROR-P, EXTERNAL, EXTERNAL-P, THIRD-PARTY) tags the package
+as an upstream mirror.
+FORK (or FORK-P) tags the package as a maintained fork.
+ORIGIN explicitly specifies origin symbol: 'mirror, 'fork, or 'tychoish.
 SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
   (let* ((raw-name (if (symbolp name) (symbol-name name) (string-trim name)))
          (name-str (string-remove-suffix ".el" raw-name))
@@ -282,10 +288,11 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                           (expand-file-name repository-path)
                         repository-path))
          (is-fork (and (or fork fork-p (eq origin 'fork)) t))
-         (is-third-party (and (or external external-p third-party (eq origin 'third-party) (eq origin 'external)) t))
+         (is-mirror (and (or mirror mirror-p external external-p third-party
+                             (eq origin 'mirror) (eq origin 'third-party) (eq origin 'external)) t))
          (effective-origin (cond
                             (is-fork 'fork)
-                            (is-third-party 'third-party)
+                            (is-mirror 'mirror)
                             (origin origin)
                             (t 'tychoish)))
          (raw-info (or info-files info-doc info-docs info-manual info-manuals))
@@ -318,7 +325,7 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                   :preflight-skip preflight-skip
                   :info-skip (and info-skip t)
                   :info-files resolved-info-files
-                  :external-p (and (or is-third-party is-fork (not (eq effective-origin 'tychoish))) t)
+                  :external-p (and (or is-mirror is-fork (not (eq effective-origin 'tychoish))) t)
                   :fork-p is-fork
                   :origin effective-origin
                   :disabled-streams dis-streams
@@ -337,14 +344,15 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
 
 
 (defun elpaish-recipe-origin-label (recipe)
-  "Return origin string label for RECIPE: \"fork\", \"third-party\", or \"tychoish\"."
+  "Return origin string label for RECIPE: \"fork\", \"mirror\", or \"tychoish\"."
   (cond
    ((elpaish-recipe-fork-p recipe) "fork")
    ((eq (elpaish-recipe-origin recipe) 'fork) "fork")
    ((or (elpaish-recipe-external-p recipe)
+        (eq (elpaish-recipe-origin recipe) 'mirror)
         (eq (elpaish-recipe-origin recipe) 'third-party)
         (eq (elpaish-recipe-origin recipe) 'external))
-    "third-party")
+    "mirror")
    (t "tychoish")))
 
 (defun elpaish-recipe-disabled-for-stream-p (recipe stream)

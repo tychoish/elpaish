@@ -965,22 +965,25 @@ source's last commit time rather than the time of the build."
                     "https://example.com/missing-pkg.git")))))
 
 (ert-deftest elpaish-test-external-package-flag-and-website ()
-  "Test :external flag on package registration and website rendering."
+  "Test :external and :mirror flag on package registration and website rendering."
   (elpaish-test-with-temp-env
    (let ((pkg-dir (expand-file-name "ext-pkg" temp-dir)))
      (elpaish-test-create-dummy-pkg pkg-dir "ext-pkg" "1.0.0" "External Package Test")
      (elpaish-register-package 'ext-pkg pkg-dir :external t)
      (let ((recipe (gethash "ext-pkg" elpaish-registry)))
        (should (elpaish-recipe-external-p recipe))
+       (should (equal (elpaish-recipe-origin-label recipe) "mirror"))
        (elpaish-build-package recipe 'snapshot)
        (elpaish-generate-stream-index 'snapshot)
        (let ((index-file (expand-file-name "snapshot/index.html" elpaish-output-dir)))
          (with-temp-buffer
            (insert-file-contents index-file)
            (goto-char (point-min))
+           (should (search-forward "pkg-mirror-tag" nil t))
+           (goto-char (point-min))
            (should (search-forward "pkg-external-tag" nil t))
            (goto-char (point-min))
-           (should (search-forward "Third-party package" nil t))))))))
+           (should (search-forward "Mirror package" nil t))))))))
 
 (ert-deftest elpaish-test-ollama-package-registration-and-build ()
   "Test that the registered ollama package recipe builds locally."
@@ -1742,24 +1745,30 @@ source's last commit time rather than the time of the build."
 
 
 (ert-deftest elpaish-test-package-origin-labels-and-column ()
-  "Test origin classification and rendering for fork, third-party, and tychoish."
+  "Test origin classification and rendering for fork, mirror, and tychoish."
   (elpaish-test-with-temp-env
    (let ((f-dir (expand-file-name "fork-pkg" temp-dir))
+         (m-dir (expand-file-name "m-pkg" temp-dir))
          (tp-dir (expand-file-name "tp-pkg" temp-dir))
          (ty-dir (expand-file-name "tycho-pkg" temp-dir)))
      (elpaish-test-create-dummy-pkg f-dir "fork-pkg" "1.0.0" "Fork Test")
+     (elpaish-test-create-dummy-pkg m-dir "m-pkg" "1.0.0" "Mirror Test")
      (elpaish-test-create-dummy-pkg tp-dir "tp-pkg" "1.0.0" "Third Party Test")
      (elpaish-test-create-dummy-pkg ty-dir "tycho-pkg" "1.0.0" "Tychoish Test")
      (elpaish-register-package 'fork-pkg f-dir :fork t)
+     (elpaish-register-package 'm-pkg m-dir :mirror t)
      (elpaish-register-package 'tp-pkg tp-dir :external t)
      (elpaish-register-package 'tycho-pkg ty-dir)
      (let ((r-fork (gethash "fork-pkg" elpaish-registry))
+           (r-m (gethash "m-pkg" elpaish-registry))
            (r-tp (gethash "tp-pkg" elpaish-registry))
            (r-ty (gethash "tycho-pkg" elpaish-registry)))
        (should (elpaish-recipe-fork-p r-fork))
        (should (equal (elpaish-recipe-origin-label r-fork) "fork"))
+       (should (elpaish-recipe-external-p r-m))
+       (should (equal (elpaish-recipe-origin-label r-m) "mirror"))
        (should (elpaish-recipe-external-p r-tp))
-       (should (equal (elpaish-recipe-origin-label r-tp) "third-party"))
+       (should (equal (elpaish-recipe-origin-label r-tp) "mirror"))
        (should-not (elpaish-recipe-fork-p r-ty))
        (should-not (elpaish-recipe-external-p r-ty))
        (should (equal (elpaish-recipe-origin-label r-ty) "tychoish"))
@@ -1775,9 +1784,9 @@ source's last commit time rather than the time of the build."
            (goto-char (point-min))
            (should (search-forward ">fork</span>" nil t))
            (goto-char (point-min))
-           (should (search-forward "pkg-third-party-tag" nil t))
+           (should (search-forward "pkg-mirror-tag" nil t))
            (goto-char (point-min))
-           (should (search-forward ">third-party</span>" nil t))
+           (should (search-forward ">mirror</span>" nil t))
            (goto-char (point-min))
            (should (search-forward "pkg-tychoish-tag" nil t))
            (goto-char (point-min))

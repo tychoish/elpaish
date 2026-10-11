@@ -158,10 +158,10 @@ RELATIVE-PREFIX is prepended to relative links (e.g. \"../\" for stream pages)."
                (origin-lbl (elpaish-recipe-origin-label recipe))
                (tag-class (format "pkg-origin-tag pkg-%s-tag%s"
                                   origin-lbl
-                                  (if (string= origin-lbl "third-party") " pkg-external-tag" "")))
+                                  (if (member origin-lbl '("mirror" "third-party")) " pkg-mirror-tag pkg-external-tag" "")))
                (tag-title (cond
                            ((string= origin-lbl "fork") "Fork maintained by Casap / Tycho")
-                           ((string= origin-lbl "third-party") "Third-party maintained package")
+                           ((member origin-lbl '("mirror" "third-party")) "Upstream package mirror")
                            (t "Tychoish maintained package"))))
           (list
            `(tr ((class . "pkg-row"))
@@ -183,7 +183,7 @@ RELATIVE-PREFIX is prepended to relative links (e.g. \"../\" for stream pages)."
                                    (strong nil "Source: ")
                                    ,(cond
                                      ((string= origin-lbl "fork") "Forked package")
-                                     ((string= origin-lbl "third-party") "Third-party package")
+                                     ((member origin-lbl '("mirror" "third-party")) "Mirror package")
                                      (t "Tychoish native package")))
                               (div ((class . "detail-field"))
                                    (strong nil "Dependencies: ")

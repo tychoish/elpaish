@@ -47,8 +47,8 @@
 (elpaish-register-package
  'agent-shell-notifications
  (elpaish-recipe-path "https://github.com/zackattackz/agent-shell-notifications.git")
- :external t
- :preflight-skip t ;; it's external -- yolo
+ :mirror t
+ :preflight-skip t ;; it's a mirror -- yolo
  :branch "main"
  :files '("agent-shell-notifications.el"
 	  "agent-shell-notifications-knockknock.el"
