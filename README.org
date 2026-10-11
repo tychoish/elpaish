@@ -30,6 +30,7 @@ dispatch commands via ~elpaish-menu~.
 - [[#core-workflows][Core Workflows]]
 - [[#example-configurations][Example Configurations]]
   - [[#developer-machine-with-local-checkouts][Developer Machine with Local Checkouts]]
+  - [[#github-actions-workflow][GitHub Actions Workflow]]
   - [[#ci-batch-runner-script][CI Batch Runner Script]]
 - [[#user-guides][User Guides]]
 - [[#api-reference][API Reference]]
@@ -184,18 +185,45 @@ Configure recipe discovery to search personal project directories:
   (elpaish-load-packages "~/src/my-elpa/packages.el"))
 #+END_SRC
 
-** CI Batch Runner Script
+** GitHub Actions Workflow
+:PROPERTIES:
+:CUSTOM_ID: github-actions-workflow
+:END:
+
+Publish arbitrary Emacs package repositories to GitHub Pages using the turnkey
+composite GitHub Action:
+
+#+BEGIN_SRC yaml
+- name: Build and Publish ELPA Repository
+  uses: tychoish/elpaish@main
+  with:
+    packages-file: packages.el
+    output-dir: public/
+    signing-key: ${{ secrets.ELPAISH_SIGNING_KEY }}
+    gpg-passphrase: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
+    upload-pages-artifact: "true"
+#+END_SRC
+
+The action automatically handles Texinfo compilation tools, dual-layer caching
+(dependencies via =elisp-ci/cache= and Git clones in =repos/=), multi-stream
+generation (=snapshot=, =stable=, =staging=), and detached GPG signatures.
+
+** CI Batch Runner Script (Headless)
 :PROPERTIES:
 :CUSTOM_ID: ci-batch-runner-script
 :END:
 
-Automate headless builds in GitHub Actions workflows:
+For local batch automation or non-GitHub CI environments:
 
 #+BEGIN_SRC emacs-lisp
-  ;; scripts/build.el (require 'package) (package-initialize) (require
-  'elpaish) (require 'elpaish-recipes) (require 'elpaish-website)
+  (require 'package)
+  (package-initialize)
+  (require 'elpaish)
+  (require 'elpaish-recipes)
+  (require 'elpaish-website)
 
-  (elpaish-load-packages "packages.el") (elpaish-init-signing-from-env)
+  (elpaish-load-packages "packages.el")
+  (elpaish-init-signing-from-env)
   (elpaish-build-all 'all "public/")
 #+END_SRC
 

@@ -196,7 +196,13 @@ If a key is compromised, generate and publish a revocation certificate:
 :CUSTOM_ID: deploying-to-github-pages
 :END:
 
-Automate building and deploying to GitHub Pages with =.github/workflows/pages.yml=:
+ELPAish provides a first-class GitHub Action that builds, signs, and packages
+arbitrary package archives in a single step with zero boilerplate and integrated
+two-layer caching (dependencies via =elisp-ci/cache= and Git clones in =repos/=).
+
+** Turnkey GitHub Action Workflow
+
+Create =.github/workflows/pages.yml=:
 
 #+BEGIN_SRC yaml
 name: Deploy Package Repository
@@ -219,28 +225,78 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container: silex/emacs:30.2-ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
-      - uses: purcell/setup-emacs@master
+
+      - name: Build ELPAish Repository
+        uses: tychoish/elpaish@main
         with:
-          version: 29.4
-      - name: Build Repository
+          packages-file: packages.el
+          output-dir: public/
+          streams: all
+          signing-key: ${{ secrets.ELPAISH_SIGNING_KEY }}
+          gpg-passphrase: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
+          upload-pages-artifact: "true"
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/configure-pages@v5
+      - uses: actions/deploy-pages@v4
+        id: deployment
+#+END_SRC
+
+** Using via the =elisp-ci= Suite
+
+If your projects standardize on the =tychoish/elisp-ci= action suite, invoke the
+delegating =publish= sub-action:
+
+#+BEGIN_SRC yaml
+      - name: Publish ELPA Archive
+        uses: tychoish/elisp-ci/publish@main
+        with:
+          packages-file: packages.el
+          output-dir: public/
+          signing-key: ${{ secrets.ELPAISH_SIGNING_KEY }}
+          upload-pages-artifact: "true"
+#+END_SRC
+
+** Action Configuration Inputs
+
+The action supports the following inputs:
+
+| Input                     | Default       | Description                                                                 |
+|---------------------------+---------------+-----------------------------------------------------------------------------|
+| ~packages-file~           | =packages.el= | Path to package recipe registration file.                                   |
+| ~output-dir~              | =public/=     | Directory where the static site and archive streams are written.            |
+| ~work-dir~                | =repos/=      | Working directory where remote Git repositories are cloned and updated.     |
+| ~streams~                 | =all=         | Space-delimited streams to build (=all=, or =snapshot stable staging=).     |
+| ~signing-key~             | =""=          | GPG private key armor for archive signing (omit for unsigned archives).    |
+| ~gpg-passphrase~          | =""=          | Passphrase for the GPG signing key.                                        |
+| ~cache~                   | ="true"=      | Enable all caching (dependencies and Git trees).                            |
+| ~cache-dir~               | =elpa-ci=     | Cache directory for installed ELPA packages and archive metadata.           |
+| ~cache-repos~             | ="true"=      | Cache the =work-dir= Git clones to eliminate full re-clones between builds.  |
+| ~preflight~               | ="0"=         | Run preflight lint/compile checks before packaging (=0= or =1=).            |
+| ~upload-pages-artifact~   | ="false"=     | Automatically upload output directory as a GitHub Pages deployment artifact.|
+
+** Manual Script-Based Runner (Advanced)
+
+For custom CI environments or self-hosted servers without GitHub Actions:
+
+#+BEGIN_SRC yaml
+      - name: Build Repository Manually
         env:
           ELPAISH_OUTPUT_DIR: public/
           ELPAISH_SIGNING_KEY: ${{ secrets.ELPAISH_SIGNING_KEY }}
           ELPAISH_GPG_PASSPHRASE: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
-        run: emacs --batch -L pkg -l scripts/build.el
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: public/
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/deploy-pages@v4
+        run: emacs --batch -L pkg -l scripts/build-elpaish.el
 #+END_SRC
 
 * Downstream User Setup

@@ -1,4 +1,5 @@
-;;; build-elpaish.el --- Headless build runner for ELPAish archives -*- lexical-binding: t; -*-\n
+;;; build-elpaish.el --- Headless build runner for ELPAish archives -*- lexical-binding: t; -*-
+
 ;; Author: tychoish
 ;; Keywords: tools, package, elpa, ci
 
@@ -74,6 +75,11 @@
   (require 'elpaish-recipes)
   (require 'elpaish-website)
   (require 'elpaish-check nil t)
+
+  ;; Configure cloned repositories workspace directory from environment
+  (when (and (getenv "ELPAISH_WORK_DIR")
+             (not (string-empty-p (getenv "ELPAISH_WORK_DIR"))))
+    (setq elpaish-work-dir (expand-file-name (getenv "ELPAISH_WORK_DIR") default-directory)))
 
   ;; Load external package definitions from top-level packages.el or ELPAISH_PACKAGES_FILE
   (when (and (getenv "ELPAISH_PACKAGES_FILE")

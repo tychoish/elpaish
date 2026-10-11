@@ -11,6 +11,10 @@ inputs:
     description: "Directory where the ELPA archive and static website will be written."
     required: false
     default: "public/"
+  work-dir:
+    description: "Directory where remote Git repositories are cloned."
+    required: false
+    default: "repos/"
   streams:
     description: "Space-separated list of streams to generate (e.g. 'all', or 'snapshot stable staging')."
     required: false
@@ -31,6 +35,10 @@ inputs:
     description: "Directory for caching installed ELPA dependencies."
     required: false
     default: "elpa-ci"
+  cache-repos:
+    description: "Enable caching of cloned upstream Git repositories (true/false)."
+    required: false
+    default: "true"
   preflight:
     description: "Run preflight lint/compile quality checks before publishing (0 or 1)."
     required: false
@@ -54,6 +62,15 @@ runs:
       with:
         cache-dir: ${{ inputs.cache-dir }}
 
+    - name: Cache Cloned Git Repositories
+      if: inputs.cache == 'true' && inputs.cache-repos == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.work-dir }}
+        key: elpaish-repos-${{ runner.os }}-${{ hashFiles(inputs.packages-file) }}
+        restore-keys: |
+          elpaish-repos-${{ runner.os }}-
+
     - name: Bootstrap Package Dependencies
       shell: bash
       env:
@@ -68,6 +85,7 @@ runs:
         ELPAISH_ROOT: ${{ github.action_path }}
         ELPAISH_PACKAGES_FILE: ${{ inputs.packages-file }}
         ELPAISH_OUTPUT_DIR: ${{ inputs.output-dir }}
+        ELPAISH_WORK_DIR: ${{ inputs.work-dir }}
         ELPAISH_STREAMS: ${{ inputs.streams }}
         ELPAISH_SIGNING_KEY: ${{ inputs.signing-key }}
         ELPAISH_GPG_PASSPHRASE: ${{ inputs.gpg-passphrase }}
