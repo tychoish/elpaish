@@ -1,5 +1,4 @@
-;;; bootstrap-elpaish.el --- Bootstrap package environment for ELPAish CI -*- lexical-binding: t; -*-
-
+;;; bootstrap-elpaish.el --- Bootstrap package environment for ELPAish CI -*- lexical-binding: t; -*-\n
 ;; Author: tychoish
 ;; Keywords: tools, package, elpa, ci
 
@@ -62,7 +61,10 @@
 (require 'compat nil t)
 
 ;; Load minimal installer and install dependencies for elpaish and all registered packages
-(let* ((pkg-dir (expand-file-name "pkg" default-directory))
+(let* ((elpaish-root (or (getenv "ELPAISH_ROOT")
+                         (file-name-directory (directory-file-name (file-name-directory (or load-file-name buffer-file-name default-directory))))
+                         default-directory))
+       (pkg-dir (expand-file-name "pkg" elpaish-root))
        (main-file (expand-file-name "elpaish.el" pkg-dir)))
   (add-to-list 'load-path pkg-dir)
   (require 'elpaish-install)
@@ -75,6 +77,9 @@
   (require 'compat nil t)
   (require 'elpaish)
   (require 'elpaish-recipes)
+  (when (and (getenv "ELPAISH_PACKAGES_FILE")
+             (not (string-empty-p (getenv "ELPAISH_PACKAGES_FILE"))))
+    (setq elpaish-packages-file (getenv "ELPAISH_PACKAGES_FILE")))
   (elpaish-load-packages)
   (dolist (recipe (hash-table-values elpaish-registry))
     (elpaish-install-ensure-package-dependencies recipe))

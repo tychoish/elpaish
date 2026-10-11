@@ -1,5 +1,4 @@
-;;; build-elpaish.el --- Headless build runner for ELPAish archives -*- lexical-binding: t; -*-
-
+;;; build-elpaish.el --- Headless build runner for ELPAish archives -*- lexical-binding: t; -*-\n
 ;; Author: tychoish
 ;; Keywords: tools, package, elpa, ci
 
@@ -33,9 +32,13 @@
     (when (eval condition lexical-binding)
       (cons 'progn body))))
 
-(let ((dir (file-name-directory (or load-file-name buffer-file-name default-directory))))
-  (add-to-list 'load-path (expand-file-name "../pkg" dir))
-  (add-to-list 'load-path (expand-file-name "../scripts" dir))
+(let* ((elpaish-root (or (getenv "ELPAISH_ROOT")
+                         (file-name-directory (directory-file-name (file-name-directory (or load-file-name buffer-file-name default-directory))))
+                         default-directory))
+       (pkg-dir (expand-file-name "pkg" elpaish-root))
+       (scripts-dir (expand-file-name "scripts" elpaish-root)))
+  (add-to-list 'load-path pkg-dir)
+  (add-to-list 'load-path scripts-dir)
   (add-to-list 'load-path (expand-file-name "pkg" default-directory))
   (add-to-list 'load-path (expand-file-name "scripts" default-directory)))
 
@@ -48,7 +51,7 @@
     (setq package-user-dir ci-dir)
     (dolist (d (file-expand-wildcards (expand-file-name "*" ci-dir)))
       (when (file-directory-p d)
-        (add-to-list 'load-path d)))))
+        (add-to-list 'load-path d))))))
 
 (let* ((ci-elpa (expand-file-name "elpa-ci" default-directory))
        (local-elpa (expand-file-name "elpa" default-directory))
@@ -62,8 +65,9 @@
                            ("melpa" . "https://melpa.org/packages/"))))
   (package-initialize)
 
-  ;; Ensure current repository's pkg/ directory takes precedence over installed packages
-  (let ((pkg-dir (expand-file-name "pkg" default-directory)))
+  ;; Ensure elpaish pkg/ directory takes precedence over installed packages
+  (let* ((elpaish-root (or (getenv "ELPAISH_ROOT") default-directory))
+         (pkg-dir (expand-file-name "pkg" elpaish-root)))
     (setq load-path (cons pkg-dir (delete pkg-dir load-path))))
   (require 'compat)
   (require 'elpaish)
@@ -71,7 +75,10 @@
   (require 'elpaish-website)
   (require 'elpaish-check nil t)
 
-  ;; Load external package definitions from top-level packages.el
+  ;; Load external package definitions from top-level packages.el or ELPAISH_PACKAGES_FILE
+  (when (and (getenv "ELPAISH_PACKAGES_FILE")
+             (not (string-empty-p (getenv "ELPAISH_PACKAGES_FILE"))))
+    (setq elpaish-packages-file (getenv "ELPAISH_PACKAGES_FILE")))
   (elpaish-load-packages)
 
   ;; Configure output directory from environment or default to public/
@@ -86,8 +93,18 @@
   ;; Initialize GPG signing from environment variables (ELPAISH_SIGNING_KEY)
   (elpaish-init-signing-from-env)
 
-  (message "[elpaish] Building ELPAish repository into %s..." elpaish-output-dir)
-  (elpaish-build-all 'all elpaish-output-dir)
+  (let ((streams (if (and (getenv "ELPAISH_STREAMS")
+                          (not (string-empty-p (getenv "ELPAISH_STREAMS"))))
+                     (let ((items (split-string (getenv "ELPAISH_STREAMS"))))
+                       (if (member "all" items)
+                           'all
+                         (mapcar #'intern items)))
+                   'all)))
+    (message "[elpaish] Building ELPAish repository (%s) into %s..." streams elpaish-output-dir)
+    (if (eq streams 'all)
+        (elpaish-build-all 'all elpaish-output-dir)
+      (dolist (st streams)
+        (elpaish-build-all st elpaish-output-dir))))
   (message "[elpaish] Repository build complete!"))
 
 (provide 'build-elpaish)

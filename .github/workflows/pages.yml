@@ -26,29 +26,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Ensure texinfo tools are installed
-        run: which makeinfo >/dev/null 2>&1 && which install-info >/dev/null 2>&1 || (apt-get update && apt-get install -y texinfo install-info)
-
-      - name: Cache Emacs Dependencies
-        uses: tychoish/elisp-ci/cache@main
+      - name: Build ELPAish Repository & Artifact
+        uses: ./
         with:
-          cache-dir: elpa-ci
-          emacs-version: "30.2"
-
-      - name: Bootstrap ELPAish Dependencies
-        run: emacs --batch -l scripts/bootstrap-elpaish.el
-
-      - name: Build ELPAish Repository & Streams
-        env:
-          ELPAISH_SIGNING_KEY: ${{ secrets.ELPAISH_SIGNING_KEY }}
-          ELPAISH_GPG_PASSPHRASE: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
-          ELPAISH_OUTPUT_DIR: public/
-          ELPAISH_RUN_PREFLIGHT: "0"
-        run: emacs --batch -L pkg -L scripts -l scripts/build-elpaish.el
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: public/
+          packages-file: packages.el
+          output-dir: public/
+          signing-key: ${{ secrets.ELPAISH_SIGNING_KEY }}
+          gpg-passphrase: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
+          upload-pages-artifact: "true"
 
   deploy:
     environment:
@@ -75,7 +60,6 @@ jobs:
         uses: tychoish/elisp-ci/cache@main
         with:
           cache-dir: elpa-ci
-          emacs-version: "30.2"
 
       - name: Bootstrap ELPAish Dependencies
         run: emacs --batch -l scripts/bootstrap-elpaish.el
