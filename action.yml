@@ -74,15 +74,30 @@ runs:
     - name: Bootstrap Package Dependencies
       shell: bash
       env:
-        ELPAISH_ROOT: ${{ github.action_path }}
+        ELPAISH_ACTION_PATH: ${{ github.action_path }}
         ELPAISH_PACKAGES_FILE: ${{ inputs.packages-file }}
       run: |
-        emacs --batch -l "${{ github.action_path }}/scripts/bootstrap-elpaish.el"
+        emacs --batch --eval '
+          (let* ((raw (getenv "ELPAISH_ACTION_PATH"))
+                 (resolve (lambda (p)
+                            (cond
+                             ((or (null p) (string-empty-p p)) nil)
+                             ((file-directory-p p) (expand-file-name p))
+                             ((and (string-prefix-p "/home/runner/work/" p)
+                                   (file-directory-p (concat "/__w/" (substring p 18))))
+                              (expand-file-name (concat "/__w/" (substring p 18))))
+                             ((and (getenv "GITHUB_ACTION_PATH")
+                                   (file-directory-p (getenv "GITHUB_ACTION_PATH")))
+                              (expand-file-name (getenv "GITHUB_ACTION_PATH")))
+                             (t default-directory))))
+                 (root (funcall resolve raw)))
+            (setenv "ELPAISH_ROOT" root)
+            (load (expand-file-name "scripts/bootstrap-elpaish.el" root) nil nil t))'
 
     - name: Build ELPA Package Repository
       shell: bash
       env:
-        ELPAISH_ROOT: ${{ github.action_path }}
+        ELPAISH_ACTION_PATH: ${{ github.action_path }}
         ELPAISH_PACKAGES_FILE: ${{ inputs.packages-file }}
         ELPAISH_OUTPUT_DIR: ${{ inputs.output-dir }}
         ELPAISH_WORK_DIR: ${{ inputs.work-dir }}
@@ -91,7 +106,22 @@ runs:
         ELPAISH_GPG_PASSPHRASE: ${{ inputs.gpg-passphrase }}
         ELPAISH_RUN_PREFLIGHT: ${{ inputs.preflight }}
       run: |
-        emacs --batch -l "${{ github.action_path }}/scripts/build-elpaish.el"
+        emacs --batch --eval '
+          (let* ((raw (getenv "ELPAISH_ACTION_PATH"))
+                 (resolve (lambda (p)
+                            (cond
+                             ((or (null p) (string-empty-p p)) nil)
+                             ((file-directory-p p) (expand-file-name p))
+                             ((and (string-prefix-p "/home/runner/work/" p)
+                                   (file-directory-p (concat "/__w/" (substring p 18))))
+                              (expand-file-name (concat "/__w/" (substring p 18))))
+                             ((and (getenv "GITHUB_ACTION_PATH")
+                                   (file-directory-p (getenv "GITHUB_ACTION_PATH")))
+                              (expand-file-name (getenv "GITHUB_ACTION_PATH")))
+                             (t default-directory))))
+                 (root (funcall resolve raw)))
+            (setenv "ELPAISH_ROOT" root)
+            (load (expand-file-name "scripts/build-elpaish.el" root) nil nil t))'
 
     - name: Upload Pages Artifact
       if: inputs.upload-pages-artifact == 'true'

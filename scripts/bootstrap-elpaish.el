@@ -1,50 +1,45 @@
-;;; bootstrap-elpaish.el --- Bootstrap package environment for ELPAish CI -*- lexical-binding: t; -*-\n
+;;; bootstrap-elpaish.el --- Minimal dependency bootstrapper for ELPAish -*- lexical-binding: t; -*-
+
 ;; Author: tychoish
 ;; Keywords: tools, package, elpa, ci
 
 ;;; Commentary:
-;; Initializes package archives, package-user-dir, and derives core dependencies
-;; for ELPAish and all registered packages in packages.el.
+;; Installs all dependencies declared by elpaish and any packages registered
+;; in packages.el using standard package.el with GNU, NonGNU, and MELPA archives.
+;; Supports automatic path resolution for GitHub Actions container jobs.
 
 ;;; Code:
 
-(require 'cl-lib)
-(unless (macrop 'incf)
-  (defmacro incf (place &optional delta)
-    "Increment PLACE by DELTA (default 1)."
-    (declare (debug (gv-place &optional form)))
-    (if (and (symbolp place) (null delta))
-        (list 'setq place (list '1+ place))
-      (list 'cl-incf place delta))))
-
-(unless (macrop 'decf)
-  (defmacro decf (place &optional delta)
-    "Decrement PLACE by DELTA (default 1)."
-    (declare (debug (gv-place &optional form)))
-    (if (and (symbolp place) (null delta))
-        (list 'setq place (list '1- place))
-      (list 'cl-decf place delta))))
-
-(unless (macrop 'static-when)
-  (defmacro static-when (condition &rest body)
-    "A conditional compilation macro."
-    (declare (indent 1) (debug t))
-    (when (eval condition lexical-binding)
-      (cons 'progn body))))
+(defun elpaish--resolve-container-path (path)
+  "Resolve PATH, translating GitHub Actions runner host paths to container paths if needed."
+  (cond
+   ((or (null path) (string-empty-p path)) path)
+   ((file-exists-p path) (expand-file-name path))
+   ((string-prefix-p "/home/runner/work/" path)
+    (let ((cpath (concat "/__w/" (substring path (length "/home/runner/work/")))))
+      (if (file-exists-p cpath)
+          (expand-file-name cpath)
+        path)))
+   (t path)))
 
 (require 'package)
 
-(let ((ci-dir (expand-file-name "elpa-ci" default-directory)))
-  (setq package-user-dir ci-dir)
-  (dolist (d (file-expand-wildcards (expand-file-name "*" ci-dir)))
-    (when (file-directory-p d)
-      (add-to-list 'load-path d))))
+(let* ((ci-dir (expand-file-name "elpa-ci" default-directory))
+       (local-dir (expand-file-name "elpa" default-directory))
+       (target-dir (cond
+                    ((file-directory-p ci-dir) ci-dir)
+                    ((file-directory-p local-dir) local-dir)
+                    (t (expand-file-name "elpa-ci" default-directory)))))
+  (setq package-user-dir target-dir))
 
 (setq package-archives '(("gnu" . "https://elpa.gnu.org/packages/")
                          ("nongnu" . "https://elpa.nongnu.org/nongnu/")
                          ("melpa" . "https://melpa.org/packages/")))
+
 (package-initialize)
-(unless (bound-and-true-p package-archive-contents)
+
+;; Refresh archives if not already present
+(unless (file-exists-p (expand-file-name "archives" package-user-dir))
   (condition-case err
       (package-refresh-contents)
     (error (message "Warning: package-refresh-contents encountered error: %s" (error-message-string err)))))
@@ -61,7 +56,8 @@
 (require 'compat nil t)
 
 ;; Load minimal installer and install dependencies for elpaish and all registered packages
-(let* ((elpaish-root (or (getenv "ELPAISH_ROOT")
+(let* ((raw-root (getenv "ELPAISH_ROOT"))
+       (elpaish-root (or (and raw-root (elpaish--resolve-container-path raw-root))
                          (file-name-directory (directory-file-name (file-name-directory (or load-file-name buffer-file-name default-directory))))
                          default-directory))
        (pkg-dir (expand-file-name "pkg" elpaish-root))
@@ -79,7 +75,7 @@
   (require 'elpaish-recipes)
   (when (and (getenv "ELPAISH_PACKAGES_FILE")
              (not (string-empty-p (getenv "ELPAISH_PACKAGES_FILE"))))
-    (setq elpaish-packages-file (getenv "ELPAISH_PACKAGES_FILE")))
+    (setq elpaish-packages-file (elpaish--resolve-container-path (getenv "ELPAISH_PACKAGES_FILE"))))
   (elpaish-load-packages)
   (dolist (recipe (hash-table-values elpaish-registry))
     (elpaish-install-ensure-package-dependencies recipe))
