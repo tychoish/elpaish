@@ -33,17 +33,22 @@ jobs:
           output-dir: public/
           signing-key: ${{ secrets.ELPAISH_SIGNING_KEY }}
           gpg-passphrase: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
-          upload-pages-artifact: "false"
+          upload-pages-artifact: false
 
       - name: Run Fast Local Consumer Integration Tests
         uses: tychoish/elisp-ci@main
         env:
-          ELPAISH_RUN_INTEGRATION_TESTS: "local"
+          ELPAISH_RUN_INTEGRATION_TESTS: local
         with:
-          test-files: "test/test-elpaish-integration.el"
-          load-paths: "pkg scripts test"
-          dependencies: "compat web-server"
-          cache-dir: "elpa-ci"
+          test-files: test/test-elpaish-integration.el
+          load-paths: |
+            pkg
+            scripts
+            test
+          dependencies: |
+            compat
+            web-server
+          cache-dir: elpa-ci
 
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
@@ -64,27 +69,36 @@ jobs:
         id: deployment
 
   verify:
-    name: Verify Deployment (${{ matrix.stream }})
+    name: Verify Deployment (${{ matrix.stream }}, Emacs ${{ matrix.emacs-version }})
     runs-on: ubuntu-latest
-    container: silex/emacs:30.2-ci
+    container: silex/emacs:${{ matrix.emacs-version }}-ci
     needs: deploy
     strategy:
       fail-fast: false
       matrix:
+        emacs-version:
+          - "29.4"
+          - "30.2"
+          - "31.1"
         stream:
-          - "staging"
-          - "stable"
-          - "snapshot"
+          - staging
+          - stable
+          - snapshot
     steps:
       - uses: actions/checkout@v5
 
       - name: Run Consumer Subprocess Integration Tests
         uses: tychoish/elisp-ci@main
         env:
-          ELPAISH_RUN_INTEGRATION_TESTS: "live"
+          ELPAISH_RUN_INTEGRATION_TESTS: live
           ELPAISH_ARCHIVE_URL: ${{ needs.deploy.outputs.page_url }}${{ matrix.stream }}/
         with:
-          test-files: "test/test-elpaish-integration.el"
-          load-paths: "pkg scripts test"
-          dependencies: "compat web-server"
-          cache-dir: "elpa-ci"
+          test-files: test/test-elpaish-integration.el
+          load-paths: |
+            pkg
+            scripts
+            test
+          dependencies: |
+            compat
+            web-server
+          cache-dir: elpa-ci
