@@ -55,11 +55,26 @@ jobs:
         id: deployment
 
   verify:
-    name: Verify Deployment HTTP Smoke Check
+    name: Verify Deployment & Run Consumer Integration Tests
     runs-on: ubuntu-latest
+    container: silex/emacs:30.2-ci
     needs: deploy
     steps:
-      - name: Smoke Check Live Archive
+      - uses: actions/checkout@v5
+
+      - name: Cache Emacs Dependencies
+        uses: tychoish/elisp-ci/cache@main
+        with:
+          cache-dir: elpa-ci
+
+      - name: Bootstrap ELPAish Dependencies
+        run: emacs --batch -l scripts/bootstrap-elpaish.el
+
+      - name: Run Consumer Subprocess Integration Tests
+        env:
+          ELPAISH_RUN_INTEGRATION_TESTS: "1"
+          ELPAISH_ARCHIVE_URL: ${{ needs.deploy.outputs.page_url }}snapshot/
         run: |
-          curl -fsSL "${{ needs.deploy.outputs.page_url }}snapshot/archive-contents" -o /dev/null
-          curl -fsSL "${{ needs.deploy.outputs.page_url }}elpaish-keyring.gpg" -o /dev/null
+          emacs --batch -L pkg -L scripts -L test \
+            -l test/test-elpaish-integration.el \
+            --eval '(ert-run-tests-batch-and-exit "^elpaish-integration-test-.*")'
