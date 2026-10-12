@@ -38,7 +38,7 @@ jobs:
       - name: Run Fast Local Consumer Integration Tests
         uses: tychoish/elisp-ci@main
         env:
-          ELPAISH_RUN_INTEGRATION_TESTS: local
+          ELPAISH_RUN_INTEGRATION_TESTS: all
         with:
           test-files: test/test-elpaish-integration.el
           load-paths: |
@@ -90,7 +90,7 @@ jobs:
       - name: Run Consumer Subprocess Integration Tests
         uses: tychoish/elisp-ci@main
         env:
-          ELPAISH_RUN_INTEGRATION_TESTS: live
+          ELPAISH_RUN_INTEGRATION_TESTS: all
           ELPAISH_ARCHIVE_URL: ${{ needs.deploy.outputs.page_url }}${{ matrix.stream }}/
         with:
           test-files: test/test-elpaish-integration.el

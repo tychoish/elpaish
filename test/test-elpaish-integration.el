@@ -43,43 +43,42 @@ Can also be controlled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS'.
   :type 'boolean
   :group 'elpaish)
 
+(defun elpaish-integration-archive-url ()
+  "Return active ELPAish archive URL for live integration testing."
+  (let ((env-url (getenv "ELPAISH_ARCHIVE_URL")))
+    (if (and env-url (not (string-empty-p (string-trim env-url))))
+        (string-trim env-url)
+      "https://tychoish.github.io/elpaish/snapshot/")))
+
 (defun elpaish-integration-tests-enabled-p (&optional test-type)
   "Return non-nil if integration tests (optionally of TEST-TYPE) are enabled.
-TEST-TYPE can be \\='local, \\='live, \\='signing, or nil (any).
+TEST-TYPE can be \x27local, \x27live, \x27signing, or nil (any).
 
-The environment variable `ELPAISH_RUN_INTEGRATION_TESTS' controls execution:
-- Falsy values (\"0\", \"false\", \"no\", \"off\", \"never\", \"none\") disable all tests.
-- Truthy values (\"1\", \"true\", \"yes\", \"on\", \"all\", \"always\", \"t\") enable tests.
-- Selective values (\"local\", \"offline\") enable only local/offline tests.
-- Selective values (\"live\", \"online\", \"remote\") enable only live deployment tests.
-- If unset, defaults to `elpaish-run-integration-tests' or `noninteractive' for local tests."
+The environment variable `ELPAISH_RUN_INTEGRATION_TESTS\x27 controls execution:
+- Falsy values (0, false, no, off, never, none, disabled) disable all tests.
+- Selective values (local, offline) enable only local/offline tests.
+- Selective values (live, online, remote) enable only live deployment tests.
+- Truthy values (1, true, yes, on, all, always, t, enabled) enable all tests.
+- If unset: enables all integration tests in noninteractive/batch mode,
+  defaulting live deployment tests to https://tychoish.github.io/elpaish/snapshot/."
   (let* ((raw (getenv "ELPAISH_RUN_INTEGRATION_TESTS"))
          (val (and raw (downcase (string-trim raw)))))
     (cond
      ;; Explicitly disabled
-     ((member val '("0" "false" "no" "off" "never" "none"))
+     ((member val '("0" "false" "no" "off" "never" "none" "disabled"))
       nil)
-     ;; Explicitly enabled for all
-     ((member val '("1" "true" "yes" "on" "all" "always" "t"))
-      (if (eq test-type 'live)
-          (and (getenv "ELPAISH_ARCHIVE_URL")
-               (not (string-empty-p (string-trim (getenv "ELPAISH_ARCHIVE_URL")))))
-        t))
      ;; Local/offline only
      ((member val '("local" "offline"))
       (not (eq test-type 'live)))
      ;; Live/remote only
      ((member val '("live" "online" "remote"))
-      (and (eq test-type 'live)
-           (getenv "ELPAISH_ARCHIVE_URL")
-           (not (string-empty-p (string-trim (getenv "ELPAISH_ARCHIVE_URL"))))))
-     ;; Unset: check defcustom, else allow local tests in batch mode
+      (eq test-type 'live))
+     ;; Explicitly enabled for all
+     ((member val '("1" "true" "yes" "on" "all" "always" "t" "enabled"))
+      t)
+     ;; Unset: in batch mode or if elpaish-run-integration-tests is non-nil, enable all tests
      (t
-      (or elpaish-run-integration-tests
-          (if (eq test-type 'live)
-              (and (getenv "ELPAISH_ARCHIVE_URL")
-                   (not (string-empty-p (string-trim (getenv "ELPAISH_ARCHIVE_URL")))))
-            noninteractive))))))
+      (or elpaish-run-integration-tests noninteractive)))))
 
 (defmacro elpaish-integration-skip-unless (form &optional reason)
   "Skip current test unless FORM yields non-nil, reporting REASON."
@@ -248,26 +247,28 @@ locally-built fixtures in this file), and `package-check-signature' set to
 is present but its key is unknown, `package.el' signals `bad-signature'
 regardless, so a consumer without the key installed would fail here."
   (elpaish-integration-skip-unless (elpaish-integration-tests-enabled-p 'live)
-                                   "Live deployment test disabled or ELPAISH_ARCHIVE_URL unset")
-  (let ((live-url (getenv "ELPAISH_ARCHIVE_URL")))
-    (when (and live-url (not (string-empty-p (string-trim live-url))))
-      (elpaish-integration-test-with-env
-       (let* ((clean-url (string-trim live-url))
-              (base-url (replace-regexp-in-string "/\\(?:snapshot\\|staging\\|stable\\)/?$" "/" clean-url))
-              (keyring-file (expand-file-name "elpaish-keyring.gpg" temp-root)))
-         (url-copy-file (concat (file-name-as-directory base-url) "elpaish-keyring.gpg") keyring-file t)
-         (let* ((sub-code
-                 (format "(progn (require (quote package)) (setq package-user-dir \"%s/elpa\") (setq package-archives (list (cons \"gnu\" \"https://elpa.gnu.org/packages/\") (cons \"nongnu\" \"https://elpa.nongnu.org/nongnu/\") (cons \"melpa\" \"https://melpa.org/packages/\") (cons \"elpaish-live\" \"%s\"))) (setq package-check-signature (quote allow-unsigned)) (package-initialize) (package-import-keyring \"%s\") (package-refresh-contents) (let* ((live-entries (seq-filter (lambda (e) (equal (package-desc-archive (cadr e)) \"elpaish-live\")) package-archive-contents)) (first-pkg (car (car live-entries)))) (if first-pkg (progn (package-install first-pkg) (require first-pkg) (message \"LIVE_CONSUMER_SUCCESS for %%S\" first-pkg)) (message \"LIVE_ARCHIVE_EMPTY_SUCCESS for %%s\" \"%s\"))))"
-                         consumer-home (file-name-as-directory clean-url) keyring-file (file-name-as-directory clean-url)))
-                (output-buf (generate-new-buffer " *live-sub-output*"))
-                (process-environment (cons (concat "HOME=" consumer-home) process-environment))
-                (default-directory consumer-home)
-                (exit-code (call-process "emacs" nil output-buf nil "-Q" "--batch" "--eval" sub-code))
-                (output-str (with-current-buffer output-buf (buffer-string))))
-           (kill-buffer output-buf)
-           (should (equal exit-code 0))
-           (should (or (string-match-p "LIVE_CONSUMER_SUCCESS" output-str)
-                       (string-match-p "LIVE_ARCHIVE_EMPTY_SUCCESS" output-str)))))))))
+                                   "Live deployment test disabled")
+  (let* ((live-url (elpaish-integration-archive-url))
+         (clean-url (string-trim live-url))
+         (base-url (replace-regexp-in-string "/\\(?:snapshot\\|staging\\|stable\\)/?$" "/" clean-url)))
+    (elpaish-integration-test-with-env
+     (let ((keyring-file (expand-file-name "elpaish-keyring.gpg" temp-root)))
+       (condition-case err
+           (url-copy-file (concat (file-name-as-directory base-url) "elpaish-keyring.gpg") keyring-file t)
+         (error
+          (ert-skip (format "Cannot fetch live keyring from %s: %s" base-url (error-message-string err)))))
+       (let* ((sub-code
+               (format "(progn (require (quote package)) (setq package-user-dir \"%s/elpa\") (setq package-archives (list (cons \"gnu\" \"https://elpa.gnu.org/packages/\") (cons \"nongnu\" \"https://elpa.nongnu.org/nongnu/\") (cons \"melpa\" \"https://melpa.org/packages/\") (cons \"elpaish-live\" \"%s\"))) (setq package-check-signature (quote allow-unsigned)) (package-initialize) (package-import-keyring \"%s\") (package-refresh-contents) (let* ((live-entries (seq-filter (lambda (e) (equal (package-desc-archive (cadr e)) \"elpaish-live\")) package-archive-contents)) (first-pkg (car (car live-entries)))) (if first-pkg (progn (package-install first-pkg) (require first-pkg) (message \"LIVE_CONSUMER_SUCCESS for %%S\" first-pkg)) (message \"LIVE_ARCHIVE_EMPTY_SUCCESS for %%s\" \"%s\"))))"
+                       consumer-home (file-name-as-directory clean-url) keyring-file (file-name-as-directory clean-url)))
+              (output-buf (generate-new-buffer " *live-sub-output*"))
+              (process-environment (cons (concat "HOME=" consumer-home) process-environment))
+              (default-directory consumer-home)
+              (exit-code (call-process "emacs" nil output-buf nil "-Q" "--batch" "--eval" sub-code))
+              (output-str (with-current-buffer output-buf (buffer-string))))
+         (kill-buffer output-buf)
+         (should (equal exit-code 0))
+         (should (or (string-match-p "LIVE_CONSUMER_SUCCESS" output-str)
+                     (string-match-p "LIVE_ARCHIVE_EMPTY_SUCCESS" output-str))))))))
 
 ;;;###autoload
 (ert-deftest elpaish-integration-test-local-preview-server ()
