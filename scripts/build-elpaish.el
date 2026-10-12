@@ -66,7 +66,7 @@
     (setq package-user-dir ci-dir)
     (dolist (d (file-expand-wildcards (expand-file-name "*" ci-dir)))
       (when (file-directory-p d)
-        (add-to-list 'load-path d))))))
+        (add-to-list 'load-path d)))))
 
 (let* ((ci-elpa (expand-file-name "elpa-ci" default-directory))
        (local-elpa (expand-file-name "elpa" default-directory))
