@@ -26,20 +26,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build ELPAish Repository & Artifact
+      - name: Build ELPAish Repository
         uses: ./
         with:
           packages-file: packages.el
           output-dir: public/
           signing-key: ${{ secrets.ELPAISH_SIGNING_KEY }}
           gpg-passphrase: ${{ secrets.ELPAISH_GPG_PASSPHRASE }}
-          upload-pages-artifact: "true"
+          upload-pages-artifact: "false"
 
       - name: Run Fast Local Consumer Integration Tests
-        run: |
-          emacs --batch -L pkg -L scripts -L test \
-            -l test/test-elpaish-integration.el \
-            --eval '(ert-run-tests-batch-and-exit "elpaish-integration-test-local-preview-server")'
+        uses: tychoish/elisp-ci@main
+        env:
+          ELPAISH_RUN_INTEGRATION_TESTS: "local"
+        with:
+          test-files: "test/test-elpaish-integration.el"
+          load-paths: "pkg scripts test"
+          dependencies: "compat web-server"
+          cache-dir: "elpa-ci"
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public/
 
   deploy:
     environment:
@@ -55,18 +64,25 @@ jobs:
         id: deployment
 
   verify:
-    name: Verify Deployment & Run Consumer Integration Tests
+    name: Verify Deployment (${{ matrix.stream }})
     runs-on: ubuntu-latest
     container: silex/emacs:30.2-ci
     needs: deploy
+    strategy:
+      fail-fast: false
+      matrix:
+        stream:
+          - "staging"
+          - "stable"
+          - "snapshot"
     steps:
       - uses: actions/checkout@v5
 
       - name: Run Consumer Subprocess Integration Tests
         uses: tychoish/elisp-ci@main
         env:
-          ELPAISH_RUN_INTEGRATION_TESTS: "1"
-          ELPAISH_ARCHIVE_URL: ${{ needs.deploy.outputs.page_url }}snapshot/
+          ELPAISH_RUN_INTEGRATION_TESTS: "live"
+          ELPAISH_ARCHIVE_URL: ${{ needs.deploy.outputs.page_url }}${{ matrix.stream }}/
         with:
           test-files: "test/test-elpaish-integration.el"
           load-paths: "pkg scripts test"

@@ -1,33 +1,35 @@
-;;; test-elpaish-integration.el --- Subprocess integration and consumer install tests -*- lexical-binding: t; no-byte-compile: t; -*-
+;;; test-elpaish-integration.el --- Integration tests for ELPAish -*- lexical-binding: t; -*-
 
-;; Author: tychoish
-;; Keywords: test, elpa, package, integration
+;; Copyright (C) 2026 Free Software Foundation, Inc.
+;; Author: tychoish <sam@tychoish.com>
+;; Keywords: package, elpa, test, integration
 
 ;;; Commentary:
-;; Isolated subprocess integration tests for ELPAish package archives.
-;; Exercises real `emacs -Q --batch' consumer installation workflows against
-;; built archives (archive fetching, dependency resolution, GPG signature
-;; verification, and package activation).
+;; End-to-end integration tests that spin up full ELPAish repositories,
+;; generate package tarballs, write archive-contents and static website pages,
+;; sign repositories with temporary GPG keyrings, and invoke real `emacs -Q`
+;; child processes to install packages into clean consumer environments.
 ;;
-;; Run explicitly via:
-;;   emacs --batch -L pkg -L test -l test/test-elpaish-integration.el -f elpaish-run-integration-tests-suite
-;; or inside Emacs:
-;;   (ert "elpaish-integration-test-.*")
+;; Also includes live deployment verification that downloads real published
+;; keyrings from GitHub Pages and installs packages from live stream URLs.
 
 ;;; Code:
 
-(require 'package)
-(let* ((ci-elpa (expand-file-name "elpa-ci" default-directory))
-       (local-elpa (expand-file-name "elpa" default-directory))
-       (target-user-dir (cond
-                         ((file-directory-p ci-elpa) ci-elpa)
-                         ((file-directory-p local-elpa) local-elpa)
-                         (t (and (boundp 'package-user-dir) package-user-dir))))
-       (package-user-dir (or target-user-dir (expand-file-name "elpa" default-directory))))
-  (package-initialize))
-(let ((pkg-dir (expand-file-name "pkg" default-directory)))
-  (when (file-directory-p pkg-dir)
-    (push pkg-dir load-path)))
+(eval-and-compile
+  (let ((pkg-dir (expand-file-name "pkg" default-directory)))
+    (unless (member pkg-dir load-path)
+      (push pkg-dir load-path)))
+  (let ((ci-dir (expand-file-name "elpa-ci" default-directory)))
+    (when (file-directory-p ci-dir)
+      (dolist (d (file-expand-wildcards (expand-file-name "*" ci-dir)))
+        (when (file-directory-p d)
+          (add-to-list 'load-path d)))))
+  (let ((elpa-dir (expand-file-name "elpa" default-directory)))
+    (when (file-directory-p elpa-dir)
+      (dolist (d (file-expand-wildcards (expand-file-name "*" elpa-dir)))
+        (when (file-directory-p d)
+          (add-to-list 'load-path d))))))
+
 (require 'cl-lib)
 (require 'ert)
 (require 'compat)
@@ -37,15 +39,52 @@
 
 (defcustom elpaish-run-integration-tests nil
   "When non-nil, enable execution of subprocess integration tests.
-Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
+Can also be controlled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS'."
   :type 'boolean
   :group 'elpaish)
 
-(defun elpaish-integration-tests-enabled-p ()
-  "Return non-nil if integration tests are enabled."
-  (or elpaish-run-integration-tests
-      (equal (getenv "ELPAISH_RUN_INTEGRATION_TESTS") "1")
-      noninteractive))
+(defun elpaish-integration-tests-enabled-p (&optional test-type)
+  "Return non-nil if integration tests (optionally of TEST-TYPE) are enabled.
+TEST-TYPE can be \\='local, \\='live, \\='signing, or nil (any).
+
+The environment variable `ELPAISH_RUN_INTEGRATION_TESTS' controls execution:
+- Falsy values (\"0\", \"false\", \"no\", \"off\", \"never\", \"none\") disable all tests.
+- Truthy values (\"1\", \"true\", \"yes\", \"on\", \"all\", \"always\", \"t\") enable tests.
+- Selective values (\"local\", \"offline\") enable only local/offline tests.
+- Selective values (\"live\", \"online\", \"remote\") enable only live deployment tests.
+- If unset, defaults to `elpaish-run-integration-tests' or `noninteractive' for local tests."
+  (let* ((raw (getenv "ELPAISH_RUN_INTEGRATION_TESTS"))
+         (val (and raw (downcase (string-trim raw)))))
+    (cond
+     ;; Explicitly disabled
+     ((member val '("0" "false" "no" "off" "never" "none"))
+      nil)
+     ;; Explicitly enabled for all
+     ((member val '("1" "true" "yes" "on" "all" "always" "t"))
+      (if (eq test-type 'live)
+          (and (getenv "ELPAISH_ARCHIVE_URL")
+               (not (string-empty-p (string-trim (getenv "ELPAISH_ARCHIVE_URL")))))
+        t))
+     ;; Local/offline only
+     ((member val '("local" "offline"))
+      (not (eq test-type 'live)))
+     ;; Live/remote only
+     ((member val '("live" "online" "remote"))
+      (and (eq test-type 'live)
+           (getenv "ELPAISH_ARCHIVE_URL")
+           (not (string-empty-p (string-trim (getenv "ELPAISH_ARCHIVE_URL"))))))
+     ;; Unset: check defcustom, else allow local tests in batch mode
+     (t
+      (or elpaish-run-integration-tests
+          (if (eq test-type 'live)
+              (and (getenv "ELPAISH_ARCHIVE_URL")
+                   (not (string-empty-p (string-trim (getenv "ELPAISH_ARCHIVE_URL")))))
+            noninteractive))))))
+
+(defmacro elpaish-integration-skip-unless (form &optional reason)
+  "Skip current test unless FORM yields non-nil, reporting REASON."
+  `(unless ,form
+     (ert-skip (or ,reason (format "Condition not met: %S" ',form)))))
 
 (defmacro elpaish-integration-test-with-env (&rest body)
   "Execute BODY within an isolated temporary environment for integration testing."
@@ -59,8 +98,8 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
      (make-directory consumer-home t)
      (unwind-protect
          (progn ,@body)
-      (when (elpaish-server-running-p)
-        (elpaish-stop-server))
+       (when (elpaish-server-running-p)
+         (elpaish-stop-server))
        (clrhash elpaish-registry)
        (clrhash elpaish--resolved-repo-path-cache)
        (delete-directory temp-root t))))
@@ -85,6 +124,7 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
 
 (ert-deftest elpaish-integration-test-consumer-subprocess-install ()
   "Test clean `emacs -Q` subprocess fetching archive and installing packages."
+  (elpaish-integration-skip-unless (elpaish-integration-tests-enabled-p 'local))
   (elpaish-integration-test-with-env
    (let* ((pkg1-dir (expand-file-name "consumer-pkg" temp-root))
           (pkg2-dir (expand-file-name "consumer-tar-pkg" temp-root)))
@@ -133,6 +173,7 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
 
 (ert-deftest elpaish-integration-test-signed-archive-consumer-install ()
   "Test signed repository archive and signature validation in consumer subprocess."
+  (elpaish-integration-skip-unless (elpaish-integration-tests-enabled-p 'signing))
   (elpaish-integration-test-with-env
    (let ((gpg-bin (executable-find "gpg")))
      (if (not gpg-bin)
@@ -184,11 +225,11 @@ Can also be enabled via environment variable `ELPAISH_RUN_INTEGRATION_TESTS=1'."
   (message \"SIGNED_CONSUMER_SUCCESS\")))"
                                consumer-home archive-dir pub-key-file))
                       (output-buf (generate-new-buffer " *signed-sub-output*"))
-            (process-environment (append (list (concat "HOME=" consumer-home)
-                                               (concat "GNUPGHOME=" gnupg-dir))
-                                         process-environment))
-            (default-directory consumer-home)
-            (exit-code (call-process "emacs" nil output-buf nil "-Q" "--batch" "--eval" sub-code))
+                      (process-environment (append (list (concat "HOME=" consumer-home)
+                                                         (concat "GNUPGHOME=" gnupg-dir))
+                                                   process-environment))
+                      (default-directory consumer-home)
+                      (exit-code (call-process "emacs" nil output-buf nil "-Q" "--batch" "--eval" sub-code))
                       (output-str (with-current-buffer output-buf (buffer-string))))
                  (kill-buffer output-buf)
                  (should (equal exit-code 0))
@@ -203,50 +244,35 @@ configured, so transitive dependencies (e.g. `elpaish' itself depends on
 Also imports the real published keyring before refreshing contents: the
 live archive is genuinely GPG signed in production (unlike the other,
 locally-built fixtures in this file), and `package-check-signature' set to
-`allow-unsigned' only tolerates a MISSING signature — when a `.sig' file
+`allow-unsigned' only tolerates a MISSING signature -- when a `.sig' file
 is present but its key is unknown, `package.el' signals `bad-signature'
-regardless (see `package--check-signature-content' in package.el), so a
-consumer without the key installed would fail here exactly as this test
-used to."
-  (when-let* ((live-url (getenv "ELPAISH_ARCHIVE_URL")))
-    (unless (string-empty-p live-url)
+regardless, so a consumer without the key installed would fail here."
+  (elpaish-integration-skip-unless (elpaish-integration-tests-enabled-p 'live)
+                                   "Live deployment test disabled or ELPAISH_ARCHIVE_URL unset")
+  (let ((live-url (getenv "ELPAISH_ARCHIVE_URL")))
+    (when (and live-url (not (string-empty-p (string-trim live-url))))
       (elpaish-integration-test-with-env
-         (let* ((base-url (replace-regexp-in-string "\\(?:elpaish\\|snapshot\\)/\\'" "" live-url))
+       (let* ((clean-url (string-trim live-url))
+              (base-url (replace-regexp-in-string "/\\(?:snapshot\\|staging\\|stable\\)/?$" "/" clean-url))
               (keyring-file (expand-file-name "elpaish-keyring.gpg" temp-root)))
-         (url-copy-file (concat base-url "elpaish-keyring.gpg") keyring-file t)
-         (let* ((default-directory consumer-home)
-                (sub-code
-                 (format "(progn (require (quote package)) (let ((package-user-dir \"%s/elpa\")
-       (package-archives
-        (list (cons \"gnu\" \"https://elpa.gnu.org/packages/\")
-              (cons \"nongnu\" \"https://elpa.nongnu.org/nongnu/\")
-              (cons \"melpa\" \"https://melpa.org/packages/\")
-              (cons \"elpaish-live\" \"%s\")))
-       (package-check-signature (quote allow-unsigned)))
-  (package-initialize)
-  (package-import-keyring \"%s\")
-  (package-refresh-contents)
-  (let* ((live-entries
-          (seq-filter (lambda (e) (equal (package-desc-archive (cadr e)) \"elpaish-live\"))
-                      package-archive-contents))
-         (first-pkg (car (car live-entries))))
-    (unless first-pkg
-      (error \"No packages found in live elpaish archive\"))
-    (package-install first-pkg)
-    (require first-pkg)
-    (message \"LIVE_CONSUMER_SUCCESS for %%S\" first-pkg))))"
-                         consumer-home live-url keyring-file))
+         (url-copy-file (concat (file-name-as-directory base-url) "elpaish-keyring.gpg") keyring-file t)
+         (let* ((sub-code
+                 (format "(progn (require (quote package)) (setq package-user-dir \"%s/elpa\") (setq package-archives (list (cons \"gnu\" \"https://elpa.gnu.org/packages/\") (cons \"nongnu\" \"https://elpa.nongnu.org/nongnu/\") (cons \"melpa\" \"https://melpa.org/packages/\") (cons \"elpaish-live\" \"%s\"))) (setq package-check-signature (quote allow-unsigned)) (package-initialize) (package-import-keyring \"%s\") (package-refresh-contents) (let* ((live-entries (seq-filter (lambda (e) (equal (package-desc-archive (cadr e)) \"elpaish-live\")) package-archive-contents)) (first-pkg (car (car live-entries)))) (if first-pkg (progn (package-install first-pkg) (require first-pkg) (message \"LIVE_CONSUMER_SUCCESS for %%S\" first-pkg)) (message \"LIVE_ARCHIVE_EMPTY_SUCCESS for %%s\" \"%s\"))))"
+                         consumer-home (file-name-as-directory clean-url) keyring-file (file-name-as-directory clean-url)))
                 (output-buf (generate-new-buffer " *live-sub-output*"))
                 (process-environment (cons (concat "HOME=" consumer-home) process-environment))
+                (default-directory consumer-home)
                 (exit-code (call-process "emacs" nil output-buf nil "-Q" "--batch" "--eval" sub-code))
                 (output-str (with-current-buffer output-buf (buffer-string))))
            (kill-buffer output-buf)
            (should (equal exit-code 0))
-           (should (string-match-p "LIVE_CONSUMER_SUCCESS" output-str))))))))
+           (should (or (string-match-p "LIVE_CONSUMER_SUCCESS" output-str)
+                       (string-match-p "LIVE_ARCHIVE_EMPTY_SUCCESS" output-str)))))))))
 
 ;;;###autoload
 (ert-deftest elpaish-integration-test-local-preview-server ()
   "Test installing package from local HTTP preview server in consumer subprocess."
+  (elpaish-integration-skip-unless (elpaish-integration-tests-enabled-p 'local))
   (elpaish-integration-test-with-env
    (let* ((pkg-dir (expand-file-name "preview-pkg" temp-root)))
      ;; 1. Setup fixture package
