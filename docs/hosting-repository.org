@@ -284,7 +284,7 @@ The action supports the following inputs:
 | ~cache~                   | ="true"=      | Enable all caching (dependencies and Git trees).                            |
 | ~cache-dir~               | =elpa-ci=     | Cache directory for installed ELPA packages and archive metadata.           |
 | ~cache-repos~             | ="true"=      | Cache the =work-dir= Git clones to eliminate full re-clones between builds.  |
-| ~preflight~               | ="0"=         | Run preflight lint/compile checks before packaging (=0= or =1=).            |
+| ~preflight~               | ="false"=     | Run preflight lint/compile checks before packaging (=true= or =false=).      |
 | ~upload-pages-artifact~   | ="false"=     | Automatically upload output directory as a GitHub Pages deployment artifact.|
 
 ** Caching Boundaries and Invariants
