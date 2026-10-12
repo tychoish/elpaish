@@ -23,8 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Ensure texinfo tools are installed
-        run: which makeinfo >/dev/null 2>&1 && which install-info >/dev/null 2>&1 || (apt-get update && apt-get install -y texinfo install-info)
+      - name: Ensure Texinfo Tools
+        uses: tychoish/elisp-ci/texinfo@main
 
       - name: Run ERT Self-Tests
         uses: tychoish/elisp-ci@main
