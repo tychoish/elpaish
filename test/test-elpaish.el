@@ -1985,5 +1985,98 @@ source's last commit time rather than the time of the build."
              (should-not (seq-some (lambda (m) (string-suffix-p "manual.info" m)) members))
              (should-not (seq-some (lambda (m) (string-suffix-p "/dir" m)) members)))))))))
 
+(ert-deftest elpaish-test-async-error-p ()
+  "Test `elpaish-async-error-p' predicate."
+  (should (elpaish-async-error-p '(:error (error "failure") :target local)))
+  (should (elpaish-async-error-p '(:error "raw-error")))
+  (should-not (elpaish-async-error-p nil))
+  (should-not (elpaish-async-error-p '(:ok "success")))
+  (should-not (elpaish-async-error-p "/path/to/artifact.tar")))
+
+(ert-deftest elpaish-test-async-mapcar-synchronous-fallback ()
+  "Test `elpaish-async-mapcar' collecting items and wrapping signaled errors."
+  (let ((items '(1 2 "bad" 4)))
+    (let ((results (elpaish-async-mapcar
+                    (lambda (x)
+                      (if (stringp x)
+                          (error "not a number: %s" x)
+                        (* x 10)))
+                    items)))
+      (should (equal (nth 0 results) 10))
+      (should (equal (nth 1 results) 20))
+      (should (elpaish-async-error-p (nth 2 results)))
+      (should (equal (nth 3 results) 40)))))
+
+(ert-deftest elpaish-test-warm-gpg-agent ()
+  "Test `elpaish--warm-gpg-agent' execution safety."
+  (let ((elpaish-sign-packages nil))
+    (should-not (elpaish--warm-gpg-agent)))
+  (let ((elpaish-sign-packages t))
+    (should (member (elpaish--warm-gpg-agent) '(0 nil 1)))))
+
+(ert-deftest elpaish-test-archive-contents-deterministic-sorting ()
+  "Test that `archive-contents' generates alphabetically sorted entries."
+  (elpaish-test-with-temp-env
+   (let* ((out-dir (expand-file-name "snapshot" elpaish-output-dir))
+          (pkg-z-dir (expand-file-name "z-pkg" temp-dir))
+          (pkg-a-dir (expand-file-name "a-pkg" temp-dir))
+          (pkg-m-dir (expand-file-name "m-pkg" temp-dir)))
+     (make-directory out-dir t)
+     (make-directory pkg-z-dir t)
+     (make-directory pkg-a-dir t)
+     (make-directory pkg-m-dir t)
+     (with-temp-file (expand-file-name "z-pkg.el" pkg-z-dir)
+       (insert ";;; z-pkg.el --- Z -*- lexical-binding: t; -*-\n;; Version: 1.0.0\n(provide 'z-pkg)\n"))
+     (with-temp-file (expand-file-name "a-pkg.el" pkg-a-dir)
+       (insert ";;; a-pkg.el --- A -*- lexical-binding: t; -*-\n;; Version: 1.0.0\n(provide 'a-pkg)\n"))
+     (with-temp-file (expand-file-name "m-pkg.el" pkg-m-dir)
+       (insert ";;; m-pkg.el --- M -*- lexical-binding: t; -*-\n;; Version: 1.0.0\n(provide 'm-pkg)\n"))
+     (let ((elpaish-registry (make-hash-table :test 'equal))
+           (elpaish-sign-packages nil))
+       (elpaish-register-package 'z-pkg pkg-z-dir :preflight-skip t)
+       (elpaish-register-package 'a-pkg pkg-a-dir :preflight-skip t)
+       (elpaish-register-package 'm-pkg pkg-m-dir :preflight-skip t)
+       (setf (elpaish-recipe-version-for-stream (gethash "z-pkg" elpaish-registry) 'snapshot) "1.0.0")
+       (setf (elpaish-recipe-version-for-stream (gethash "a-pkg" elpaish-registry) 'snapshot) "1.0.0")
+       (setf (elpaish-recipe-version-for-stream (gethash "m-pkg" elpaish-registry) 'snapshot) "1.0.0")
+       (elpaish-generate-archive-contents 'snapshot out-dir)
+       (let* ((archive-file (expand-file-name "archive-contents" out-dir))
+              (contents (with-temp-buffer
+                          (insert-file-contents archive-file)
+                          (read (current-buffer))))
+              (entries (cdr contents))
+              (names (mapcar #'car entries)))
+         (should (equal names '(a-pkg m-pkg z-pkg))))))))
+
+(ert-deftest elpaish-test-gnupg-dir-resolution ()
+  "Test that `elpaish--gnupg-dir' respects GNUPGHOME without appending .gnupg."
+  (let ((process-environment (cons "GNUPGHOME=/custom/gpg/home" process-environment)))
+    (should (equal (elpaish--gnupg-dir) (expand-file-name "/custom/gpg/home"))))
+  (let ((process-environment (cons "GNUPGHOME=" (cons "HOME=/tmp/fakehome" process-environment))))
+    (should (equal (elpaish--gnupg-dir) (expand-file-name ".gnupg" "/tmp/fakehome")))))
+
+(ert-deftest elpaish-test-build-all-async-failure-quarantine ()
+  "Test that `elpaish-build-all' quarantines packages that fail in async worker."
+  (elpaish-test-with-temp-env
+   (let* ((pkg1-dir (expand-file-name "pkg1" temp-dir))
+          (pkg2-dir (expand-file-name "pkg2" temp-dir)))
+     (make-directory pkg1-dir t)
+     (make-directory pkg2-dir t)
+     (with-temp-file (expand-file-name "pkg1.el" pkg1-dir)
+       (insert ";;; pkg1.el --- Pkg 1 -*- lexical-binding: t; -*-\n;; Version: 1.0.0\n(provide 'pkg1)\n"))
+     (with-temp-file (expand-file-name "pkg2.el" pkg2-dir)
+       (insert ";;; pkg2.el --- Pkg 2 -*- lexical-binding: t; -*-\n;; Version: 1.0.0\n(provide 'pkg2)\n"))
+     (let ((elpaish-registry (make-hash-table :test 'equal))
+           (elpaish-sign-packages nil)
+           (elpaish-run-preflight nil))
+       (elpaish-register-package 'pkg1 pkg1-dir :preflight-skip t)
+       (elpaish-register-package 'pkg2 pkg2-dir :preflight-skip t)
+       (cl-letf (((symbol-function 'elpaish-build-package)
+                  (lambda (rec stream dir)
+                    (if (equal (elpaish-recipe-name rec) "pkg2")
+                        (error "Simulated async worker build failure for %s" (elpaish-recipe-name rec))
+                      (expand-file-name "pkg1-1.0.0.tar" dir)))))
+         (should-error (elpaish-build-all 'snapshot elpaish-output-dir)))))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here

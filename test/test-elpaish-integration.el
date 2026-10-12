@@ -245,6 +245,56 @@ used to."
            (should (string-match-p "LIVE_CONSUMER_SUCCESS" output-str))))))))
 
 ;;;###autoload
+(ert-deftest elpaish-integration-test-local-preview-server ()
+  "Test installing package from local HTTP preview server in consumer subprocess."
+  (elpaish-integration-test-with-env
+   (let* ((pkg-dir (expand-file-name "preview-pkg" temp-root)))
+     ;; 1. Setup fixture package
+     (elpaish-integration--create-fixture-pkg pkg-dir "preview-pkg" "1.0.0" "Local Preview Server Test")
+     (elpaish-register-package 'preview-pkg pkg-dir)
+
+     ;; 2. Build repository
+     (let ((elpaish-sign-packages nil)
+           (elpaish-run-preflight nil))
+       (elpaish-build-all 'snapshot elpaish-output-dir))
+
+     ;; 3. Start local preview server on an ephemeral port
+     (let* ((port (+ 18000 (random 2000)))
+            (server (elpaish-serve-local port elpaish-output-dir))
+            (active-port (or (elpaish--server-port) port)))
+       (unwind-protect
+           (let* ((archive-url (format "http://127.0.0.1:%d/snapshot/" active-port))
+                  (default-directory consumer-home)
+                  (sub-code
+                   (format "(progn (require (quote package)) (let ((package-user-dir \"%s/elpa\")
+       (package-archives (list (cons \"elpaish-preview\" \"%s\"))))
+  (package-initialize)
+  (package-refresh-contents)
+  (unless (assoc (quote preview-pkg) package-archive-contents)
+    (error \"preview-pkg missing from preview archive-contents\"))
+  (package-install (quote preview-pkg))
+  (require (quote preview-pkg))
+  (unless (equal (preview-pkg-greeting) \"Hello from preview-pkg!\")
+    (error \"preview-pkg greeting failed\"))
+  (message \"PREVIEW_SERVER_CONSUMER_SUCCESS\")))"
+                           consumer-home archive-url))
+                  (output-buf (generate-new-buffer " *preview-sub-output*"))
+                  (process-environment (cons (concat "HOME=" consumer-home) process-environment))
+                  (proc (make-process
+                         :name "elpaish-integ-consumer"
+                         :buffer output-buf
+                         :command (list "emacs" "-Q" "--batch" "--eval" sub-code)))
+                  (deadline (+ (float-time) 15)))
+             (while (and (process-live-p proc) (< (float-time) deadline))
+               (accept-process-output nil 0.05))
+             (when (process-live-p proc)
+               (delete-process proc))
+             (let ((output-str (with-current-buffer output-buf (buffer-string))))
+               (kill-buffer output-buf)
+               (should (equal (process-exit-status proc) 0))
+               (should (string-match-p "PREVIEW_SERVER_CONSUMER_SUCCESS" output-str))))
+         (elpaish-stop-server))))))
+
 (defun elpaish-run-integration-tests-suite ()
   "Run the full ELPAish integration test suite."
   (interactive)

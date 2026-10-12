@@ -277,6 +277,7 @@ The action supports the following inputs:
 | ~packages-file~           | =packages.el= | Path to package recipe registration file.                                   |
 | ~output-dir~              | =public/=     | Directory where the static site and archive streams are written.            |
 | ~work-dir~                | =repos/=      | Working directory where remote Git repositories are cloned and updated.     |
+| ~parallel-jobs~           | =auto=        | Maximum concurrent package build jobs (number or =auto= for CPU count).      |
 | ~streams~                 | =all=         | Space-delimited streams to build (=all=, or =snapshot stable staging=).     |
 | ~signing-key~             | =""=          | GPG private key armor for archive signing (omit for unsigned archives).    |
 | ~gpg-passphrase~          | =""=          | Passphrase for the GPG signing key.                                        |
@@ -285,6 +286,17 @@ The action supports the following inputs:
 | ~cache-repos~             | ="true"=      | Cache the =work-dir= Git clones to eliminate full re-clones between builds.  |
 | ~preflight~               | ="0"=         | Run preflight lint/compile checks before packaging (=0= or =1=).            |
 | ~upload-pages-artifact~   | ="false"=     | Automatically upload output directory as a GitHub Pages deployment artifact.|
+
+** Caching Boundaries and Invariants
+
+ELPAish enforces a strict architectural boundary between external inputs and build outputs:
+
+- *Immutable Upstream Dependencies (=elpa-ci/=)*:
+  Cached across runs. Pre-installed tools and testing packages (=compat=, =web-server=, =package-build=, =htmlize=, =transient=, etc.) do not change between builds and are aggressively restored from cache.
+- *Upstream Git Object Repositories (=repos/=)*:
+  Cached across runs to accelerate incremental fetches and avoid redundant complete clones.
+- *Ephemeral Package Builds and Catalogs (=public/=)*:
+  *NEVER CACHED*. All package tarballs (=*.tar=, =*.el=), cryptographic detached signatures (=*.sig=), checksums, and catalog descriptors (=archive-contents=) are built fresh on every run to eliminate any risk of state corruption, orphaned artifacts, or polluted releases.
 
 ** Manual Script-Based Runner (Advanced)
 

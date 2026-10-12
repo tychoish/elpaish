@@ -42,6 +42,7 @@
 (require 'timer)
 (require 'compile)
 (require 'web-server)
+(require 'elpaish-async)
 
 (require 'cl-lib)
 (unless (macrop 'incf)
@@ -1080,10 +1081,17 @@ OUTPUT-FILE defaults to FILE.sig.  Return the signature path, or nil."
               sig-file)
           (message "Headless signing failed for %s (exit code %S)" file exit-code)
           nil)))))
+(defun elpaish--gnupg-dir ()
+  "Return the active GnuPG configuration and keyring directory."
+  (let ((home (getenv "GNUPGHOME")))
+    (if (and home (not (string-empty-p (string-trim home))))
+        (expand-file-name home)
+      (expand-file-name ".gnupg" (getenv "HOME")))))
+
 (defun elpaish--ensure-gpg-agent-loopback ()
   "Ensure gpg-agent is configured to allow loopback pinentry for batch signing."
   (when (executable-find "gpg")
-    (let* ((gnupg-dir (expand-file-name ".gnupg" (or (getenv "GNUPGHOME") (getenv "HOME"))))
+    (let* ((gnupg-dir (elpaish--gnupg-dir))
            (agent-conf (expand-file-name "gpg-agent.conf" gnupg-dir)))
       (make-directory gnupg-dir t)
       (set-file-modes gnupg-dir #o700)
@@ -1103,6 +1111,15 @@ OUTPUT-FILE defaults to FILE.sig.  Return the signature path, or nil."
           (call-process "gpg-connect-agent" nil nil nil "reloadagent" "/bye"))))))
 
 ;;;###autoload
+(defun elpaish--warm-gpg-agent ()
+  "Ensure `gpg-agent' is running with loopback pinentry enabled.
+Warms the agent prior to parallel dispatch to eliminate keyring lock
+contention on pubring.kbx and race conditions during agent initialization."
+  (when (and elpaish-sign-packages (executable-find "gpg"))
+    (elpaish--ensure-gpg-agent-loopback)
+    (when (executable-find "gpg-connect-agent")
+      (call-process "gpg-connect-agent" nil nil nil "/bye"))))
+
 (defun elpaish-init-signing-from-env ()
   "Initialize GPG signing from `ELPAISH_SIGNING_KEY' environment variable.
 Imports key armor, configures loopback pinentry, detects secret key ID,
@@ -1440,7 +1457,8 @@ OUTPUT-DIRECTORY-PATH defaults to stream destination directory."
   (let* ((effective-stream (elpaish-canonical-stream (or stream elpaish-release-mode)))
          (target-dir (or output-directory-path (elpaish-stream-dir effective-stream)))
          (archive-file (expand-file-name "archive-contents" target-dir))
-         (recipes (hash-table-values elpaish-registry))
+         (recipes (sort (hash-table-values elpaish-registry)
+                        (lambda (a b) (string< (elpaish-recipe-name a) (elpaish-recipe-name b)))))
          (entries
           (delq nil
                 (mapcar
@@ -1488,6 +1506,7 @@ on every call; see `elpaish-build-package'."
   (clrhash elpaish--preflight-cache)
   (setq elpaish--texinfo-warned nil)
   (elpaish--check-texinfo-prerequisites)
+  (elpaish--warm-gpg-agent)
   (let* ((effective-mode (or mode elpaish-release-mode))
          (target-root (or output-directory-path elpaish-output-dir))
          (streams (if (eq effective-mode 'all)
@@ -1499,10 +1518,33 @@ on every call; see `elpaish-build-package'."
     (elpaish-with-build-buffer (format "Build All (%s)" effective-mode)
       (make-directory target-root t)
       (dolist (stream streams)
-        (let ((stream-dir (elpaish-stream-dir stream target-root)))
+        (let* ((stream-dir (elpaish-stream-dir stream target-root))
+               (recipes (sort (hash-table-values elpaish-registry)
+                              (lambda (a b) (string< (elpaish-recipe-name a) (elpaish-recipe-name b))))))
           (make-directory stream-dir t)
-          (dolist (recipe (hash-table-values elpaish-registry))
-            (elpaish-build-package recipe stream stream-dir))
+          (let ((results (elpaish-async-mapcar
+                          (lambda (recipe)
+                            (condition-case err
+                                (cons (elpaish-recipe-name recipe)
+                                      (elpaish-build-package recipe stream stream-dir))
+                              (error
+                               (list :error err :package (elpaish-recipe-name recipe)))))
+                          recipes)))
+            (dolist (res results)
+              (cond
+               ((elpaish-async-error-p res)
+                (let* ((err (plist-get res :error))
+                       (pkg (or (plist-get res :package)
+                                (let ((tgt (plist-get res :target)))
+                                  (if (stringp tgt) tgt (format "%s" tgt)))
+                                "unknown")))
+                  (push pkg elpaish--quarantined-packages)
+                  (elpaish--log "Package %s failed to build: %s" pkg (error-message-string err))))
+               ((and (consp res) (elpaish-async-error-p (cdr res)))
+                (let ((pkg (car res))
+                      (err (plist-get (cdr res) :error)))
+                  (push pkg elpaish--quarantined-packages)
+                  (elpaish--log "Package %s failed to build: %s" pkg (error-message-string err)))))))
           (elpaish-generate-archive-contents stream stream-dir)
           (elpaish-generate-stream-index stream stream-dir)))
 

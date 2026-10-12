@@ -8,13 +8,17 @@ inputs:
     required: false
     default: "packages.el"
   output-dir:
-    description: "Directory where the ELPA archive and static website will be written."
+    description: "Directory where the ELPA archive and static website will be written (ephemeral, never cached)."
     required: false
     default: "public/"
   work-dir:
     description: "Directory where remote Git repositories are cloned."
     required: false
     default: "repos/"
+  parallel-jobs:
+    description: "Maximum concurrent package build jobs (number or 'auto')."
+    required: false
+    default: "auto"
   streams:
     description: "Space-separated list of streams to generate (e.g. 'all', or 'snapshot stable staging')."
     required: false
@@ -56,6 +60,10 @@ runs:
       run: |
         which makeinfo >/dev/null 2>&1 && which install-info >/dev/null 2>&1 || (apt-get update && apt-get install -y texinfo install-info)
 
+    # Cache Invariant: Only immutable external ELPA dependencies and upstream
+    # Git repositories are preserved across runs. Built package tarballs,
+    # signatures, archive catalogs, and website HTML (public/) MUST NEVER be
+    # cached to ensure build purity and reproducibility.
     - name: Cache Emacs Dependencies
       if: inputs.cache == 'true'
       uses: tychoish/elisp-ci/cache@main
@@ -101,6 +109,7 @@ runs:
         ELPAISH_PACKAGES_FILE: ${{ inputs.packages-file }}
         ELPAISH_OUTPUT_DIR: ${{ inputs.output-dir }}
         ELPAISH_WORK_DIR: ${{ inputs.work-dir }}
+        ELPAISH_PARALLEL_JOBS: ${{ inputs.parallel-jobs }}
         ELPAISH_STREAMS: ${{ inputs.streams }}
         ELPAISH_SIGNING_KEY: ${{ inputs.signing-key }}
         ELPAISH_GPG_PASSPHRASE: ${{ inputs.gpg-passphrase }}

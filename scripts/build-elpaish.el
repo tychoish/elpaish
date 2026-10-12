@@ -66,7 +66,7 @@
     (setq package-user-dir ci-dir)
     (dolist (d (file-expand-wildcards (expand-file-name "*" ci-dir)))
       (when (file-directory-p d)
-        (add-to-list 'load-path d)))))
+        (add-to-list 'load-path d))))))
 
 (let* ((ci-elpa (expand-file-name "elpa-ci" default-directory))
        (local-elpa (expand-file-name "elpa" default-directory))
@@ -91,6 +91,16 @@
   (require 'elpaish-recipes)
   (require 'elpaish-website)
   (require 'elpaish-check nil t)
+  (require 'elpaish-async nil t)
+
+  ;; Configure concurrency from ELPAISH_PARALLEL_JOBS
+  (when-let* ((jobs-env (getenv "ELPAISH_PARALLEL_JOBS"))
+              ((not (string-empty-p jobs-env))))
+    (if (or (string= jobs-env "auto") (string= jobs-env "0"))
+        (setq elpaish-parallel-jobs (min 8 (num-processors)))
+      (let ((parsed (string-to-number jobs-env)))
+        (when (> parsed 0)
+          (setq elpaish-parallel-jobs parsed)))))
 
   ;; Configure cloned repositories workspace directory from environment
   (when (and (getenv "ELPAISH_WORK_DIR")
