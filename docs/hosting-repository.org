@@ -232,7 +232,7 @@ jobs:
           fetch-depth: 0
 
       - name: Build ELPAish Repository
-        uses: tychoish/elisp-ci/publish@main
+        uses: tychoish/elisp-ci/elpaish@main
         with:
           packages-file: packages.el
           output-dir: public/
@@ -260,7 +260,7 @@ delegating =publish= sub-action:
 
 #+BEGIN_SRC yaml
       - name: Publish ELPA Archive
-        uses: tychoish/elisp-ci/publish@main
+        uses: tychoish/elisp-ci/elpaish@main
         with:
           packages-file: packages.el
           output-dir: public/
