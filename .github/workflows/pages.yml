@@ -5,7 +5,7 @@ on:
     branches: [main]
   schedule:
     # Rebuild development snapshots and staging tracks every 6 hours
-    - cron: '0 */6 * * *'
+    - cron: "0 */6 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -62,19 +62,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Cache Emacs Dependencies
-        uses: tychoish/elisp-ci/cache@main
-        with:
-          cache-dir: elpa-ci
-
-      - name: Bootstrap ELPAish Dependencies
-        run: emacs --batch -l scripts/bootstrap-elpaish.el
-
       - name: Run Consumer Subprocess Integration Tests
+        uses: tychoish/elisp-ci@main
         env:
           ELPAISH_RUN_INTEGRATION_TESTS: "1"
           ELPAISH_ARCHIVE_URL: ${{ needs.deploy.outputs.page_url }}snapshot/
-        run: |
-          emacs --batch -L pkg -L scripts -L test \
-            -l test/test-elpaish-integration.el \
-            --eval '(ert-run-tests-batch-and-exit "^elpaish-integration-test-.*")'
+        with:
+          test-files: "test/test-elpaish-integration.el"
+          load-paths: "pkg scripts test"
+          dependencies: "compat web-server"
+          cache-dir: "elpa-ci"
