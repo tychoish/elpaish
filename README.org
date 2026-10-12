@@ -195,7 +195,7 @@ composite GitHub Action:
 
 #+BEGIN_SRC yaml
 - name: Build and Publish ELPA Repository
-  uses: tychoish/elpaish@main
+  uses: tychoish/elisp-ci/publish@main
   with:
     packages-file: packages.el
     output-dir: public/

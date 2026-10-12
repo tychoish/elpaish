@@ -232,7 +232,7 @@ jobs:
           fetch-depth: 0
 
       - name: Build ELPAish Repository
-        uses: tychoish/elpaish@main
+        uses: tychoish/elisp-ci/publish@main
         with:
           packages-file: packages.el
           output-dir: public/
