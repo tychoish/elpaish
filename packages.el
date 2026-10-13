@@ -187,6 +187,15 @@
  :keywords '("tools" "mcp" "gptel" "llm"))
 
 (elpaish-register-package
+ 'gptel-pup
+ (elpaish-recipe-path "https://github.com/tychoish/gptel-pup.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "gptel backend for DataDog Pup CLI (pup acp serve / Bits AI)"
+ :url "https://github.com/tychoish/gptel-pup"
+ :keywords '("tools" "gptel" "llm" "datadog"))
+
+(elpaish-register-package
  'denote-tree
  (elpaish-recipe-path "https://github.com/tychoish/denote-tree.git")
  :branch "main"
