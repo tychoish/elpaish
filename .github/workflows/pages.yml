@@ -47,7 +47,13 @@ jobs:
             test
           dependencies: |
             compat
+            package-build
+            htmlize
             web-server
+            transient
+            annotated-completing-read
+            modus-themes
+          cache: "true"
           cache-dir: elpa-ci
 
       - name: Upload Pages Artifact
@@ -100,5 +106,11 @@ jobs:
             test
           dependencies: |
             compat
+            package-build
+            htmlize
             web-server
+            transient
+            annotated-completing-read
+            modus-themes
+          cache: "true"
           cache-dir: elpa-ci
