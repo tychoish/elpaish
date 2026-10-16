@@ -45,11 +45,16 @@
        (package-user-dir (or target-user-dir (expand-file-name "elpa" default-directory))))
   (package-initialize))
 (let* ((this-dir (file-name-directory (or load-file-name buffer-file-name (expand-file-name "test/dummy" default-directory))))
+       (root-dir (file-name-directory (directory-file-name this-dir)))
+       (gen-dir (expand-file-name "../gen.el" root-dir))
        (pkg-dir (expand-file-name "../pkg" this-dir)))
+  (when (file-directory-p gen-dir)
+    (setq load-path (cons (file-name-as-directory gen-dir) load-path)))
   (when (file-directory-p pkg-dir)
     (setq load-path (cons (file-name-as-directory pkg-dir) load-path))))
 (require 'ert)
 (require 'compat)
+(require 'gen nil t)
 (require 'elpaish)
 (require 'elpaish-recipes)
 (require 'elpaish-check)
@@ -1469,25 +1474,25 @@ source's last commit time rather than the time of the build."
     (should (elpaish-verify-signing-key--subkey-expired-p past-key))))
 
 (ert-deftest elpaish-test-install-packages-fallback-and-list ()
-  "Test `elpaish-install-packages' fallback and argument parsing."
+  "Test `elpaish-install-bootstrap-packages' fallback and argument parsing."
   (elpaish-test-with-temp-env
-   (let ((elpaish-install-bootstrap-packages '(boot-a boot-b))
+   (let ((elpaish-install-bootstrap-packages-list '(boot-a boot-b))
          (installed-log nil))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
                ((symbol-function 'package-install) (lambda (pkg) (push pkg installed-log))))
-       ;; Default fallback
-       (elpaish-install-packages)
+       ;; Default fallback (synchronous)
+       (elpaish-install-bootstrap-packages :sync t)
        (should (equal installed-log '(boot-b boot-a)))
        (setq installed-log nil)
 
        ;; List of symbols
-       (elpaish-install-packages '(pkg-x pkg-y))
+       (elpaish-install-packages '(pkg-x pkg-y) :sync t)
        (should (equal installed-log '(pkg-y pkg-x)))))))
 
 (ert-deftest elpaish-test-install-packages-continue-on-error ()
   "Test `elpaish-install-packages' installs packages and continues on error."
   (elpaish-test-with-temp-env
-   (let ((elpaish-install-bootstrap-packages '(dummy-pkg-a dummy-pkg-b))
+   (let ((elpaish-install-bootstrap-packages-list '(dummy-pkg-a dummy-pkg-b))
          (installed-log nil)
          (refresh-called nil))
      (cl-letf (((symbol-function 'package-refresh-contents)
@@ -1500,14 +1505,14 @@ source's last commit time rather than the time of the build."
                       (error "Simulated install error for %s" pkg)
                     (push pkg installed-log)))))
        ;; Test with refresh option and error handling
-       (elpaish-install-packages 'good-pkg 'fail-pkg 'already-installed :refresh t)
+       (elpaish-install-packages 'good-pkg 'fail-pkg 'already-installed :refresh t :sync t)
        (should refresh-called)
        (should (equal installed-log '(good-pkg)))))))
 
 (ert-deftest elpaish-test-upgrade-packages-continue-on-error ()
   "Test `elpaish-install-upgrade-packages' refreshes contents and upgrades packages without error."
   (elpaish-test-with-temp-env
-   (let ((elpaish-install-bootstrap-packages '(boot-pkg))
+   (let ((elpaish-install-bootstrap-packages-list '(boot-pkg))
          (refresh-called nil)
          (upgraded-log nil))
      (cl-letf (((symbol-function 'package-refresh-contents)
@@ -1520,7 +1525,7 @@ source's last commit time rather than the time of the build."
                       (signal 'user-error '("Package is up to date"))
                     (push pkg upgraded-log)))))
        ;; Runs refresh contents first and does not fail on up-to-date or error
-       (elpaish-install-upgrade-packages 'upgrade-pkg 'up-to-date-pkg)
+       (elpaish-install-upgrade-packages 'upgrade-pkg 'up-to-date-pkg :sync t)
        (should refresh-called)
        (should (equal upgraded-log '(upgrade-pkg)))))))
 
@@ -1532,7 +1537,7 @@ source's last commit time rather than the time of the build."
      (cl-letf (((symbol-function 'package-installed-p) (lambda (_) t))
                ((symbol-function 'package-install) (lambda (pkg) (push pkg installed-log)))
                ((symbol-function 'package-refresh-contents) (lambda () (setq refresh-called t))))
-       (let ((res (elpaish-install-packages 'pkg-a 'pkg-b)))
+       (let ((res (elpaish-install-packages 'pkg-a 'pkg-b :action 'install :sync t)))
          (should-not res)
          (should-not installed-log)
          (should-not refresh-called))))))
@@ -1543,25 +1548,25 @@ source's last commit time rather than the time of the build."
    (let ((installed-log nil))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
                ((symbol-function 'package-install) (lambda (pkg) (push pkg installed-log))))
-       (elpaish-install-packages 'pkg-a '((pkg-b (pkg-c))) 'pkg-a)
+       (elpaish-install-packages 'pkg-a '((pkg-b (pkg-c))) 'pkg-a :sync t)
        (should (equal installed-log '(pkg-c pkg-b pkg-a)))))))
 
 (ert-deftest elpaish-test-add-bootstrap-packages ()
-  "Test `elpaish-install-add-bootstrap-packages' appends unique symbols."
+  "Test `elpaish-install-register-bootstrap-package' appends unique symbols and obsolete alias works."
   (elpaish-test-with-temp-env
-   (let ((elpaish-install-bootstrap-packages '(pkg-a pkg-b)))
+   (let ((elpaish-install-bootstrap-packages-list '(pkg-a pkg-b)))
      ;; Append single symbols and list of symbols
-     (elpaish-install-add-bootstrap-packages 'pkg-c 'pkg-b '(pkg-d pkg-a))
-     (should (equal elpaish-install-bootstrap-packages '(pkg-a pkg-b pkg-c pkg-d)))
+     (elpaish-install-register-bootstrap-package 'pkg-c 'pkg-b '(pkg-d pkg-a))
+     (should (equal elpaish-install-bootstrap-packages-list '(pkg-a pkg-b pkg-c pkg-d)))
 
-     ;; Append additional symbols
+     ;; Append additional symbols via obsolete alias
      (elpaish-install-add-bootstrap-packages '(pkg-e pkg-c) 'pkg-f)
-     (should (equal elpaish-install-bootstrap-packages '(pkg-a pkg-b pkg-c pkg-d pkg-e pkg-f))))))
+     (should (equal elpaish-install-bootstrap-packages-list '(pkg-a pkg-b pkg-c pkg-d pkg-e pkg-f))))))
 
 (ert-deftest elpaish-test-install-packages-async-sprite ()
   "Test `elpaish-install-packages' async path using sprite pool."
   (elpaish-test-with-temp-env
-   (let ((elpaish-install-bootstrap-packages '(pkg-async-a pkg-async-b))
+   (let ((elpaish-install-bootstrap-packages-list '(pkg-async-a pkg-async-b))
          (reloaded nil)
          (callback-called nil))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
@@ -1598,7 +1603,7 @@ source's last commit time rather than the time of the build."
                     (when (eq state :resolved)
                       (funcall on-resolve val)))
                   future)))
-       (elpaish-install-packages :async t :callback (lambda (_) (setq callback-called t)))
+       (elpaish-install-packages-async '(pkg-async-a pkg-async-b) :callback (lambda (_) (setq callback-called t)))
        (should reloaded)
        (should callback-called)))))
 
@@ -1609,6 +1614,7 @@ source's last commit time rather than the time of the build."
          (callback-result 'unset))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (_) t)))
        (elpaish-install-packages 'pkg-a 'pkg-b
+                                 :action 'install
                                  :async t
                                  :callback (lambda (res)
                                              (setq callback-called t)
@@ -1617,14 +1623,20 @@ source's last commit time rather than the time of the build."
        (should-not callback-result)))))
 
 (ert-deftest elpaish-test-install-packages-async-fallback-timer ()
-  "Test `elpaish-install-packages' async path falls back to `run-at-time' when sprite unavailable."
+  "Test `elpaish-install-packages' async path falls back to `run-at-time' when gen and sprite unavailable."
   (elpaish-test-with-temp-env
    (let ((timer-called nil)
-         (callback-called nil))
+         (callback-called nil)
+         (orig-fboundp (symbol-function 'fboundp)))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
+               ((symbol-function 'fboundp)
+                (lambda (sym)
+                  (if (memq sym '(gen-run-async sprite-pool-mapcar))
+                      nil
+                    (funcall orig-fboundp sym))))
                ((symbol-function 'require)
                 (lambda (feature &optional filename noerror)
-                  (if (memq feature '(sprite sprite-fleet))
+                  (if (memq feature '(sprite sprite-fleet gen))
                       nil
                     (apply #'require feature filename noerror))))
                ((symbol-function 'run-at-time)
@@ -1634,7 +1646,7 @@ source's last commit time rather than the time of the build."
                ((symbol-function 'elpaish-install--do-packages)
                 (lambda (pkgs &rest _)
                   (mapcar (lambda (p) (list :status :installed :pkg p)) pkgs))))
-       (elpaish-install-packages 'pkg-a :async t :callback (lambda (_) (setq callback-called t)))
+       (elpaish-install-packages 'pkg-a :action 'install :async t :callback (lambda (_) (setq callback-called t)))
        (should timer-called)
        (should callback-called)))))
 
@@ -1646,16 +1658,101 @@ source's last commit time rather than the time of the build."
      (cl-letf (((symbol-function 'package-refresh-contents) (lambda () (setq refresh-called t)))
                ((symbol-function 'package-installed-p) (lambda (_) t))
                ((symbol-function 'package-upgrade) (lambda (p) (push p upgraded))))
-       (elpaish-upgrade-packages 'pkg-a 'pkg-b)
+       (elpaish-upgrade-packages 'pkg-a 'pkg-b :sync t)
        (should refresh-called)
        (should (equal upgraded '(pkg-b pkg-a)))))))
 
 (ert-deftest elpaish-test-add-bootstrap-packages-nested-and-dedup ()
-  "Test `elpaish-install-add-bootstrap-packages' flattens arbitrary nesting and dedups."
+  "Test `elpaish-install-register-bootstrap-package' flattens arbitrary nesting and dedups."
   (elpaish-test-with-temp-env
-   (let ((elpaish-install-bootstrap-packages '(pkg-a pkg-b)))
-     (elpaish-install-add-bootstrap-packages '((pkg-c (pkg-d pkg-a)) "non-symbol" nil (pkg-e (pkg-b pkg-f))))
+   (let ((elpaish-install-bootstrap-packages-list '(pkg-a pkg-b)))
+     (elpaish-install-register-bootstrap-package '((pkg-c (pkg-d pkg-a)) "non-symbol" nil (pkg-e (pkg-b pkg-f))))
+     (should (equal elpaish-install-bootstrap-packages-list '(pkg-a pkg-b pkg-c pkg-d pkg-e pkg-f)))
      (should (equal elpaish-install-bootstrap-packages '(pkg-a pkg-b pkg-c pkg-d pkg-e pkg-f))))))
+
+(ert-deftest elpaish-test-bootstrap-packages-async-yielding-by-default ()
+  "Test `elpaish-install-bootstrap-packages' is async and yielding by default via `gen-run-async'."
+  (elpaish-test-with-temp-env
+   (let ((gen-run-called nil)
+         (gen-items nil)
+         (gen-concurrency nil)
+         (callback-called nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) t))
+               ((symbol-function 'package-upgrade) #'ignore)
+               ((symbol-function 'package-refresh-contents) #'ignore)
+               ((symbol-function 'gen-run-async)
+                (lambda (worker items &rest plist)
+                  (setq gen-run-called t
+                        gen-items items
+                        gen-concurrency (plist-get plist :concurrency))
+                  (dolist (item items)
+                    (funcall worker item #'ignore))
+                  (when-let* ((done (plist-get plist :on-done)))
+                    (funcall done))
+                  (lambda (&optional _) nil))))
+       (let ((handle (elpaish-install-bootstrap-packages 'pkg-1 'pkg-2
+                                                        :callback (lambda (_) (setq callback-called t)))))
+         (should gen-run-called)
+         (should (equal gen-items '(pkg-1 pkg-2)))
+         (should (= gen-concurrency 1))
+         (should callback-called)
+         (should (functionp handle)))))))
+
+(ert-deftest elpaish-test-bootstrap-packages-prefix-override-sync ()
+  "Test interactive prefix argument forces synchronous execution."
+  (elpaish-test-with-temp-env
+   (let ((gen-run-called nil)
+         (installed-log nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
+               ((symbol-function 'package-install) (lambda (p) (push p installed-log)))
+               ((symbol-function 'package-refresh-contents) #'ignore)
+               ((symbol-function 'gen-run-async)
+                (lambda (&rest _) (setq gen-run-called t) (lambda (&optional _) nil))))
+       ;; Calling interactively with prefix arg '(4) forces synchronous execution
+       (let ((current-prefix-arg '(4))
+             (elpaish-install-bootstrap-packages-list '(pkg-sync-a pkg-sync-b)))
+         (call-interactively #'elpaish-install-bootstrap-packages)
+         (should-not gen-run-called)
+         (should (equal installed-log '(pkg-sync-b pkg-sync-a))))))))
+
+(ert-deftest elpaish-test-bootstrap-packages-combined-install-and-upgrade ()
+  "Test `elpaish-install-bootstrap-packages' installs uninstalled and upgrades installed packages."
+  (elpaish-test-with-temp-env
+   (let ((installed nil)
+         (upgraded nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (p) (eq p 'pkg-installed)))
+               ((symbol-function 'package-install) (lambda (p) (push p installed)))
+               ((symbol-function 'package-upgrade) (lambda (p) (push p upgraded)))
+               ((symbol-function 'package-refresh-contents) #'ignore))
+       (let ((res (elpaish-install-bootstrap-packages 'pkg-new 'pkg-installed :sync t)))
+         (should (equal installed '(pkg-new)))
+         (should (equal upgraded '(pkg-installed)))
+         (should (equal (plist-get (car res) :status) :installed))
+         (should (equal (plist-get (cadr res) :status) :upgraded)))))))
+
+(ert-deftest elpaish-test-bootstrap-packages-reload-in-session ()
+  "Test `elpaish-install-bootstrap-packages' reloads packages in the current session."
+  (elpaish-test-with-temp-env
+   (let* ((desc (package-desc-create :name 'pkg-reload :version '(2 0 0)))
+          (package-alist `((pkg-reload ,desc)))
+          (reloaded-desc nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
+               ((symbol-function 'package-install) #'ignore)
+               ((symbol-function 'package-activate) #'ignore)
+               ((symbol-function 'package--reload-previously-loaded) (lambda (d &optional _) (setq reloaded-desc d)))
+               ((symbol-function 'package-refresh-contents) #'ignore))
+       (elpaish-install-bootstrap-packages 'pkg-reload :sync t)
+       (should (equal reloaded-desc desc))))))
+
+(ert-deftest elpaish-test-bootstrap-packages-cancel ()
+  "Test `elpaish-install-cancel' cancels active async installation."
+  (elpaish-test-with-temp-env
+   (let ((cancel-called nil))
+     (setq elpaish-install--active-cancel-handle
+           (lambda (action) (when (eq action :cancel) (setq cancel-called t))))
+     (elpaish-install-cancel)
+     (should cancel-called)
+     (should-not elpaish-install--active-cancel-handle))))
 
 (ert-deftest elpaish-test-process-package-legacy-upgrade ()
   "Test `elpaish-install--process-package' upgrade path when `package-upgrade' is unbound."
@@ -1666,9 +1763,11 @@ source's last commit time rather than the time of the build."
           (desc-cur-arch (package-desc-create :name 'pkg-cur :version '(1 0 0)))
           (package-alist `((pkg-old ,desc-old-inst) (pkg-cur ,desc-cur-inst)))
           (package-archive-contents `((pkg-old ,desc-old-arch) (pkg-cur ,desc-cur-arch)))
-          (installed-log nil))
+          (installed-log nil)
+          (orig-fboundp (symbol-function 'fboundp)))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (p) (memq p '(pkg-old pkg-cur))))
-               ((symbol-function 'fboundp) (lambda (fn) (if (eq fn 'package-upgrade) nil (fboundp fn))))
+               ((symbol-function 'fboundp)
+                (lambda (fn) (if (eq fn 'package-upgrade) nil (funcall orig-fboundp fn))))
                ((symbol-function 'package-install) (lambda (p) (push p installed-log))))
        ;; pkg-old has newer version in archive -> should install
        (let ((res (elpaish-install--process-package 'pkg-old 'upgrade)))

@@ -4,7 +4,7 @@
 ;; Version: 0.1.0
 ;; URL: https://github.com/tychoish/elpaish
 ;; Keywords: maint, tools, local, package, elpa
-;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (compat "30.0.0.0") (htmlize "1.34") (map "3.0") (modus-themes "4.0.0") (package-build "0.1") (seq "2.0") (web-server "0.1.2") (transient "0.8.0"))
+;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (compat "30.0.0.0") (gen "0.1.0") (htmlize "1.34") (map "3.0") (modus-themes "4.0.0") (package-build "0.1") (seq "2.0") (web-server "0.1.2") (transient "0.8.0"))
 
 ;;; Commentary:
 ;; ELPAish is a toolkit for building (and a prototype application of) an
@@ -69,6 +69,7 @@
       (cons 'progn body))))
 
 (require 'annotated-completing-read)
+(require 'gen nil t)
 (require 'htmlize)
 (require 'compat nil t)
 (require 'package-build nil t)
