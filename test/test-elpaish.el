@@ -1835,6 +1835,37 @@ source's last commit time rather than the time of the build."
                ((symbol-function 'package-initialize) #'ignore))
        (elpaish-install-ensure-package-dependencies recipe)
        (should (equal (reverse attempted) '(good-dep broken-dep)))))))
+
+(ert-deftest elpaish-test-ensure-package-dependencies-bare-symbol-requires ()
+  "Test `elpaish-install-ensure-package-dependencies' handles bare symbol requirements."
+  (elpaish-test-with-temp-env
+   (let ((installed-log nil)
+         (recipe (elpaish-recipe-create :name "demo-pkg"
+                                       :repository-path "demo-pkg"
+                                       :requires '(bare-dep (dep-spec "1.0")))))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
+               ((symbol-function 'package-install) (lambda (p) (push p installed-log)))
+               ((symbol-function 'package-refresh-contents) #'ignore)
+               ((symbol-function 'package-initialize) #'ignore))
+       (elpaish-install-ensure-package-dependencies recipe)
+       (should (equal installed-log '(bare-dep dep-spec)))))))
+
+(ert-deftest elpaish-test-ensure-package-dependencies-direct-file-path ()
+  "Test `elpaish-install-ensure-package-dependencies' accepts a direct file path."
+  (elpaish-test-with-temp-env
+   (let* ((installed-log nil)
+          (pkg-file (expand-file-name "demo.el" temp-dir)))
+     (with-temp-file pkg-file
+       (insert ";;; demo.el --- Demo -*- lexical-binding: t; -*-\n"
+               ";; Version: 0.1\n"
+               ";; Package-Requires: ((file-dep \"1.0\"))\n"
+               "(provide 'demo)\n"))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
+               ((symbol-function 'package-install) (lambda (p) (push p installed-log)))
+               ((symbol-function 'package-refresh-contents) #'ignore)
+               ((symbol-function 'package-initialize) #'ignore))
+       (elpaish-install-ensure-package-dependencies pkg-file)
+       (should (equal installed-log '(file-dep)))))))
 (ert-deftest elpaish-test-recipe-exclude-files ()
   "Test `:exclude-files' filters matching files in `elpaish--collect-files'."
   (elpaish-test-with-temp-env

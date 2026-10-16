@@ -94,10 +94,10 @@ PKGS can be package symbols or lists of package symbols.  Updates
 
 ;;;###autoload
 (defun elpaish-install-ensure-package-dependencies (dir-or-recipe)
-  "Ensure dependencies declared in Package-Requires of DIR-OR-RECIPE are installed.
-DIR-OR-RECIPE can be an `elpaish-recipe' struct or a directory string containing
-package sources.  Extracts dependencies from package header and invokes
-`package-install' for any uninstalled dependency."
+  "Ensure dependencies in Package-Requires of DIR-OR-RECIPE are installed.
+DIR-OR-RECIPE can be an `elpaish-recipe' struct, a directory string, or a file
+string containing package sources.  Extracts dependencies from package header
+and invokes `package-install' for any uninstalled dependency."
   (unless package-archives
     (user-error "Cannot ensure package dependencies: `package-archives' is empty"))
   (unless (bound-and-true-p package-archive-contents)
@@ -109,16 +109,25 @@ package sources.  Extracts dependencies from package header and invokes
                 ((and recipe (elpaish-recipe-requires recipe))
                  (elpaish-recipe-requires recipe))
                 (t
-                 (let* ((source-dir (if recipe
+                 (let* ((is-file (and (stringp dir-or-recipe) (file-regular-p dir-or-recipe)))
+                        (source-dir (if recipe
                                         (elpaish--recipe-source-path recipe)
-                                      (file-name-as-directory (expand-file-name dir-or-recipe))))
-                        (name (if recipe (elpaish-recipe-name recipe) (file-name-nondirectory (directory-file-name source-dir))))
-                        (main-file (expand-file-name (format "%s.el" name) source-dir)))
+                                      (if is-file
+                                          (file-name-directory (expand-file-name dir-or-recipe))
+                                        (file-name-as-directory (expand-file-name dir-or-recipe)))))
+                        (name (if recipe
+                                  (elpaish-recipe-name recipe)
+                                (if is-file
+                                    (file-name-base dir-or-recipe)
+                                  (file-name-nondirectory (directory-file-name source-dir)))))
+                        (main-file (if is-file
+                                       (expand-file-name dir-or-recipe)
+                                     (expand-file-name (format "%s.el" name) source-dir))))
                    (elpaish-install--extract-header-requires main-file))))))
     (when reqs
       (let ((missing nil))
         (dolist (req reqs)
-          (let ((dep-pkg (car req)))
+          (let ((dep-pkg (if (consp req) (car req) req)))
             (unless (or (eq dep-pkg 'emacs)
                         (package-installed-p dep-pkg)
                         ;; Skip packages that are part of the local ELPAish repository

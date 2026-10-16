@@ -30,7 +30,6 @@
  (elpaish-recipe-path "https://github.com/tychoish/agent-shell-workflow.git")
  :branch "main"
  :test-dir "test"
- :requires '(transient annotated-completing-read)
  :summary "Dynamic workflow composition and template library for agent-shell"
  :url "https://github.com/tychoish/agent-shell-workflow"
  :keywords '("tools" "agent-shell"))
