@@ -47,3 +47,4 @@ jobs:
             modus-themes
             gen
           cache: "true"
+          cache-key: "20261016"
