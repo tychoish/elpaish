@@ -2289,5 +2289,80 @@ source's last commit time rather than the time of the build."
                       (expand-file-name "pkg1-1.0.0.tar" dir)))))
          (should-error (elpaish-build-all 'snapshot elpaish-output-dir)))))))
 
+(ert-deftest elpaish-test-two-lists-install-and-upgrade-subset ()
+  "Test two package lists and strict subset maintenance for upgrades."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-install-packages-list '(pkg-base-1 pkg-base-2))
+         (elpaish-install-upgrade-packages-list nil))
+     ;; Registering an upgrade package automatically ensures it is in List 1
+     (elpaish-install-register-upgrade-package 'pkg-base-1 'pkg-new-up)
+     (should (member 'pkg-new-up elpaish-install-packages-list))
+     (should (member 'pkg-base-1 elpaish-install-upgrade-packages-list))
+     (should (member 'pkg-new-up elpaish-install-upgrade-packages-list))
+
+     ;; If List 2 is manually manipulated with an item not in List 1,
+     ;; `elpaish-install--get-upgrade-packages' filters it out to enforce strict subset
+     (setq elpaish-install-upgrade-packages-list '(pkg-base-1 pkg-not-in-list1))
+     (should (equal (elpaish-install--get-upgrade-packages) '(pkg-base-1))))))
+
+(ert-deftest elpaish-test-install-packages-blocking-no-refresh-when-installed ()
+  "Test `elpaish-install-packages' is blocking and skips refresh when all installed."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-install-packages-list '(installed-a installed-b))
+         (refresh-called nil)
+         (install-called nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) t))
+               ((symbol-function 'package-refresh-contents)
+                (lambda () (setq refresh-called t)))
+               ((symbol-function 'package-install)
+                (lambda (_) (setq install-called t))))
+       ;; Blocking call without missing packages should not refresh or install
+       (let ((res (elpaish-install-packages)))
+         (should-not res)
+         (should-not refresh-called)
+         (should-not install-called))))))
+
+(ert-deftest elpaish-test-install-packages-blocking-refreshes-when-missing ()
+  "Test `elpaish-install-packages' refreshes and installs blocking when packages missing."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-install-packages-list '(inst-pkg missing-pkg))
+         (refresh-called nil)
+         (installed-log nil))
+     (cl-letf (((symbol-function 'package-installed-p)
+                (lambda (p) (eq p 'inst-pkg)))
+               ((symbol-function 'package-refresh-contents)
+                (lambda () (setq refresh-called t)))
+               ((symbol-function 'package-install)
+                (lambda (p) (push p installed-log))))
+       ;; Missing packages trigger blocking refresh and install
+       (let ((res (elpaish-install-packages)))
+         (should refresh-called)
+         (should (equal installed-log '(missing-pkg)))
+         (should (= (length res) 1))
+         (should (eq (plist-get (car res) :status) :installed)))))))
+
+(ert-deftest elpaish-test-upgrade-packages-lazy-background-command ()
+  "Test `elpaish-install-upgrade-packages' runs lazy and in background by default."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-install-packages-list '(pkg-u1 pkg-u2))
+         (elpaish-install-upgrade-packages-list '(pkg-u1))
+         (gen-called nil)
+         (gen-items nil))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) t))
+               ((symbol-function 'package-upgrade) #'ignore)
+               ((symbol-function 'package-refresh-contents) #'ignore)
+               ((symbol-function 'gen-run-async)
+                (lambda (_worker items &rest plist)
+                  (setq gen-called t
+                        gen-items items)
+                  (when-let* ((done (plist-get plist :on-done)))
+                    (funcall done))
+                  (lambda (&optional _) nil))))
+       ;; Interactive or default call runs in background asynchronously via gen-run-async
+       (let ((handle (call-interactively #'elpaish-install-upgrade-packages)))
+         (should gen-called)
+         (should (equal gen-items '(pkg-u1)))
+         (should (functionp handle)))))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here

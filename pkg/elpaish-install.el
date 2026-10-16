@@ -29,15 +29,28 @@
   :prefix "elpaish-install-")
 
 (define-obsolete-variable-alias
-  'elpaish-install-bootstrap-packages
   'elpaish-install-bootstrap-packages-list
+  'elpaish-install-packages-list
+  "0.3.0")
+
+(define-obsolete-variable-alias
+  'elpaish-install-bootstrap-packages
+  'elpaish-install-packages-list
   "0.2.0")
 
-(defcustom elpaish-install-bootstrap-packages-list
+(defcustom elpaish-install-packages-list
   '(compat web-server htmlize annotated-completing-read transient package-lint)
-  "List of package symbols to install or upgrade during bootstrapping.
-Used as default target package list for `elpaish-install-bootstrap-packages'
+  "List of package symbols to ensure are installed on the system.
+Used as default target package list for `elpaish-install-packages'
 when no explicit packages are specified."
+  :type '(repeat symbol)
+  :group 'elpaish-install)
+
+(defcustom elpaish-install-upgrade-packages-list nil
+  "List of package symbols to upgrade on demand.
+Packages in this list must be a strict subset of
+`elpaish-install-packages-list'.  Used as default target package list
+for `elpaish-install-upgrade-packages'."
   :type '(repeat symbol)
   :group 'elpaish-install)
 
@@ -72,31 +85,67 @@ result plists) and ACTION (symbol, \\='upgrade or \\='install)."
   "Cancellation handle function for active async package installation.")
 
 ;;;###autoload
-(defun elpaish-install-register-bootstrap-package (&rest pkgs)
-  "Append unique package symbols from PKGS to bootstrap package list.
+(defun elpaish-install-register-package (&rest pkgs)
+  "Append unique package symbols from PKGS to `elpaish-install-packages-list'.
 PKGS can be package symbols or lists of package symbols.  Updates
-`elpaish-install-bootstrap-packages-list' and returns it."
+`elpaish-install-packages-list' and returns it."
   (let ((new-pkgs nil))
     (dolist (p (flatten-tree pkgs))
       (when (and (symbolp p)
                  p
-                 (not (memq p elpaish-install-bootstrap-packages-list))
+                 (not (memq p elpaish-install-packages-list))
                  (not (memq p new-pkgs)))
         (push p new-pkgs)))
     (when new-pkgs
-      (setq elpaish-install-bootstrap-packages-list
-            (append elpaish-install-bootstrap-packages-list (nreverse new-pkgs)))))
-  elpaish-install-bootstrap-packages-list)
+      (setq elpaish-install-packages-list
+            (append elpaish-install-packages-list (nreverse new-pkgs)))))
+  elpaish-install-packages-list)
+
+(define-obsolete-function-alias
+  'elpaish-install-register-bootstrap-package
+  #'elpaish-install-register-package
+  "0.3.0")
 
 (define-obsolete-function-alias
   'elpaish-install-register-bootstrap-packages
-  #'elpaish-install-register-bootstrap-package
+  #'elpaish-install-register-package
   "0.2.0")
 
 (define-obsolete-function-alias
   'elpaish-install-add-bootstrap-packages
-  #'elpaish-install-register-bootstrap-package
+  #'elpaish-install-register-package
   "0.2.0")
+
+;;;###autoload
+(defun elpaish-install-register-upgrade-package (&rest pkgs)
+  "Append unique package symbols from PKGS to upgrade list.
+PKGS can be package symbols or lists of package symbols.  Packages
+are also ensured to be in `elpaish-install-packages-list' so that
+the upgrade list is a strict subset of the installed packages list.
+Returns `elpaish-install-upgrade-packages-list'."
+  (let ((new-pkgs nil))
+    (dolist (p (flatten-tree pkgs))
+      (when (and (symbolp p) p)
+        ;; Enforce strict subset: package must be in List 1
+        (unless (memq p elpaish-install-packages-list)
+          (elpaish-install-register-package p))
+        (when (and (not (memq p elpaish-install-upgrade-packages-list))
+                   (not (memq p new-pkgs)))
+          (push p new-pkgs))))
+    (when new-pkgs
+      (setq elpaish-install-upgrade-packages-list
+            (append elpaish-install-upgrade-packages-list (nreverse new-pkgs)))))
+  elpaish-install-upgrade-packages-list)
+
+(define-obsolete-function-alias
+  'elpaish-install-register-upgrade-packages
+  #'elpaish-install-register-upgrade-package
+  "0.3.0")
+
+(defun elpaish-install--get-upgrade-packages ()
+  "Return packages from upgrade list that are in `elpaish-install-packages-list'."
+  (seq-filter (lambda (p) (memq p elpaish-install-packages-list))
+              elpaish-install-upgrade-packages-list))
 
 (defun elpaish-install--extract-header-requires (file)
   "Extract package requirements list from FILE header using `package-buffer-info'."
@@ -481,21 +530,126 @@ Calls CALLBACK when complete and returns a cancellation handle function."
     (ignore-errors (funcall elpaish-install--active-cancel-handle :cancel)))
   (setq elpaish-install--active-cancel-handle nil))
 
-;;;; Public Commands and Collapsed Dispatcher
+;;;; Public Commands and Dispatchers
 
 ;;;###autoload
-(cl-defun elpaish-install-bootstrap-packages (&rest args)
-  "Install or upgrade bootstrap packages with non-blocking cooperative yielding.
-Packages are installed if missing, or upgraded if newer versions exist.
-By default, execution is asynchronous and yielding using `gen.el'.
-When called interactively with a prefix argument (e.g. \\[universal-argument]),
-execution is synchronous.
+(cl-defun elpaish-install-packages (&rest args)
+  "Ensure packages are installed on the system, blocking until complete.
+Only refreshes package archives if at least one package is missing.
+Packages in ARGS (or `elpaish-install-packages-list' if no packages specified)
+are registered into `elpaish-install-packages-list'.
+
+This installation operation is synchronous (blocking) by default, matching the
+semantics of `use-package <name> :ensure t :defer t' during startup.
+
+ARGS can contain package symbols, lists of package symbols, or keyword options:
+  :refresh BOOL     - When non-nil, force package archive refresh even if
+                      all packages are already installed.
+  :sync BOOL        - When non-nil, execute synchronously (default t).
+  :async BOOL       - When non-nil, execute asynchronously.
+  :action ACTION    - Operation action.  If \='upgrade, delegates to
+                      `elpaish-install-upgrade-packages'."
+  (interactive)
+  (let* ((interactive-p (called-interactively-p 'any))
+         (remaining (if interactive-p nil args))
+         (pkgs nil)
+         (force-refresh nil)
+         (action 'install)
+         (sync nil)
+         (async nil)
+         (concurrency nil)
+         (delay nil)
+         (pool-size nil)
+         (callback nil))
+    (while remaining
+      (let ((arg (pop remaining)))
+        (cond
+         ((eq arg :refresh)     (setq force-refresh (pop remaining)))
+         ((eq arg :action)      (setq action (pop remaining)))
+         ((eq arg :sync)        (setq sync (pop remaining)))
+         ((eq arg :async)       (setq async (pop remaining)))
+         ((eq arg :concurrency) (setq concurrency (pop remaining)))
+         ((eq arg :delay)       (setq delay (pop remaining)))
+         ((eq arg :pool-size)   (setq pool-size (pop remaining)))
+         ((or (eq arg :callback) (eq arg :on-done))
+          (setq callback (pop remaining)))
+         ((listp arg)
+          (dolist (p (flatten-tree arg))
+            (when (symbolp p) (push p pkgs))))
+         ((symbolp arg)
+          (push arg pkgs)))))
+    (setq pkgs (delete-dups (nreverse pkgs)))
+    (cond
+     ((eq action 'upgrade)
+      (apply #'elpaish-install-upgrade-packages
+             (append pkgs
+                     (list :refresh force-refresh :sync sync :async async
+                           :concurrency concurrency :delay delay
+                           :pool-size pool-size :callback callback))))
+     (t
+      (when pkgs
+        (apply #'elpaish-install-register-package pkgs))
+      (let* ((target-pkgs (or pkgs elpaish-install-packages-list))
+             (missing (seq-remove #'package-installed-p target-pkgs))
+             (is-async (and async (not sync))))
+        (cond
+         ((and (null missing) (not force-refresh))
+          (when interactive-p
+            (message "[elpaish] All %d package(s) are already installed."
+                     (length target-pkgs)))
+          (when callback (funcall callback nil))
+          nil)
+         (is-async
+          (elpaish-install--do-packages-async
+           (if force-refresh target-pkgs missing)
+           :action 'install
+           :refresh force-refresh
+           :concurrency concurrency
+           :delay delay
+           :pool-size pool-size
+           :callback callback))
+         (t
+          (unless (bound-and-true-p package-archive-contents)
+            (package-initialize))
+          (when (or force-refresh missing (null package-archive-contents))
+            (message "[elpaish] Refreshing package archive contents...")
+            (package-refresh-contents))
+          (let* ((to-install (if force-refresh target-pkgs missing))
+                 (results nil)
+                 (total (length to-install))
+                 (idx 0))
+            (dolist (pkg to-install)
+              (cl-incf idx)
+              (let ((res (elpaish-install--process-package pkg 'install nil)))
+                (push res results)
+                (pcase (plist-get res :status)
+                  (:installed
+                   (message "[elpaish] [%d/%d] Installed %s (activated)" idx total pkg))
+                  (:failed
+                   (message "[elpaish] [%d/%d] Failed %s: %s"
+                            idx total pkg (plist-get res :error)))
+                  (_
+                   (message "[elpaish] [%d/%d] %s is up to date" idx total pkg)))))
+            (let ((final-res (nreverse results)))
+              (elpaish-install--report-summary final-res 'install)
+              (run-hook-with-args 'elpaish-install-bootstrap-finished-functions
+                                  final-res 'install)
+              (when callback (funcall callback final-res))
+              final-res)))))))))
+
+;;;###autoload
+(cl-defun elpaish-install-upgrade-packages (&rest args)
+  "Upgrade on-demand packages to their latest versions.
+Upgrades packages configured in `elpaish-install-upgrade-packages-list',
+which must be a strict subset of `elpaish-install-packages-list'.
+The upgrade operation is lazy and runs in the background asynchronously
+with cooperative yielding.  When called interactively with a prefix argument
+(e.g. \[universal-argument]), execution is synchronous.
 
 ARGS can contain package symbols, lists of package symbols, or keyword options:
   :sync BOOL        - When non-nil, execute synchronously.
   :async BOOL       - When non-nil (default t), execute asynchronously.
   :refresh BOOL     - When non-nil (default t), refresh package archives.
-  :action ACTION    - Operation action: \\='upgrade (default) or \\='install.
   :concurrency N    - Concurrent jobs for `gen-run-async' (default 1).
   :delay SECS       - Yield delay in seconds
                       (default `elpaish-install-yield-delay').
@@ -503,7 +657,7 @@ ARGS can contain package symbols, lists of package symbols, or keyword options:
   :pool-size N      - When specified and sprite is available, use sprite pool.
 
 When no packages are specified in ARGS, defaults to
-`elpaish-install-bootstrap-packages-list'."
+`elpaish-install-upgrade-packages-list'."
   (interactive "P")
   (let* ((interactive-p (called-interactively-p 'any))
          (prefix-arg-val (when interactive-p (car args)))
@@ -512,7 +666,6 @@ When no packages are specified in ARGS, defaults to
          (refresh t)
          (sync (not (null prefix-arg-val)))
          (async :default)
-         (action 'upgrade)
          (concurrency nil)
          (delay nil)
          (pool-size nil)
@@ -523,7 +676,8 @@ When no packages are specified in ARGS, defaults to
          ((eq arg :sync)       (setq sync (pop remaining)))
          ((eq arg :async)      (setq async (pop remaining)))
          ((eq arg :refresh)    (setq refresh (pop remaining)))
-         ((eq arg :action)     (setq action (pop remaining)))
+         ((memq arg '(:action :status))
+          (pop remaining))
          ((eq arg :concurrency)(setq concurrency (pop remaining)))
          ((eq arg :delay)      (setq delay (pop remaining)))
          ((eq arg :pool-size)  (setq pool-size (pop remaining)))
@@ -534,18 +688,26 @@ When no packages are specified in ARGS, defaults to
             (when (symbolp p) (push p pkgs))))
          ((symbolp arg)
           (push arg pkgs)))))
-    (let* ((target-pkgs (or (delete-dups (nreverse pkgs))
-                            elpaish-install-bootstrap-packages-list))
+    (setq pkgs (delete-dups (nreverse pkgs)))
+    (when pkgs
+      (apply #'elpaish-install-register-upgrade-package pkgs))
+    (let* ((raw-targets (or pkgs (elpaish-install--get-upgrade-packages)))
+           (target-pkgs (seq-filter (lambda (p) (memq p elpaish-install-packages-list))
+                                    raw-targets))
            (is-sync (or sync (eq async nil))))
       (cond
+       ((null target-pkgs)
+        (message "[elpaish] No packages configured in `elpaish-install-upgrade-packages-list' to upgrade.")
+        (when callback (funcall callback nil))
+        nil)
        (is-sync
-        (let ((res (elpaish-install--do-packages target-pkgs :action action :refresh refresh)))
+        (let ((res (elpaish-install--do-packages target-pkgs :action 'upgrade :refresh refresh)))
           (when callback (funcall callback res))
           res))
        (t
         (elpaish-install--do-packages-async
          target-pkgs
-         :action action
+         :action 'upgrade
          :refresh refresh
          :concurrency concurrency
          :delay delay
@@ -553,17 +715,83 @@ When no packages are specified in ARGS, defaults to
          :callback callback))))))
 
 ;;;###autoload
-(defalias 'elpaish-install-packages #'elpaish-install-bootstrap-packages)
+(defalias 'elpaish-upgrade-packages #'elpaish-install-upgrade-packages)
 
-(define-obsolete-function-alias
-  'elpaish-install-upgrade-packages
-  #'elpaish-install-bootstrap-packages
-  "0.2.0")
+;;;###autoload
+(cl-defun elpaish-install-bootstrap-packages (&rest args)
+  "Install or upgrade bootstrap packages (legacy dispatcher).
+When :action is \='install, delegates to `elpaish-install-packages'.
+Otherwise, installs missing packages and upgrades existing ones.
 
-(define-obsolete-function-alias
-  'elpaish-upgrade-packages
-  #'elpaish-install-bootstrap-packages
-  "0.2.0")
+ARGS can contain package symbols, lists of package symbols, or keyword options:
+  :sync BOOL        - When non-nil, execute synchronously.
+  :async BOOL       - When non-nil (default t), execute asynchronously.
+  :refresh BOOL     - When non-nil (default t), refresh package archives.
+  :action ACTION    - Operation action: \='upgrade (default) or \='install.
+  :concurrency N    - Concurrent jobs for `gen-run-async' (default 1).
+  :delay SECS       - Yield delay in seconds
+                      (default `elpaish-install-yield-delay').
+  :callback FN      - Function called with result list on completion.
+  :pool-size N      - When specified and sprite is available, use sprite pool.
+
+When no packages are specified in ARGS, defaults to
+`elpaish-install-packages-list'."
+  (interactive "P")
+  (let* ((interactive-p (called-interactively-p 'any))
+         (prefix-arg-val (when interactive-p (car args)))
+         (remaining (if interactive-p nil args))
+         (action 'upgrade))
+    (while remaining
+      (let ((arg (pop remaining)))
+        (when (eq arg :action)
+          (setq action (pop remaining)))))
+    (cond
+     ((eq action 'install)
+      (apply #'elpaish-install-packages args))
+     (t
+      (let* ((remaining (if interactive-p nil args))
+             (pkgs nil)
+             (refresh t)
+             (sync (not (null prefix-arg-val)))
+             (async :default)
+             (concurrency nil)
+             (delay nil)
+             (pool-size nil)
+             (callback nil))
+        (while remaining
+          (let ((arg (pop remaining)))
+            (cond
+             ((eq arg :sync)       (setq sync (pop remaining)))
+             ((eq arg :async)      (setq async (pop remaining)))
+             ((eq arg :refresh)    (setq refresh (pop remaining)))
+             ((eq arg :action)     (pop remaining))
+             ((eq arg :concurrency)(setq concurrency (pop remaining)))
+             ((eq arg :delay)      (setq delay (pop remaining)))
+             ((eq arg :pool-size)  (setq pool-size (pop remaining)))
+             ((or (eq arg :callback) (eq arg :on-done))
+              (setq callback (pop remaining)))
+             ((listp arg)
+              (dolist (p (flatten-tree arg))
+                (when (symbolp p) (push p pkgs))))
+             ((symbolp arg)
+              (push arg pkgs)))))
+        (let* ((target-pkgs (or (delete-dups (nreverse pkgs))
+                                elpaish-install-packages-list))
+               (is-sync (or sync (eq async nil))))
+          (cond
+           (is-sync
+            (let ((res (elpaish-install--do-packages target-pkgs :action 'upgrade :refresh refresh)))
+              (when callback (funcall callback res))
+              res))
+           (t
+            (elpaish-install--do-packages-async
+             target-pkgs
+             :action 'upgrade
+             :refresh refresh
+             :concurrency concurrency
+             :delay delay
+             :pool-size pool-size
+             :callback callback)))))))))
 
 ;;;###autoload
 (cl-defun elpaish-install-packages-async (pkgs &key refresh pool-size callback)

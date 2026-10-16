@@ -1998,7 +1998,10 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
     ("rr" "Reload package recipes" (lambda () (interactive) (elpaish-load-packages) (message "Reloaded package recipes.")))]
    ["Keyring & Operations"
     ("k" "Export GPG keyring" elpaish-export-keyring)
-    ("TKO" "Rotate GPG signing keys" elpaish-rotate-keys)]])
+    ("TKO" "Rotate GPG signing keys" elpaish-rotate-keys)]
+   ["Package Operations"
+    ("i" "Install missing packages" elpaish-install-packages)
+    ("u" "Upgrade packages (background)" elpaish-install-upgrade-packages)]])
 
 (provide 'elpaish)
 ;;; elpaish.el ends here
