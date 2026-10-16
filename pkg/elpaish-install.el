@@ -54,6 +54,20 @@ Allows the Emacs event loop to remain responsive and process user input."
   :type 'number
   :group 'elpaish-install)
 
+(defcustom elpaish-install-package-updated-functions nil
+  "Hook run when a package is installed or upgraded by `elpaish-install'.
+Each function is called with three arguments: PKG (symbol), STATUS
+  (\\='installed or \\='upgraded), and RES (the result plist)."
+  :type 'hook
+  :group 'elpaish-install)
+
+(defcustom elpaish-install-bootstrap-finished-functions nil
+  "Hook run when package bootstrap or installation completes.
+Each function is called with two arguments: RES-LIST (the list of package
+result plists) and ACTION (symbol, \\='upgrade or \\='install)."
+  :type 'hook
+  :group 'elpaish-install)
+
 (defvar elpaish-install--active-cancel-handle nil
   "Cancellation handle function for active async package installation.")
 
@@ -62,7 +76,6 @@ Allows the Emacs event loop to remain responsive and process user input."
   "Append unique package symbols from PKGS to bootstrap package list.
 PKGS can be package symbols or lists of package symbols.  Updates
 `elpaish-install-bootstrap-packages-list' and returns it."
-  (interactive)
   (let ((new-pkgs nil))
     (dolist (p (flatten-tree pkgs))
       (when (and (symbolp p)
@@ -75,10 +88,11 @@ PKGS can be package symbols or lists of package symbols.  Updates
             (append elpaish-install-bootstrap-packages-list (nreverse new-pkgs)))))
   elpaish-install-bootstrap-packages-list)
 
-;;;###autoload
-(defalias 'elpaish-install-register-bootstrap-packages #'elpaish-install-register-bootstrap-package)
+(define-obsolete-function-alias
+  'elpaish-install-register-bootstrap-packages
+  #'elpaish-install-register-bootstrap-package
+  "0.2.0")
 
-;;;###autoload
 (define-obsolete-function-alias
   'elpaish-install-add-bootstrap-packages
   #'elpaish-install-register-bootstrap-package
@@ -162,41 +176,49 @@ if an update is available.  If REFRESH is non-nil, refresh archive contents."
           ('install
            (cond
             ((package-installed-p pkg)
-             (message "Package %s is already installed." pkg)
              (list :status :already-installed :pkg pkg))
             (t
-             (message "Installing package %s..." pkg)
              (package-install pkg)
              (when (fboundp 'package--reload-previously-loaded)
                (when-let* ((desc (cadr (assq pkg package-alist))))
                  (condition-case nil
                      (package--reload-previously-loaded desc)
                    (error nil))))
-             (message "Successfully installed %s." pkg)
-             (list :status :installed :pkg pkg))))
+             (let ((res (list :status :installed :pkg pkg)))
+               (run-hook-with-args 'elpaish-install-package-updated-functions
+                                   pkg 'installed res)
+               res))))
           (_
            (cond
             ((not (package-installed-p pkg))
-             (message "Package %s is not installed; installing..." pkg)
              (package-install pkg)
              (when (fboundp 'package--reload-previously-loaded)
                (when-let* ((desc (cadr (assq pkg package-alist))))
                  (condition-case nil
                      (package--reload-previously-loaded desc)
                    (error nil))))
-             (message "Successfully installed %s." pkg)
-             (list :status :installed :pkg pkg))
+             (let ((res (list :status :installed :pkg pkg)))
+               (run-hook-with-args 'elpaish-install-package-updated-functions
+                                   pkg 'installed res)
+               res))
             ((fboundp 'package-upgrade)
-             (condition-case sub-err
-                 (progn
-                   (package-upgrade pkg)
-                   (message "Successfully upgraded %s." pkg)
-                   (list :status :upgraded :pkg pkg))
-               (user-error
-                (message "Package %s is up to date." pkg)
-                (list :status :up-to-date :pkg pkg))
-               (error
-                (signal (car sub-err) (cdr sub-err)))))
+             (let* ((installed-desc (cadr (assq pkg package-alist)))
+                    (inst-ver (and installed-desc (package-desc-version installed-desc))))
+               (condition-case sub-err
+                   (progn
+                     (package-upgrade pkg)
+                     (let* ((new-desc (cadr (assq pkg package-alist)))
+                            (new-ver (and new-desc (package-desc-version new-desc)))
+                            (from-str (and inst-ver (package-version-join inst-ver)))
+                            (to-str (and new-ver (package-version-join new-ver)))
+                            (res (list :status :upgraded :pkg pkg :from from-str :to to-str)))
+                       (run-hook-with-args 'elpaish-install-package-updated-functions
+                                           pkg 'upgraded res)
+                       res))
+                 (user-error
+                  (list :status :up-to-date :pkg pkg))
+                 (error
+                  (signal (car sub-err) (cdr sub-err))))))
             (t
              (let* ((installed-desc (cadr (assq pkg package-alist)))
                     (archive-desc (cadr (assq pkg package-archive-contents)))
@@ -210,35 +232,60 @@ if an update is available.  If REFRESH is non-nil, refresh archive contents."
                      (condition-case nil
                          (package--reload-previously-loaded new-desc)
                        (error nil))))
-                 (message "Successfully upgraded %s from %s to %s."
-                          pkg (package-version-join inst-ver) (package-version-join arch-ver))
-                 (list :status :upgraded :pkg pkg))
+                 (let* ((from-str (package-version-join inst-ver))
+                        (to-str (package-version-join arch-ver))
+                        (res (list :status :upgraded :pkg pkg :from from-str :to to-str)))
+                   (run-hook-with-args 'elpaish-install-package-updated-functions
+                                       pkg 'upgraded res)
+                   res))
                 (t
-                 (message "Package %s is up to date." pkg)
                  (list :status :up-to-date :pkg pkg))))))))
       (error
-       (message "Failed to %s %s: %s" act pkg (error-message-string err))
        (list :status :failed :pkg pkg :error (error-message-string err))))))
 
 ;;;; Summary and Completion Helpers
 
 (defun elpaish-install--report-summary (res-list action)
   "Display summary message for RES-LIST and ACTION."
-  (let ((installed 0) (upgraded 0) (up-to-date 0) (failed 0))
+  (let ((installed nil)
+        (upgraded nil)
+        (up-to-date 0)
+        (failed nil))
     (dolist (res res-list)
-      (pcase (plist-get res :status)
-        (':installed (cl-incf installed))
-        (':upgraded  (cl-incf upgraded))
-        (':up-to-date (cl-incf up-to-date))
-        (':already-installed (cl-incf up-to-date))
-        (':failed    (cl-incf failed))))
-    (cond
-     ((eq action 'install)
-      (message "Package installation complete: %d installed, %d failed."
-               installed failed))
-     (t
-      (message "Package bootstrap complete: %d installed, %d upgraded, %d up to date, %d failed."
-               installed upgraded up-to-date failed)))))
+      (let ((p (plist-get res :pkg)))
+        (pcase (plist-get res :status)
+          (':installed (push p installed))
+          (':upgraded  (push p upgraded))
+          (':up-to-date (cl-incf up-to-date))
+          (':already-installed (cl-incf up-to-date))
+          (':failed    (push (cons p (plist-get res :error)) failed)))))
+    (let ((parts nil))
+      (when upgraded
+        (push (format "%d upgraded (%s)"
+                      (length upgraded)
+                      (mapconcat #'symbol-name (nreverse upgraded) ", "))
+              parts))
+      (when installed
+        (push (format "%d installed (%s)"
+                      (length installed)
+                      (mapconcat #'symbol-name (nreverse installed) ", "))
+              parts))
+      (when (> up-to-date 0)
+        (push (format "%d up to date" up-to-date) parts))
+      (when failed
+        (push (format "%d failed (%s)"
+                      (length failed)
+                      (mapconcat (lambda (f) (format "%s" (car f))) (nreverse failed) ", "))
+              parts))
+      (cond
+       ((and (null upgraded) (null installed) (null failed))
+        (message "[elpaish] %s complete: all %d package(s) up to date."
+                 (if (eq action 'install) "Installation" "Bootstrap")
+                 up-to-date))
+       (t
+        (message "[elpaish] %s complete: %s."
+                 (if (eq action 'install) "Installation" "Bootstrap")
+                 (string-join (nreverse parts) ", ")))))))
 
 (defun elpaish-install--remote-eval-form (pkg action parent-user-dir parent-archives refresh)
   "Generate Lisp form for remote sprite execution of PKG with ACTION.
@@ -270,8 +317,18 @@ and invokes CALLBACK."
               (when (fboundp 'package--reload-previously-loaded)
                 (when-let* ((desc (cadr (assq pkg package-alist))))
                   (package--reload-previously-loaded desc))))
-          (error nil)))))
+          (error nil))
+        (pcase (plist-get res :status)
+          (:installed
+           (message "[elpaish] Installed and activated %s" pkg))
+          (:upgraded
+           (message "[elpaish] Upgraded and reloaded %s" pkg)))
+        (run-hook-with-args 'elpaish-install-package-updated-functions
+                            pkg
+                            (if (eq (plist-get res :status) :installed) 'installed 'upgraded)
+                            res))))
   (elpaish-install--report-summary res-list action)
+  (run-hook-with-args 'elpaish-install-bootstrap-finished-functions res-list action)
   (when callback (funcall callback res-list)))
 
 ;;;; Batch Execution
@@ -289,13 +346,32 @@ If REFRESH is non-nil, call `package-refresh-contents' first."
       (unless (bound-and-true-p package-archive-contents)
         (package-initialize))
       (when (or refresh (eq action 'upgrade) (null package-archive-contents))
-        (message "Refreshing package archive contents...")
+        (message "[elpaish] Refreshing package archive contents...")
         (package-refresh-contents))
-      (let ((results nil))
+      (let* ((results nil)
+             (total (length target-pkgs))
+             (idx 0))
         (dolist (pkg target-pkgs)
-          (push (elpaish-install--process-package pkg action nil) results))
+          (cl-incf idx)
+          (let ((res (elpaish-install--process-package pkg action nil)))
+            (push res results)
+            (pcase (plist-get res :status)
+              (:installed
+               (message "[elpaish] [%d/%d] Installed %s (activated)" idx total pkg))
+              (:upgraded
+               (if (and (plist-get res :from) (plist-get res :to))
+                   (message "[elpaish] [%d/%d] Upgraded %s from %s to %s (reloaded)"
+                            idx total pkg (plist-get res :from) (plist-get res :to))
+                 (message "[elpaish] [%d/%d] Upgraded %s (reloaded)" idx total pkg)))
+              (:failed
+               (message "[elpaish] [%d/%d] Failed %s: %s"
+                        idx total pkg (plist-get res :error)))
+              (_
+               (message "[elpaish] [%d/%d] %s is up to date" idx total pkg)))))
         (let ((final-res (nreverse results)))
           (elpaish-install--report-summary final-res action)
+          (run-hook-with-args 'elpaish-install-bootstrap-finished-functions
+                              final-res action)
           final-res))))))
 
 (defun elpaish-install--do-install-packages (pkgs refresh)
@@ -326,7 +402,7 @@ Calls CALLBACK when complete and returns a cancellation handle function."
            (fboundp 'sprite-pool-mapcar))
       (let ((parent-user-dir package-user-dir)
             (parent-archives package-archives))
-        (message "%s %d package(s) asynchronously using sprite pool..."
+        (message "[elpaish] %s %d package(s) asynchronously using sprite pool..."
                  (if (eq action 'install) "Installing" "Bootstrapping")
                  (length target-pkgs))
         (let ((future (sprite-pool-mapcar
@@ -344,18 +420,33 @@ Calls CALLBACK when complete and returns a cancellation handle function."
       (unless (bound-and-true-p package-archive-contents)
         (package-initialize))
       (when (or refresh (eq action 'upgrade) (null package-archive-contents))
-        (message "Refreshing package archive contents...")
+        (message "[elpaish] Refreshing package archive contents...")
         (package-refresh-contents))
       (let* ((results nil)
-             (total (length target-pkgs)))
-        (message "%s %d package(s) asynchronously..."
+             (total (length target-pkgs))
+             (idx 0))
+        (message "[elpaish] %s %d package(s) asynchronously..."
                  (if (eq action 'install) "Installing" "Bootstrapping")
                  total)
         (let ((runner
                (gen-run-async
                 (lambda (pkg done-cb)
+                  (cl-incf idx)
                   (let ((res (elpaish-install--process-package pkg action nil)))
                     (push res results)
+                    (pcase (plist-get res :status)
+                      (:installed
+                       (message "[elpaish] [%d/%d] Installed %s (activated)" idx total pkg))
+                      (:upgraded
+                       (if (and (plist-get res :from) (plist-get res :to))
+                           (message "[elpaish] [%d/%d] Upgraded %s from %s to %s (reloaded)"
+                                    idx total pkg (plist-get res :from) (plist-get res :to))
+                         (message "[elpaish] [%d/%d] Upgraded %s (reloaded)" idx total pkg)))
+                      (:failed
+                       (message "[elpaish] [%d/%d] Failed %s: %s"
+                                idx total pkg (plist-get res :error)))
+                      (_
+                       (message "[elpaish] [%d/%d] %s is up to date" idx total pkg)))
                     (funcall done-cb)))
                 target-pkgs
                 :concurrency (or concurrency elpaish-install-concurrency 1)
@@ -365,11 +456,13 @@ Calls CALLBACK when complete and returns a cancellation handle function."
                   (setq elpaish-install--active-cancel-handle nil)
                   (let ((final-res (nreverse results)))
                     (elpaish-install--report-summary final-res action)
+                    (run-hook-with-args 'elpaish-install-bootstrap-finished-functions
+                                        final-res action)
                     (when callback
                       (funcall callback final-res))))
                 :on-error
                 (lambda (err)
-                  (message "Error during package bootstrapping: %S" err)))))
+                  (message "[elpaish] Error during package bootstrapping: %S" err)))))
           (setq elpaish-install--active-cancel-handle runner)
           runner)))
      (t
@@ -462,25 +555,27 @@ When no packages are specified in ARGS, defaults to
 ;;;###autoload
 (defalias 'elpaish-install-packages #'elpaish-install-bootstrap-packages)
 
-;;;###autoload
-(defalias 'elpaish-install-upgrade-packages #'elpaish-install-bootstrap-packages)
+(define-obsolete-function-alias
+  'elpaish-install-upgrade-packages
+  #'elpaish-install-bootstrap-packages
+  "0.2.0")
 
-;;;###autoload
-(defalias 'elpaish-upgrade-packages #'elpaish-install-bootstrap-packages)
+(define-obsolete-function-alias
+  'elpaish-upgrade-packages
+  #'elpaish-install-bootstrap-packages
+  "0.2.0")
 
 ;;;###autoload
 (cl-defun elpaish-install-packages-async (pkgs &key refresh pool-size callback)
   "Install PKGS asynchronously out-of-process using a sprite pool if available.
-If sprite is not available, falls back to cooperative async execution.
-Calls CALLBACK when complete."
+If REFRESH is non-nil, refresh archive contents.  POOL-SIZE is the sprite pool
+concurrency.  Calls CALLBACK when complete."
   (elpaish-install-bootstrap-packages pkgs :action 'install :refresh refresh :pool-size (or pool-size 2) :callback callback :async t))
 
-;;;###autoload
-(cl-defun elpaish-install-upgrade-packages-async (pkgs &key pool-size callback)
-  "Upgrade PKGS asynchronously out-of-process using a sprite pool if available.
-If sprite is not available, falls back to cooperative async execution.
-Calls CALLBACK when complete."
-  (elpaish-install-bootstrap-packages pkgs :action 'upgrade :refresh t :pool-size (or pool-size 2) :callback callback :async t))
+(define-obsolete-function-alias
+  'elpaish-install-upgrade-packages-async
+  #'elpaish-install-packages-async
+  "0.2.0")
 
 (provide 'elpaish-install)
 

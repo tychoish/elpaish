@@ -1866,6 +1866,53 @@ source's last commit time rather than the time of the build."
                ((symbol-function 'package-initialize) #'ignore))
        (elpaish-install-ensure-package-dependencies pkg-file)
        (should (equal installed-log '(file-dep)))))))
+
+(ert-deftest elpaish-test-install-feedback-hooks ()
+  "Test `elpaish-install-package-updated-functions' and finished hooks."
+  (elpaish-test-with-temp-env
+   (let ((updated-events nil)
+         (finished-events nil))
+     (let ((elpaish-install-package-updated-functions
+            (list (lambda (pkg status res)
+                    (push (list pkg status (plist-get res :status)) updated-events))))
+           (elpaish-install-bootstrap-finished-functions
+            (list (lambda (res-list action)
+                    (push (list (length res-list) action) finished-events)))))
+       (cl-letf (((symbol-function 'package-installed-p)
+                  (lambda (p) (eq p 'pkg-installed)))
+                 ((symbol-function 'package-install) #'ignore)
+                 ((symbol-function 'package-upgrade) #'ignore)
+                 ((symbol-function 'package-refresh-contents) #'ignore))
+         (elpaish-install-bootstrap-packages 'pkg-new 'pkg-installed :sync t)
+         (should (equal (reverse updated-events)
+                        '((pkg-new installed :installed)
+                          (pkg-installed upgraded :upgraded))))
+         (should (equal finished-events '((2 upgrade)))))))))
+
+(ert-deftest elpaish-test-report-summary-formatting ()
+  "Test `elpaish-install--report-summary' formats named package progress and results."
+  (let ((last-msg nil))
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args)
+                 (setq last-msg (apply #'format fmt args)))))
+      ;; Case 1: all up to date
+      (elpaish-install--report-summary
+       '((:status :up-to-date :pkg pkg-1) (:status :up-to-date :pkg pkg-2)) 'upgrade)
+      (should (string-match-p "Bootstrap complete: all 2 package(s) up to date" last-msg))
+
+      ;; Case 2: upgraded and installed
+      (elpaish-install--report-summary
+       '((:status :upgraded :pkg trans)
+         (:status :installed :pkg gen)
+         (:status :up-to-date :pkg compat)) 'upgrade)
+      (should (string-match-p "1 upgraded (trans)" last-msg))
+      (should (string-match-p "1 installed (gen)" last-msg))
+      (should (string-match-p "1 up to date" last-msg))
+
+      ;; Case 3: failed package
+      (elpaish-install--report-summary
+       '((:status :failed :pkg broken :error "not found")) 'upgrade)
+      (should (string-match-p "1 failed (broken)" last-msg)))))
 (ert-deftest elpaish-test-recipe-exclude-files ()
   "Test `:exclude-files' filters matching files in `elpaish--collect-files'."
   (elpaish-test-with-temp-env
