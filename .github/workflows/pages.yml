@@ -53,6 +53,7 @@ jobs:
             transient
             annotated-completing-read
             modus-themes
+            gen
           cache: "true"
           cache-dir: elpa-ci
 

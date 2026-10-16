@@ -119,14 +119,23 @@ package sources.  Extracts dependencies from package header and invokes
       (let ((missing nil))
         (dolist (req reqs)
           (let ((dep-pkg (car req)))
-            (unless (or (eq dep-pkg 'emacs) (package-installed-p dep-pkg))
+            (unless (or (eq dep-pkg 'emacs)
+                        (package-installed-p dep-pkg)
+                        ;; Skip packages that are part of the local ELPAish repository
+                        (and (boundp 'elpaish-registry)
+                             (hash-table-p elpaish-registry)
+                             (gethash (symbol-name dep-pkg) elpaish-registry)))
               (push dep-pkg missing))))
         (when missing
           (message "Refreshing package archive contents to install missing dependencies: %S" missing)
           (package-refresh-contents)
           (dolist (dep-pkg missing)
             (message "Installing missing package dependency: %s" dep-pkg)
-            (package-install dep-pkg)))))))
+            (condition-case err
+                (package-install dep-pkg)
+              (error
+               (message "Warning: Failed to install package dependency %s: %s"
+                        dep-pkg (error-message-string err))))))))))
 
 ;;;; Core Single Package Operation
 

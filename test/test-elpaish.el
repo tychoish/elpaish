@@ -1801,6 +1801,40 @@ source's last commit time rather than the time of the build."
      (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil)))
        (should-error (elpaish-install-ensure-package-dependencies recipe)
                      :type 'user-error)))))
+
+(ert-deftest elpaish-test-ensure-package-dependencies-skips-registry-packages ()
+  "Test `elpaish-install-ensure-package-dependencies' skips packages in `elpaish-registry'."
+  (elpaish-test-with-temp-env
+   (let ((installed-log nil)
+         (elpaish-registry (make-hash-table :test 'equal))
+         (recipe (elpaish-recipe-create :name "demo-pkg"
+                                       :repository-path "demo-pkg"
+                                       :requires '((emacs "28.1") (local-pkg "1.0") (remote-dep "2.0")))))
+     (puthash "local-pkg" (elpaish-recipe-create :name "local-pkg" :repository-path "local-pkg") elpaish-registry)
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
+               ((symbol-function 'package-install) (lambda (p) (push p installed-log)))
+               ((symbol-function 'package-refresh-contents) #'ignore)
+               ((symbol-function 'package-initialize) #'ignore))
+       (elpaish-install-ensure-package-dependencies recipe)
+       (should (equal installed-log '(remote-dep)))))))
+
+(ert-deftest elpaish-test-ensure-package-dependencies-continues-on-install-error ()
+  "Test `elpaish-install-ensure-package-dependencies' continues when package-install errors."
+  (elpaish-test-with-temp-env
+   (let ((attempted nil)
+         (recipe (elpaish-recipe-create :name "demo-pkg"
+                                       :repository-path "demo-pkg"
+                                       :requires '((emacs "28.1") (broken-dep "1.0") (good-dep "2.0")))))
+     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
+               ((symbol-function 'package-install)
+                (lambda (p)
+                  (push p attempted)
+                  (when (eq p 'broken-dep)
+                    (error "Package `broken-dep' is unavailable"))))
+               ((symbol-function 'package-refresh-contents) #'ignore)
+               ((symbol-function 'package-initialize) #'ignore))
+       (elpaish-install-ensure-package-dependencies recipe)
+       (should (equal (reverse attempted) '(good-dep broken-dep)))))))
 (ert-deftest elpaish-test-recipe-exclude-files ()
   "Test `:exclude-files' filters matching files in `elpaish--collect-files'."
   (elpaish-test-with-temp-env

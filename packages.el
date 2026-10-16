@@ -272,7 +272,6 @@
  (elpaish-recipe-path "https://github.com/tychoish/builder.git")
  :branch "main"
  :test-dir "test"
- :requires '((emacs "29.1") (f "0.20.0") (xtdlib "0.1.0") (annotated-completing-read "0.1.0") (eglot-test-at-point "0.1.0"))
  :summary "Project compilation runner, candidate discovery, and isolation engine"
  :url "https://github.com/tychoish/builder"
  :keywords '("tools" "compilation" "processes"))
