@@ -284,5 +284,15 @@
  :url "https://github.com/tychoish/builder"
  :keywords '("tools" "compilation" "processes"))
 
+(elpaish-register-package
+ 'orgx
+ (elpaish-recipe-path "https://github.com/tychoish/orgx.git")
+ :source-dir "lisp"
+ :branch "main"
+ :test-dir "test"
+ :summary "Personal org-mode extensions, navigation, and capture shell"
+ :url "https://github.com/tychoish/orgx"
+ :keywords '("org" "convenience"))
+
 (provide 'packages)
 ;;; packages.el ends here
