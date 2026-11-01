@@ -90,6 +90,15 @@
  :keywords '("processes" "tools"))
 
 (elpaish-register-package
+ 'orgx
+ (elpaish-recipe-path "https://github.com/tychoish/orgx.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Org mode extensions, structured capture templates, and capture shell"
+ :url "https://github.com/tychoish/orgx"
+ :keywords '("org" "capture" "tools"))
+
+(elpaish-register-package
  'sprite-mcp
  (elpaish-recipe-path "https://github.com/tychoish/sprite-mcp.git")
  :branch "main"
