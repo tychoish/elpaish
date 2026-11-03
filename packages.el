@@ -294,5 +294,14 @@
  :url "https://github.com/tychoish/orgx"
  :keywords '("org" "convenience"))
 
+(elpaish-register-package
+ 'minaid
+ (elpaish-recipe-path "https://github.com/tychoish/minaid.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Unified minad completion and selection stack"
+ :url "https://github.com/tychoish/minaid"
+ :keywords '("convenience" "completion" "matching" "tools"))
+
 (provide 'packages)
 ;;; packages.el ends here
