@@ -8,7 +8,7 @@
 
 (elpaish-register-package
  'cmdr
- (elpaish-recipe-path "https://github.com/tychoish/cmdr.el.git")
+ (elpaish-recipe-path "cmdr.el" "https://github.com/tychoish/cmdr.el.git")
  :branch "main"
  :files '("cmdr.el" "cmdr-keys.el" "cmdr-macros.el" "cmdr-mode.el"
           "cmdr-ops.el" "cmdr-defaults.el" "cmdr-ecosystem.el")
