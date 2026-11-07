@@ -7,6 +7,15 @@
 (require 'elpaish-recipes)
 
 (elpaish-register-package
+ 'cmdr
+ (elpaish-recipe-path "https://github.com/tychoish/cmdr.el.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Command registry with Transient and annotated completion frontends"
+ :url "https://github.com/tychoish/cmdr.el"
+ :keywords '("convenience" "tools"))
+
+(elpaish-register-package
  'annotated-completing-read
  (elpaish-recipe-path "https://github.com/tychoish/annotated-completing-read.git")
  :branch "main"
