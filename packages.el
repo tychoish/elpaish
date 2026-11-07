@@ -10,8 +10,6 @@
  'cmdr
  (elpaish-recipe-path "cmdr.el" "https://github.com/tychoish/cmdr.el.git")
  :branch "main"
- :files '("cmdr.el" "cmdr-keys.el" "cmdr-macros.el" "cmdr-mode.el"
-          "cmdr-ops.el" "cmdr-defaults.el" "cmdr-ecosystem.el")
  :test-dir "test"
  :summary "Command registry with Transient and annotated completion frontends"
  :url "https://github.com/tychoish/cmdr.el"
