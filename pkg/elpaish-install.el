@@ -12,7 +12,7 @@
 ;;; Code:
 
 (require 'cl-lib)
-(eval-when-compile (require 'package))
+(require 'package)
 (require 'gen nil t)
 
 (declare-function elpaish-recipe-p "elpaish" (object))
@@ -993,10 +993,7 @@ When FORCE is nil, do nothing unless quickstart file is stale."
                   results)
     (elpaish-install-schedule-quickstart-refresh)))
 
-(with-eval-after-load 'package
-  (advice-add 'package-quickstart-refresh :around #'elpaish-install--package-quickstart-refresh-optimize))
-(when (featurep 'package)
-  (advice-add 'package-quickstart-refresh :around #'elpaish-install--package-quickstart-refresh-optimize))
+(advice-add 'package-quickstart-refresh :around #'elpaish-install--package-quickstart-refresh-optimize)
 
 (add-hook 'elpaish-install-bootstrap-finished-functions
           #'elpaish-install--on-bootstrap-finished)
