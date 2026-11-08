@@ -321,5 +321,14 @@
  :url "https://github.com/tychoish/overmark"
  :keywords '("convenience" "faces" "matching"))
 
+(elpaish-register-package
+ 'eglox
+ (elpaish-recipe-path "https://github.com/tychoish/eglox.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Eglot extensions, throttled activation, and server lifecycle management"
+ :url "https://github.com/tychoish/eglox"
+ :keywords '("languages" "tools" "lsp" "eglot"))
+
 (provide 'packages)
 ;;; packages.el ends here
