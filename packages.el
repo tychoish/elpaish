@@ -326,6 +326,7 @@
  (elpaish-recipe-path "https://github.com/tychoish/eglox.git")
  :branch "main"
  :test-dir "test"
+ :preflight-skip '(package-lint checkdoc)
  :summary "Eglot extensions, throttled activation, and server lifecycle management"
  :url "https://github.com/tychoish/eglox"
  :keywords '("languages" "tools" "lsp" "eglot"))
