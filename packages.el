@@ -353,5 +353,15 @@
  :url "https://github.com/tychoish/chex"
  :keywords '("convenience" "tools" "languages"))
 
+(elpaish-register-package
+ 'clix
+ (elpaish-recipe-path "https://github.com/tychoish/clix.git")
+ :branch "main"
+ :test-dir "test"
+ :preflight-skip '(package-lint checkdoc)
+ :summary "Command-line interface and subcommand extensions"
+ :url "https://github.com/tychoish/clix"
+ :keywords '("convenience" "tools" "processes"))
+
 (provide 'packages)
 ;;; packages.el ends here
