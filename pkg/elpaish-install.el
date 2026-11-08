@@ -953,12 +953,17 @@ removes autoload feature provisions, and eliminates extraneous whitespace."
 When FORCE is nil, do nothing unless quickstart file is stale."
   (interactive "P")
   (setq elpaish-install--quickstart-refresh-timer nil)
-  (when (or force (elpaish-install-package-quickstart-stale-p))
+  (when (or force
+            (if (fboundp 'bootstrap-package-quickstart-stale-p)
+                (bootstrap-package-quickstart-stale-p)
+              (elpaish-install-package-quickstart-stale-p)))
     (message "[elpaish] %s; refreshing package quickstart"
              (if force "Package changes detected or refresh requested"
                "Package quickstart is stale"))
     (require 'package)
-    (elpaish-install-sync-package-load-paths)
+    (if (fboundp 'bootstrap-sync-package-load-paths)
+        (bootstrap-sync-package-load-paths)
+      (elpaish-install-sync-package-load-paths))
     (package-quickstart-refresh)))
 
 (defun elpaish-install-flush-package-quickstart ()
