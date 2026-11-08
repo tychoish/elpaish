@@ -2364,5 +2364,39 @@ source's last commit time rather than the time of the build."
          (should (equal gen-items '(pkg-u1)))
          (should (functionp handle)))))))
 
+(ert-deftest elpaish-test-quickstart-optimization-streamlines-content ()
+  "Test `elpaish-install-optimize-quickstart-file' streamlines quickstart contents."
+  (let ((tmp-file (make-temp-file "test-elpaish-qs-" nil ".el")))
+    (unwind-protect
+        (progn
+          (with-temp-file tmp-file
+            (insert ";;; quickstart.el -*- lexical-binding: t; -*-\n\n\n"
+                    "(let* ((load-file-name \"/tmp/elpa/pkg-1.0/pkg-autoloads.el\")\n"
+                    "       (load-true-file-name load-file-name))\n"
+                    "  (add-to-list 'load-path (or (and load-file-name (directory-file-name (file-name-directory load-file-name))) (car load-path)))\n"
+                    "  (register-definition-prefixes \"pkg\" '(\"pkg-\"))\n"
+                    "  (autoload 'pkg-func \"pkg\" \"This is a long docstring.\" t nil)\n"
+                    "  (provide 'pkg-autoloads))\n"))
+          (elpaish-install-optimize-quickstart-file tmp-file)
+          (with-temp-buffer
+            (insert-file-contents tmp-file)
+            (let ((content (buffer-string)))
+              (should (string-match-p "(setq load-path" content))
+              (should (string-match-p "/tmp/elpa/pkg-1.0" content))
+              (should-not (string-match-p "register-definition-prefixes" content))
+              (should-not (string-match-p "This is a long docstring" content))
+              (should (string-match-p "(autoload 'pkg-func \"pkg\" nil t nil)" content))
+              (should-not (string-match-p "provide 'pkg-autoloads" content)))))
+      (when (file-exists-p tmp-file)
+        (delete-file tmp-file)))))
+
+(ert-deftest elpaish-test-quickstart-staleness-detection ()
+  "Test `elpaish-install-package-quickstart-stale-p' detects missing .elc."
+  (let* ((tmp-el (make-temp-file "test-elpaish-stale-" nil ".el"))
+         (package-quickstart-file tmp-el))
+    (unwind-protect
+        (should (elpaish-install-package-quickstart-stale-p))
+      (when (file-exists-p tmp-el) (delete-file tmp-el)))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here
