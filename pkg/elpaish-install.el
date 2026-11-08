@@ -912,6 +912,7 @@ removes autoload feature provisions, and eliminates extraneous whitespace."
 
 (defun elpaish-install--package-quickstart-refresh-optimize (orig-fn &rest args)
   "Optimize quickstart file format and compile bytecode."
+  (require 'bytecomp)
   (let ((real-byte-compile (symbol-function 'byte-compile-file)))
     (cl-letf (((symbol-function 'byte-compile-file)
                (lambda (file)
