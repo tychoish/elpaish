@@ -331,5 +331,16 @@
  :url "https://github.com/tychoish/eglox"
  :keywords '("languages" "tools" "lsp" "eglot"))
 
+(elpaish-register-package
+ 'grepx
+ (elpaish-recipe-path "https://github.com/tychoish/grepx.git")
+ :branch "main"
+ :test-dir "test"
+ :preflight-skip '(package-lint checkdoc)
+ :requires '(deadgrep consult annotated-completing-read)
+ :summary "Unified grep, ripgrep, and search interface"
+ :url "https://github.com/tychoish/grepx"
+ :keywords '("matching" "tools"))
+
 (provide 'packages)
 ;;; packages.el ends here
