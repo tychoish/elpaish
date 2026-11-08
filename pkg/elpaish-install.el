@@ -825,6 +825,7 @@ concurrency.  Calls CALLBACK when complete."
   :type 'number
   :group 'elpaish-install)
 
+;;;###autoload
 (defun elpaish-install-sync-package-load-paths ()
   "Prune stale package directories from `load-path'.
 Also ensures current ELPA directories and autoloads are loaded."
@@ -841,6 +842,7 @@ Also ensures current ELPA directories and autoloads are loaded."
                       (file-exists-p (concat autoloads-file ".elc")))
               (load autoloads-file t t))))))))
 
+;;;###autoload
 (defun elpaish-install-optimize-quickstart-file (file)
   "Transform FILE (package-quickstart.el) into a streamlined format.
 Consolidates `load-path' additions into a static pre-expanded list,
@@ -932,6 +934,7 @@ removes autoload feature provisions, and eliminates extraneous whitespace."
                  file)))
       (apply orig-fn args))))
 
+;;;###autoload
 (defun elpaish-install-package-quickstart-stale-p ()
   "Return non-nil when quickstart file or its .elc is missing or stale."
   (let ((elc (concat (file-name-sans-extension package-quickstart-file) ".elc")))
@@ -949,24 +952,21 @@ removes autoload feature provisions, and eliminates extraneous whitespace."
                                              (file-attribute-modification-time (file-attributes pkg-dir)))))
                          (directory-files package-user-dir t "\\`[^.]" t)))))))
 
+;;;###autoload
 (defun elpaish-install-refresh-package-quickstart (&optional force)
   "Regenerate `package-quickstart-file' and clear the debounce timer.
 When FORCE is nil, do nothing unless quickstart file is stale."
   (interactive "P")
   (setq elpaish-install--quickstart-refresh-timer nil)
-  (when (or force
-            (if (fboundp 'bootstrap-package-quickstart-stale-p)
-                (bootstrap-package-quickstart-stale-p)
-              (elpaish-install-package-quickstart-stale-p)))
+  (when (or force (elpaish-install-package-quickstart-stale-p))
     (message "[elpaish] %s; refreshing package quickstart"
              (if force "Package changes detected or refresh requested"
                "Package quickstart is stale"))
     (require 'package)
-    (if (fboundp 'bootstrap-sync-package-load-paths)
-        (bootstrap-sync-package-load-paths)
-      (elpaish-install-sync-package-load-paths))
+    (elpaish-install-sync-package-load-paths)
     (package-quickstart-refresh)))
 
+;;;###autoload
 (defun elpaish-install-flush-package-quickstart ()
   "Ensure any pending `package-quickstart-refresh' runs immediately."
   (when (timerp elpaish-install--quickstart-refresh-timer)
@@ -974,6 +974,7 @@ When FORCE is nil, do nothing unless quickstart file is stale."
     (setq elpaish-install--quickstart-refresh-timer nil))
   (elpaish-install-refresh-package-quickstart t))
 
+;;;###autoload
 (defun elpaish-install-schedule-quickstart-refresh (&rest _)
   "Debounce regeneration of `package-quickstart-file' after package operations."
   (if noninteractive
