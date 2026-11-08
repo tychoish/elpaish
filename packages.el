@@ -363,5 +363,16 @@
  :url "https://github.com/tychoish/clix"
  :keywords '("convenience" "tools" "processes"))
 
+(elpaish-register-package
+ 'hud-modeline
+ (elpaish-recipe-path "https://github.com/tychoish/hud-modeline.git")
+ :branch "main"
+ :test-dir "test"
+ :preflight-skip '(package-lint checkdoc)
+ :requires '(delight nerd-icons annotated-completing-read)
+ :summary "Modular and lightweight HUD modeline engine"
+ :url "https://github.com/tychoish/hud-modeline"
+ :keywords '("convenience" "faces" "mode-line"))
+
 (provide 'packages)
 ;;; packages.el ends here
