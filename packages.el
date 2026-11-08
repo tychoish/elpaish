@@ -342,5 +342,16 @@
  :url "https://github.com/tychoish/grepx"
  :keywords '("matching" "tools"))
 
+(elpaish-register-package
+ 'chex
+ (elpaish-recipe-path "https://github.com/tychoish/chex.git")
+ :branch "main"
+ :test-dir "test"
+ :preflight-skip '(package-lint checkdoc)
+ :requires '(flycheck flycheck-aspell flycheck-eglot flycheck-vale flyspell-correct consult-flycheck consult-flyspell)
+ :summary "Checking, spelling, and diagnostics integration"
+ :url "https://github.com/tychoish/chex"
+ :keywords '("convenience" "tools" "languages"))
+
 (provide 'packages)
 ;;; packages.el ends here
