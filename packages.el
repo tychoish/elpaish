@@ -374,5 +374,16 @@
  :url "https://github.com/tychoish/hud-modeline"
  :keywords '("convenience" "faces" "mode-line"))
 
+(elpaish-register-package
+ 'daemons-dash
+ (elpaish-recipe-path "https://github.com/tychoish/daemons-dash.git")
+ :branch "main"
+ :test-dir "test"
+ :preflight-skip '(package-lint checkdoc)
+ :requires '(transient sprite yaml)
+ :summary "Unified system service and daemon management dashboard"
+ :url "https://github.com/tychoish/daemons-dash"
+ :keywords '("convenience" "processes" "services" "systemd" "docker"))
+
 (provide 'packages)
 ;;; packages.el ends here
