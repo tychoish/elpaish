@@ -312,5 +312,14 @@
  :url "https://github.com/tychoish/minaid"
  :keywords '("convenience" "completion" "matching" "tools"))
 
+(elpaish-register-package
+ 'overmark
+ (elpaish-recipe-path "https://github.com/tychoish/overmark.git")
+ :branch "main"
+ :test-dir "test"
+ :summary "Buffer-rendering overlay and markup helpers"
+ :url "https://github.com/tychoish/overmark"
+ :keywords '("convenience" "faces" "matching"))
+
 (provide 'packages)
 ;;; packages.el ends here
