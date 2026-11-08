@@ -385,5 +385,16 @@
  :url "https://github.com/tychoish/daemons-dash"
  :keywords '("convenience" "processes" "services" "systemd" "docker"))
 
+(elpaish-register-package
+ 'telegax
+ (elpaish-recipe-path "https://github.com/tychoish/telegax.git")
+ :branch "main"
+ :test-dir "test"
+ :preflight-skip '(package-lint checkdoc)
+ :requires '(sprite telega alert)
+ :summary "Telega desktop, sleep, and daemon lifecycle integration"
+ :url "https://github.com/tychoish/telegax"
+ :keywords '("convenience" "comm" "processes"))
+
 (provide 'packages)
 ;;; packages.el ends here
