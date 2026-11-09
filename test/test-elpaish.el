@@ -86,6 +86,9 @@
           (elpaish-server-process nil)
           (elpaish--resolved-repo-path-cache (make-hash-table :test 'eq))
           (elpaish-check-buffer-name (format " *elpaish-test-check-%s*" (make-temp-name "")))
+          (elpaish-install-bootstrap-finished-functions
+           (remove #'elpaish-install--on-bootstrap-finished
+                   elpaish-install-bootstrap-finished-functions))
           (package-archives (copy-sequence package-archives))
           (package-check-signature nil))
      (unwind-protect
@@ -1568,14 +1571,15 @@ source's last commit time rather than the time of the build."
   (elpaish-test-with-temp-env
    (let ((elpaish-install-bootstrap-packages-list '(pkg-async-a pkg-async-b))
          (reloaded nil)
-         (callback-called nil))
+         (callback-called nil)
+         (original-require (symbol-function 'require)))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
                ((symbol-function 'package-read-all-archive-contents) (lambda () (setq reloaded t)))
                ((symbol-function 'require)
                 (lambda (feature &optional filename noerror)
                   (if (memq feature '(sprite sprite-fleet))
                       t
-                    (apply #'require feature filename noerror))))
+                    (funcall original-require feature filename noerror))))
                ((symbol-function 'sprite-pool-mapcar)
                 (cl-function
                  (lambda (_fn items &key async _pool-size &allow-other-keys)
@@ -1604,6 +1608,7 @@ source's last commit time rather than the time of the build."
                       (funcall on-resolve val)))
                   future)))
        (elpaish-install-packages-async '(pkg-async-a pkg-async-b) :callback (lambda (_) (setq callback-called t)))
+       (should (eq (require 'cl-lib) 'cl-lib))
        (should reloaded)
        (should callback-called)))))
 
@@ -1627,7 +1632,8 @@ source's last commit time rather than the time of the build."
   (elpaish-test-with-temp-env
    (let ((timer-called nil)
          (callback-called nil)
-         (orig-fboundp (symbol-function 'fboundp)))
+         (orig-fboundp (symbol-function 'fboundp))
+         (original-require (symbol-function 'require)))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
                ((symbol-function 'fboundp)
                 (lambda (sym)
@@ -1638,7 +1644,7 @@ source's last commit time rather than the time of the build."
                 (lambda (feature &optional filename noerror)
                   (if (memq feature '(sprite sprite-fleet gen))
                       nil
-                    (apply #'require feature filename noerror))))
+                    (funcall original-require feature filename noerror))))
                ((symbol-function 'run-at-time)
                 (lambda (_secs _repeat fn)
                   (setq timer-called t)
@@ -1647,6 +1653,7 @@ source's last commit time rather than the time of the build."
                 (lambda (pkgs &rest _)
                   (mapcar (lambda (p) (list :status :installed :pkg p)) pkgs))))
        (elpaish-install-packages 'pkg-a :action 'install :async t :callback (lambda (_) (setq callback-called t)))
+       (should (eq (require 'cl-lib) 'cl-lib))
        (should timer-called)
        (should callback-called)))))
 
@@ -2363,6 +2370,17 @@ source's last commit time rather than the time of the build."
          (should gen-called)
          (should (equal gen-items '(pkg-u1)))
          (should (functionp handle)))))))
+
+(ert-deftest elpaish-test-bootstrap-finished-schedules-quickstart ()
+  "Schedule a quickstart refresh only when packages changed."
+  (let ((refreshes 0))
+    (cl-letf (((symbol-function 'elpaish-install-schedule-quickstart-refresh)
+               (lambda () (cl-incf refreshes))))
+      (elpaish-install--on-bootstrap-finished '((:status :unchanged)) 'install)
+      (should (= refreshes 0))
+      (elpaish-install--on-bootstrap-finished '((:status :installed)) 'install)
+      (elpaish-install--on-bootstrap-finished '((:status :upgraded)) 'upgrade)
+      (should (= refreshes 2)))))
 
 (ert-deftest elpaish-test-quickstart-optimization-streamlines-content ()
   "Test `elpaish-install-optimize-quickstart-file' streamlines quickstart contents."
