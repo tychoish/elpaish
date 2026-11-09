@@ -3,3 +3,4 @@ repos/
 elpa-ci/
 elpa/
 *.elc
+/build/
