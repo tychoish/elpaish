@@ -90,6 +90,17 @@
  :keywords '("tools" "vc" "git"))
 
 (elpaish-register-package
+ 'code-review
+ (elpaish-recipe-path "https://github.com/tychoish/code-review.git")
+ :fork t
+ :preflight-skip t ;; it's a fork -- yolo
+ :branch "main"
+ :test-dir "test"
+ :summary "Review GitHub, GitLab, and Bitbucket PRs in Emacs with local worktrees and gh auth"
+ :url "https://github.com/tychoish/code-review"
+ :keywords '("tools" "vc" "git"))
+
+(elpaish-register-package
  'sprite
  (elpaish-recipe-path "https://github.com/tychoish/sprite.git")
  :branch "main"
