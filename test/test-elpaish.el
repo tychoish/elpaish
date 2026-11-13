@@ -2349,27 +2349,57 @@ source's last commit time rather than the time of the build."
          (should (eq (plist-get (car res) :status) :installed)))))))
 
 (ert-deftest elpaish-test-upgrade-packages-lazy-background-command ()
-  "Test `elpaish-install-upgrade-packages' runs lazy and in background by default."
+  "Upgrade stages yield and update progress as each package finishes."
   (elpaish-test-with-temp-env
    (let ((elpaish-install-packages-list '(pkg-u1 pkg-u2))
-         (elpaish-install-upgrade-packages-list '(pkg-u1))
-         (gen-called nil)
-         (gen-items nil))
-     (cl-letf (((symbol-function 'package-installed-p) (lambda (_) t))
-               ((symbol-function 'package-upgrade) #'ignore)
-               ((symbol-function 'package-refresh-contents) #'ignore)
-               ((symbol-function 'gen-run-async)
-                (lambda (_worker items &rest plist)
-                  (setq gen-called t
-                        gen-items items)
-                  (when-let* ((done (plist-get plist :on-done)))
-                    (funcall done))
-                  (lambda (&optional _) nil))))
-       ;; Interactive or default call runs in background asynchronously via gen-run-async
-       (let ((handle (call-interactively #'elpaish-install-upgrade-packages)))
-         (should gen-called)
-         (should (equal gen-items '(pkg-u1)))
-         (should (functionp handle)))))))
+         (elpaish-install-upgrade-packages-list '(pkg-u1 pkg-u2))
+         (elpaish-install--active-cancel-handle nil)
+         (package-archive-contents '((dummy)))
+         (queue nil) (events nil) (result nil))
+     (cl-letf (((symbol-function 'run-at-time)
+                (lambda (_delay _repeat fn &rest _) (setq queue (append queue (list fn)))))
+               ((symbol-function 'package-refresh-contents) (lambda () (push 'refresh events)))
+               ((symbol-function 'elpaish-install--process-package)
+                (lambda (pkg &rest _) (push pkg events)
+                  (list :pkg pkg :status :upgraded :to "2.0")))
+               ((symbol-function 'display-buffer) #'ignore))
+       (let ((handle (elpaish-install-upgrade-packages :callback (lambda (res) (setq result res)))))
+         (should (functionp handle))
+         (should-not events)
+         (with-current-buffer "*ELPAish Upgrade Progress*"
+           (should (string-match-p "pkg-u1: not installed" (buffer-string))))
+         (funcall (pop queue))
+         (should (equal events '(refresh)))
+         (funcall (pop queue))
+         (with-current-buffer "*ELPAish Upgrade Progress*"
+           (should (string-match-p (regexp-quote "[x] pkg-u1: 2.0") (buffer-string)))
+           (should (string-match-p (regexp-quote "[ ] pkg-u2") (buffer-string))))
+         (while queue (funcall (pop queue)))
+         (should (equal (mapcar (lambda (r) (plist-get r :pkg)) result) '(pkg-u1 pkg-u2)))
+         (should-not elpaish-install--active-cancel-handle))))))
+
+(ert-deftest elpaish-test-upgrade-progress-quickstart-and-failure ()
+  "Progress records package failures and a completed quickstart rebuild."
+  (elpaish-test-with-temp-env
+   (let ((package-archive-contents '((dummy)))
+         (elpaish-install--active-cancel-handle nil)
+         (elpaish-install-bootstrap-finished-functions '(elpaish-install--on-bootstrap-finished))
+         (refreshes 0) (finished nil))
+     (cl-letf (((symbol-function 'display-buffer) #'ignore)
+               ((symbol-function 'elpaish-install-flush-package-quickstart)
+                (lambda () (cl-incf refreshes)))
+               ((symbol-function 'elpaish-install--process-package)
+                (lambda (pkg &rest _)
+                  (if (eq pkg 'good)
+                      (list :pkg pkg :status :upgraded :to "3.0")
+                    (list :pkg pkg :status :failed :error "broken")))))
+       (elpaish-install-upgrade-packages 'good 'bad :sync t :refresh nil
+                                         :callback (lambda (res) (setq finished res)))
+       (should (= refreshes 1))
+       (should (= (length finished) 2))
+       (with-current-buffer "*ELPAish Upgrade Progress*"
+         (should (string-match-p (regexp-quote "[!] bad: not installed — broken") (buffer-string)))
+         (should (string-match-p (regexp-quote "[x] Rebuild package quickstart") (buffer-string))))))))
 
 (ert-deftest elpaish-test-hidden-package-website ()
   "Hidden recipes remain registered but do not appear in the catalog."

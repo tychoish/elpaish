@@ -536,9 +536,10 @@ Calls CALLBACK when complete and returns a cancellation handle function."
 (defun elpaish-install-cancel ()
   "Cancel any in-flight asynchronous package installation or bootstrap operations."
   (interactive)
-  (when (functionp elpaish-install--active-cancel-handle)
-    (ignore-errors (funcall elpaish-install--active-cancel-handle :cancel)))
-  (setq elpaish-install--active-cancel-handle nil))
+  (let ((handle elpaish-install--active-cancel-handle))
+    (setq elpaish-install--active-cancel-handle nil)
+    (when (functionp handle)
+      (ignore-errors (funcall handle :cancel)))))
 
 ;;;; Public Commands and Dispatchers
 
@@ -647,6 +648,126 @@ ARGS can contain package symbols, lists of package symbols, or keyword options:
               (when callback (funcall callback final-res))
               final-res)))))))))
 
+(defun elpaish-install--installed-version (pkg)
+  "Return the installed version of PKG as a string, or a placeholder."
+  (if-let* ((desc (cadr (assq pkg package-alist))))
+      (package-version-join (package-desc-version desc))
+    "not installed"))
+
+(defun elpaish-install--upgrade-progress (buffer entries refresh-state quickstart-state)
+  "Render upgrade ENTRIES and stage states in BUFFER."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert "ELPAish package upgrade\n\n"
+                (format "%s Refresh package archives\n\n" refresh-state))
+        (dolist (entry entries)
+          (insert (format "%s %s: %s%s\n"
+                          (nth 1 entry) (car entry) (nth 2 entry)
+                          (if (nth 3 entry) (format " — %s" (nth 3 entry)) ""))))
+        (insert (format "\n%s Rebuild package quickstart\n" quickstart-state))
+        (goto-char (point-min))))
+    (redisplay)))
+
+(defun elpaish-install--upgrade-run (pkgs refresh sync delay callback)
+  "Upgrade PKGS, updating a progress buffer throughout the operation.
+REFRESH controls archive refresh, SYNC runs immediately, DELAY sets the
+pause between asynchronous steps, and CALLBACK receives the results."
+  (let* ((buffer (get-buffer-create "*ELPAish Upgrade Progress*"))
+         (entries (mapcar (lambda (pkg)
+                            (list pkg "[ ]" (elpaish-install--installed-version pkg) nil))
+                          pkgs))
+         (remaining (copy-sequence pkgs))
+         (refresh-state (if refresh "[ ]" "[-]"))
+         (quickstart-state "[ ]")
+         (stage 'refresh)
+         (results nil)
+         (timer nil)
+         (step nil)
+         (render (lambda () (elpaish-install--upgrade-progress
+                              buffer entries refresh-state quickstart-state))))
+    (with-current-buffer buffer (special-mode))
+    (funcall render)
+    (display-buffer buffer)
+    (setq step
+          (lambda ()
+            (progn
+              (condition-case err
+                  (pcase stage
+                    ('refresh
+                     (setq refresh-state (if refresh "[...]" "[-]"))
+                     (funcall render)
+                     (unless (bound-and-true-p package-archive-contents)
+                       (package-initialize))
+                     (dolist (entry entries)
+                       (setf (nth 2 entry) (elpaish-install--installed-version (car entry))))
+                     (when refresh (package-refresh-contents))
+                     (setq refresh-state (if refresh "[x]" "[-]") stage 'packages))
+                    ('packages
+                     (if remaining
+                         (let* ((pkg (pop remaining))
+                                (entry (assq pkg entries)))
+                           (setf (nth 1 entry) "[...]")
+                           (funcall render)
+                           (let* ((res (elpaish-install--process-package pkg 'upgrade nil))
+                                  (status (plist-get res :status))
+                                  (version (or (plist-get res :to)
+                                               (elpaish-install--installed-version pkg))))
+                             (push res results)
+                             (setf (nth 1 entry) (if (eq status :failed) "[!]" "[x]")
+                                   (nth 2 entry) version
+                                   (nth 3 entry) (if (eq status :failed)
+                                                     (plist-get res :error)
+                                                   (substring (symbol-name status) 1)))))
+                       (setq stage 'quickstart)))
+                    ('quickstart
+                     (setq quickstart-state "[...]")
+                     (funcall render)
+                     (let* ((final-results (nreverse results))
+                            (changed (seq-some (lambda (res)
+                                                 (memq (plist-get res :status) '(:installed :upgraded)))
+                                               final-results))
+                            (quickstart-enabled
+                             (memq #'elpaish-install--on-bootstrap-finished
+                                   elpaish-install-bootstrap-finished-functions))
+                            (elpaish-install-bootstrap-finished-functions
+                             (remove #'elpaish-install--on-bootstrap-finished
+                                     elpaish-install-bootstrap-finished-functions)))
+                       (when (and changed quickstart-enabled)
+                         (elpaish-install-flush-package-quickstart))
+                       (setq quickstart-state (if (and changed quickstart-enabled) "[x]" "[-]")
+                             results final-results stage 'done
+                             elpaish-install--active-cancel-handle nil)
+                       (elpaish-install--report-summary results 'upgrade)
+                       (run-hook-with-args 'elpaish-install-bootstrap-finished-functions results 'upgrade)
+                       (when callback (funcall callback results)))))
+                (error
+                 (pcase stage
+                   ('refresh (setq refresh-state (format "[!] %s" (error-message-string err))))
+                   ('quickstart (setq quickstart-state (format "[!] %s" (error-message-string err)))))
+                 (unless (eq stage 'done)
+                   (setq elpaish-install--active-cancel-handle nil))
+                 (setq stage 'done)
+                 (message "[elpaish] Upgrade failed: %s" (error-message-string err))
+                 (funcall render)
+                 (when sync (signal (car err) (cdr err)))))
+              (funcall render)
+              (if (eq stage 'done)
+                  nil
+                (unless sync
+                  (setq timer (run-at-time (or delay elpaish-install-yield-delay) nil step)))))))
+    (if sync
+        (progn (while (not (eq stage 'done)) (funcall step)) results)
+      (setq timer (run-at-time 0 nil step))
+      (let ((cancel (lambda (&optional _)
+                      (when (timerp timer) (cancel-timer timer))
+                      (setq remaining nil stage 'quickstart
+                            elpaish-install--active-cancel-handle #'ignore)
+                      (setq timer (run-at-time 0 nil step)))))
+        (setq elpaish-install--active-cancel-handle cancel)
+        cancel))))
+
 ;;;###autoload
 (cl-defun elpaish-install-upgrade-packages (&rest args)
   "Upgrade on-demand packages to their latest versions.
@@ -660,11 +781,11 @@ ARGS can contain package symbols, lists of package symbols, or keyword options:
   :sync BOOL        - When non-nil, execute synchronously.
   :async BOOL       - When non-nil (default t), execute asynchronously.
   :refresh BOOL     - When non-nil (default t), refresh package archives.
-  :concurrency N    - Concurrent jobs for `gen-run-async' (default 1).
+  :concurrency N    - Accepted for compatibility; upgrades run sequentially.
   :delay SECS       - Yield delay in seconds
                       (default `elpaish-install-yield-delay').
   :callback FN      - Function called with result list on completion.
-  :pool-size N      - When specified and sprite is available, use sprite pool.
+  :pool-size N      - Accepted for compatibility; upgrades run in this Emacs.
 
 When no packages are specified in ARGS, defaults to
 `elpaish-install-upgrade-packages-list'."
@@ -699,6 +820,8 @@ When no packages are specified in ARGS, defaults to
          ((symbolp arg)
           (push arg pkgs)))))
     (setq pkgs (delete-dups (nreverse pkgs)))
+    (when elpaish-install--active-cancel-handle
+      (user-error "An ELPAish package operation is already running"))
     (when pkgs
       (apply #'elpaish-install-register-upgrade-package pkgs))
     (let* ((raw-targets (or pkgs (elpaish-install--get-upgrade-packages)))
@@ -710,19 +833,9 @@ When no packages are specified in ARGS, defaults to
         (message "[elpaish] No packages configured in `elpaish-install-upgrade-packages-list' to upgrade.")
         (when callback (funcall callback nil))
         nil)
-       (is-sync
-        (let ((res (elpaish-install--do-packages target-pkgs :action 'upgrade :refresh refresh)))
-          (when callback (funcall callback res))
-          res))
        (t
-        (elpaish-install--do-packages-async
-         target-pkgs
-         :action 'upgrade
-         :refresh refresh
-         :concurrency concurrency
-         :delay delay
-         :pool-size pool-size
-         :callback callback))))))
+        (ignore concurrency pool-size)
+        (elpaish-install--upgrade-run target-pkgs refresh is-sync delay callback))))))
 
 ;;;###autoload
 (defalias 'elpaish-upgrade-packages #'elpaish-install-upgrade-packages)
