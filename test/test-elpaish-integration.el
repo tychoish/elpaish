@@ -266,9 +266,25 @@ regardless, so a consumer without the key installed would fail here."
               (exit-code (call-process "emacs" nil output-buf nil "-Q" "--batch" "--eval" sub-code))
               (output-str (with-current-buffer output-buf (buffer-string))))
          (kill-buffer output-buf)
-         (should (equal exit-code 0))
-         (should (or (string-match-p "LIVE_CONSUMER_SUCCESS" output-str)
-                     (string-match-p "LIVE_ARCHIVE_EMPTY_SUCCESS" output-str))))))))
+         (ert-info ((format "Live consumer subprocess output:\n%s" output-str))
+           (should (equal exit-code 0))
+           (should (or (string-match-p "LIVE_CONSUMER_SUCCESS" output-str)
+                       (string-match-p "LIVE_ARCHIVE_EMPTY_SUCCESS" output-str)))))))))
+
+(ert-deftest elpaish-integration-test-live-failure-reports-output ()
+  "Report captured subprocess diagnostics when the live consumer fails."
+  (let ((process-environment (cons "ELPAISH_RUN_INTEGRATION_TESTS=live"
+                                   process-environment)))
+    (cl-letf (((symbol-function 'url-copy-file) #'ignore)
+              ((symbol-function 'call-process)
+               (lambda (_program _in buffer _display &rest _args)
+                 (with-current-buffer buffer (insert "consumer diagnostic"))
+                 255)))
+      (let* ((test (ert-get-test 'elpaish-integration-test-live-deployment))
+             (result (ert-run-test test))
+             (info (ert-test-result-with-condition-infos result)))
+        (should (ert-test-failed-p result))
+        (should (string-match-p "consumer diagnostic" (format "%S" info)))))))
 
 ;;;###autoload
 (ert-deftest elpaish-integration-test-local-preview-server ()
