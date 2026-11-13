@@ -1657,6 +1657,55 @@ source's last commit time rather than the time of the build."
        (should timer-called)
        (should callback-called)))))
 
+(ert-deftest elpaish-test-install-repository-local ()
+  "Build and install a local repository into the current package session."
+  (elpaish-test-with-temp-env
+   (let* ((repo (expand-file-name "example-repo" temp-dir))
+          (package-user-dir (expand-file-name "installed" temp-dir))
+          (package-alist nil)
+          (package-selected-packages nil)
+          (package-quickstart nil)
+          (package-quickstart-file (expand-file-name "quickstart.el" temp-dir))
+          (load-path (copy-sequence load-path)))
+     (elpaish-test-create-dummy-pkg repo "example-pkg" "1.0" "Example package")
+     (cl-letf (((symbol-function 'package--save-selected-packages) #'ignore))
+       (let ((desc (elpaish-install-repository repo :name 'example-pkg)))
+         (should (eq (package-desc-name desc) 'example-pkg))
+         (should (package-installed-p 'example-pkg))
+         (should (file-exists-p (expand-file-name "example-pkg.el" (package-desc-dir desc))))
+         (should (member (package-desc-dir desc) load-path))
+         (should-not (gethash "example-pkg" elpaish-registry)))))))
+
+(ert-deftest elpaish-test-install-repository-recipe-tar ()
+  "Install a multi-file package from a recipe without modifying it."
+  (elpaish-test-with-temp-env
+   (let* ((repo (expand-file-name "repo" temp-dir))
+          (source (expand-file-name "src" repo))
+          (package-user-dir (expand-file-name "installed" temp-dir))
+          (package-alist nil)
+          (package-selected-packages nil)
+          (package-quickstart nil)
+          (package-quickstart-file (expand-file-name "quickstart.el" temp-dir))
+          (load-path (copy-sequence load-path)))
+     (elpaish-test-create-dummy-pkg source "recipe-pkg" "1.0" "Recipe package")
+     (with-temp-file (expand-file-name "extra.el" source)
+       (insert ";;; extra.el --- Extra file -*- lexical-binding: t; -*-\n"))
+     (let ((recipe (elpaish-register-package 'recipe-pkg repo :source-dir "src")))
+       (cl-letf (((symbol-function 'package--save-selected-packages) #'ignore))
+         (let ((desc (elpaish-install-repository recipe)))
+           (should (eq (package-desc-name desc) 'recipe-pkg))
+           (should (file-exists-p (expand-file-name "extra.el" (package-desc-dir desc))))
+           (should-not (elpaish-recipe-built-version-snapshot recipe))))))))
+
+(ert-deftest elpaish-test-install-repository-build-failure ()
+  "A failed build never invokes package installation."
+  (elpaish-test-with-temp-env
+   (let ((installed nil))
+     (cl-letf (((symbol-function 'elpaish-build-package) (lambda (&rest _) nil))
+               ((symbol-function 'package-install-file) (lambda (_) (setq installed t))))
+       (should-error (elpaish-install-repository temp-dir :name 'missing))
+       (should-not installed)))))
+
 (ert-deftest elpaish-test-upgrade-packages-alias-and-execution ()
   "Test `elpaish-upgrade-packages' alias calls upgrade sequence properly."
   (elpaish-test-with-temp-env

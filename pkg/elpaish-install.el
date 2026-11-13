@@ -18,6 +18,10 @@
 (declare-function elpaish-recipe-p "elpaish" (object))
 (declare-function elpaish-recipe-name "elpaish" (recipe))
 (declare-function elpaish-recipe-requires "elpaish" (recipe))
+(declare-function copy-elpaish-recipe "elpaish" (recipe))
+(declare-function elpaish-recipe-name-from-url "elpaish-recipes" (url))
+(declare-function elpaish-register-package "elpaish" (name repository-path &rest options))
+(declare-function elpaish-build-package "elpaish" (recipe &optional stream output-directory-path))
 (declare-function elpaish--recipe-source-path "elpaish" (recipe))
 (declare-function sprite-future-then "sprite" (future callback))
 (declare-function gen-run-async "gen" (fn sequence &rest args))
@@ -25,6 +29,10 @@
 (declare-function package--description-file "package" (dir))
 (declare-function package-quickstart-refresh "package" ())
 
+(defvar elpaish-work-dir)
+(defvar elpaish-sign-packages)
+(defvar elpaish-registry)
+(defvar elpaish--resolved-repo-path-cache)
 (defvar package-quickstart-file)
 (defvar package-user-dir)
 (defvar warning-inhibit-types)
@@ -217,6 +225,65 @@ and invokes `package-install' for any uninstalled dependency."
               (error
                (message "Warning: Failed to install package dependency %s: %s"
                         dep-pkg (error-message-string err))))))))))
+
+;;;###autoload
+(defun elpaish-install-repository (repository &rest options)
+  "Build REPOSITORY and install its package in the current Emacs session.
+REPOSITORY is a local directory, Git URL, or `elpaish-recipe'.  For
+strings, OPTIONS are keyword arguments accepted by
+`elpaish-register-package'; :name overrides the name derived from the
+repository path.  For example:
+
+  (elpaish-install-repository \"https://example.org/foo.git\"
+                              :name \"foo\" :branch \"main\")
+
+A recipe object already contains its options and does not accept OPTIONS.
+The build uses the snapshot stream and a temporary output directory.  Remote
+repositories are cloned into a temporary checkout; local directories are used
+as-is, so :branch applies only to remote repositories.  Artifacts are not
+signed.  Dependencies are installed by package.el.
+Return the installed `package-desc', or signal an error if the build fails."
+  (interactive (list (read-string "Repository directory or Git URL: ")))
+  (require 'elpaish-recipes)
+  (when (and (elpaish-recipe-p repository) options)
+    (error "Recipe objects cannot be combined with registration options"))
+  (unless (or (elpaish-recipe-p repository) (stringp repository))
+    (signal 'wrong-type-argument (list 'string-or-recipe-p repository)))
+  (unless (and (zerop (% (length options) 2))
+               (cl-loop for (key _value) on options by #'cddr always (keywordp key)))
+    (error "Registration options must be keyword/value pairs"))
+  (let* ((temp-dir (make-temp-file "elpaish-install-" t))
+         (elpaish-work-dir (expand-file-name "repos" temp-dir))
+         (elpaish-sign-packages nil)
+         (elpaish-registry (make-hash-table :test 'equal))
+         (elpaish--resolved-repo-path-cache (make-hash-table :test 'eq)))
+    (unwind-protect
+        (let* ((recipe
+                (if (elpaish-recipe-p repository)
+                    (copy-elpaish-recipe repository)
+                  (let ((name (or (plist-get options :name)
+                                  (elpaish-recipe-name-from-url
+                                   (directory-file-name repository))))
+                        (args nil))
+                    (while options
+                      (let ((key (pop options)) (value (pop options)))
+                        (unless (eq key :name)
+                          (setq args (append args (list key value))))))
+                    (apply #'elpaish-register-package name repository args))))
+               (artifact (elpaish-build-package recipe 'snapshot
+                                                (expand-file-name "build" temp-dir))))
+          (unless artifact
+            (error "Could not build package %s" (elpaish-recipe-name recipe)))
+          (let* ((built-desc (package-install-file artifact))
+                 (desc (or (seq-find (lambda (candidate)
+                                       (equal (package-desc-version candidate)
+                                              (package-desc-version built-desc)))
+                                     (cdr (assq (package-desc-name built-desc) package-alist)))
+                           built-desc)))
+            (when (and desc (fboundp 'package--reload-previously-loaded))
+              (package--reload-previously-loaded desc))
+            desc))
+      (delete-directory temp-dir t))))
 
 ;;;; Core Single Package Operation
 
