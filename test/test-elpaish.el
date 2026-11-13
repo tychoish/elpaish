@@ -2371,6 +2371,23 @@ source's last commit time rather than the time of the build."
          (should (equal gen-items '(pkg-u1)))
          (should (functionp handle)))))))
 
+(ert-deftest elpaish-test-hidden-package-website ()
+  "Hidden recipes remain registered but do not appear in the catalog."
+  (elpaish-test-with-temp-env
+   (let ((hidden (elpaish-register-package 'hidden-pkg temp-dir :hidden t))
+         (visible (elpaish-register-package 'visible-pkg temp-dir)))
+     (should (elpaish-recipe-hidden hidden))
+     (cl-letf (((symbol-function 'elpaish-website--package-rows)
+                (lambda (recipe &rest _) `((tr nil (td nil ,(elpaish-recipe-name recipe)))))))
+       (elpaish-generate-stream-index 'snapshot)
+       (with-temp-buffer
+         (insert-file-contents (expand-file-name "snapshot/index.html" elpaish-output-dir))
+         (should (search-forward "visible-pkg" nil t))
+         (goto-char (point-min))
+         (should-not (search-forward "hidden-pkg" nil t))))
+     (should (eq hidden (gethash "hidden-pkg" elpaish-registry)))
+     (should (eq visible (gethash "visible-pkg" elpaish-registry))))))
+
 (ert-deftest elpaish-test-bootstrap-finished-schedules-quickstart ()
   "Schedule a quickstart refresh only when packages changed."
   (let ((refreshes 0))

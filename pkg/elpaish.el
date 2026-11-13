@@ -170,6 +170,7 @@ or `elpaish-staging' (pre-release tags and git describe)."
   (info-files nil :type (choice null boolean string list) :documentation "Opt-in documentation file or list of files for Info manual generation.")
   (info-skip nil :type boolean :documentation "When non-nil, skip generation of Info manual for this package.")
   (disabled-streams nil :type list :documentation "List of stream symbols where this package is suppressed/disabled.")
+  (hidden nil :type boolean :documentation "Non-nil to omit this package from website catalogs.")
   (external-p nil :type boolean :documentation "Non-nil if package is externally maintained.")
   (fork-p nil :type boolean :documentation "Non-nil if package is a maintained fork.")
   (origin 'tychoish :type symbol :documentation "Package origin: \='fork, \='mirror (or \='third-party), or \='tychoish.")
@@ -234,6 +235,7 @@ publishing an incomplete archive.")
                                     info-docs
                                     info-manual
                                     info-manuals
+                                    hidden
                                     external
                                     external-p
                                     third-party
@@ -268,6 +270,7 @@ Info manual generation; specify a file string, list of file strings, or t.
 INFO-SKIP is a boolean; when non-nil, suppresses Info manual generation
 for this package.
 DISABLED-STREAMS (or SUPPRESS-STREAMS) is a list of suppressed stream symbols.
+HIDDEN omits the package from website catalogs without disabling publication.
 DOC (or DOCS-URL) is an optional URL or path to documentation.
 ORG-FILES (or INCLUDE-ORG) controls org docs inclusion (t, nil, or list of patterns).
 ORG-EXCLUDE adds patterns to exclude from org documentation.
@@ -327,6 +330,7 @@ SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
                   :preflight-skip preflight-skip
                   :info-skip (and info-skip t)
                   :info-files resolved-info-files
+                  :hidden (and hidden t)
                   :external-p (and (or is-mirror is-fork (not (eq effective-origin 'tychoish))) t)
                   :fork-p is-fork
                   :origin effective-origin

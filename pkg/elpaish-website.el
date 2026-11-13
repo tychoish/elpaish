@@ -236,7 +236,8 @@ TITLE overrides the default page title derived from STREAM."
          (target-dir (or output-dir (elpaish-stream-dir effective-stream)))
          (page-title (or title (format "ELPAish Repository — (%s)"
                                         (elpaish-website--stream-label effective-stream))))
-         (sorted-recipes (sort (hash-table-values elpaish-registry)
+         (sorted-recipes (sort (seq-remove #'elpaish-recipe-hidden
+                                           (hash-table-values elpaish-registry))
                                (lambda (a b) (string< (elpaish-recipe-name a) (elpaish-recipe-name b)))))
          (rows (apply #'append
                       (delq nil
