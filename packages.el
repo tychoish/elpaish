@@ -54,15 +54,16 @@
 
 (elpaish-register-package
  'agent-shell-notifications
- (elpaish-recipe-path "https://github.com/zackattackz/agent-shell-notifications.git")
- :mirror t
- :preflight-skip t ;; it's a mirror -- yolo
+ (elpaish-recipe-path "https://github.com/tychoish/agent-shell-notifications.git")
+ :fork t
+ :preflight-skip t ;; it's a fork -- yolo
  :branch "main"
  :files '("agent-shell-notifications.el"
+	  "agent-shell-notifications-alert.el"
 	  "agent-shell-notifications-knockknock.el"
 	  "agent-shell-notifications-libnotify.el")
- :summary "Libnotify notifications for agent-shell"
- :url "https://github.com/zackattackz/agent-shell-notifications"
+ :summary "Alert/libnotify notifications for agent-shell"
+ :url "https://github.com/tychoish/agent-shell-notifications"
  :keywords '("tools" "agent-shell"))
 
 (elpaish-register-package
