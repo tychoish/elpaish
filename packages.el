@@ -102,6 +102,20 @@
  :keywords '("tools" "vc" "git"))
 
 (elpaish-register-package
+ 'diff-review
+ (elpaish-recipe-path "https://github.com/tychoish/diff-review.git")
+ :fork t
+ :hidden t
+ :preflight-skip t ;; it's a fork -- yolo
+ :branch "main"
+ :test-dir "test"
+ :files '("diff-review.el"
+	  "diff-review-magit.el")
+ :summary "Review git diffs with inline changes, file tree sidebar, and viewed marks"
+ :url "https://github.com/tychoish/diff-review"
+ :keywords '("vc" "git" "tools"))
+
+(elpaish-register-package
  'sprite
  (elpaish-recipe-path "https://github.com/tychoish/sprite.git")
  :branch "main"
