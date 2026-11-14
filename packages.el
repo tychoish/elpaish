@@ -60,7 +60,6 @@
  :branch "main"
  :files '("agent-shell-notifications.el"
 	  "agent-shell-notifications-alert.el"
-	  "agent-shell-notifications-knockknock.el"
 	  "agent-shell-notifications-libnotify.el")
  :summary "Alert/libnotify notifications for agent-shell"
  :url "https://github.com/tychoish/agent-shell-notifications"
