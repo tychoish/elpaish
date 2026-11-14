@@ -1045,9 +1045,8 @@ removes autoload feature provisions, and eliminates extraneous whitespace."
 
         ;; 2. Strip definition prefixes (register-definition-prefixes ...)
         (goto-char (point-min))
-        (while (re-search-forward "register-definition-prefixes" nil t)
-          (while (> (car (syntax-ppss)) 1)
-            (backward-up-list 1))
+        (while (re-search-forward "(register-definition-prefixes" nil t)
+          (backward-up-list 1)
           (let ((beg (point)))
             (forward-sexp 1)
             (when (looking-at "\n") (forward-char 1))
