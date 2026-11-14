@@ -83,6 +83,13 @@ Allows the Emacs event loop to remain responsive and process user input."
   :type 'number
   :group 'elpaish-install)
 
+(defcustom elpaish-install-verbose nil
+  "When non-nil, log every package checked during installation and bootstrap.
+When nil, only log installed, upgraded, and failed packages, plus the
+final summary."
+  :type 'boolean
+  :group 'elpaish-install)
+
 (defcustom elpaish-install-package-updated-functions nil
   "Hook run when a package is installed or upgraded by `elpaish-install'.
 Each function is called with three arguments: PKG (symbol), STATUS
@@ -493,7 +500,8 @@ If REFRESH is non-nil, call `package-refresh-contents' first."
                (message "[elpaish] [%d/%d] Failed %s: %s"
                         idx total pkg (plist-get res :error)))
               (_
-               (message "[elpaish] [%d/%d] %s is up to date" idx total pkg)))))
+               (when elpaish-install-verbose
+                 (message "[elpaish] [%d/%d] %s is up to date" idx total pkg))))))
         (let ((final-res (nreverse results)))
           (elpaish-install--report-summary final-res action)
           (run-hook-with-args 'elpaish-install-bootstrap-finished-functions
@@ -572,7 +580,8 @@ Calls CALLBACK when complete and returns a cancellation handle function."
                        (message "[elpaish] [%d/%d] Failed %s: %s"
                                 idx total pkg (plist-get res :error)))
                       (_
-                       (message "[elpaish] [%d/%d] %s is up to date" idx total pkg)))
+                       (when elpaish-install-verbose
+                         (message "[elpaish] [%d/%d] %s is up to date" idx total pkg))))
                     (funcall done-cb)))
                 target-pkgs
                 :concurrency (or concurrency elpaish-install-concurrency 1)
@@ -707,7 +716,8 @@ ARGS can contain package symbols, lists of package symbols, or keyword options:
                    (message "[elpaish] [%d/%d] Failed %s: %s"
                             idx total pkg (plist-get res :error)))
                   (_
-                   (message "[elpaish] [%d/%d] %s is up to date" idx total pkg)))))
+                   (when elpaish-install-verbose
+                     (message "[elpaish] [%d/%d] %s is up to date" idx total pkg))))))
             (let ((final-res (nreverse results)))
               (elpaish-install--report-summary final-res 'install)
               (run-hook-with-args 'elpaish-install-bootstrap-finished-functions
@@ -802,7 +812,7 @@ pause between asynchronous steps, and CALLBACK receives the results."
                              (remove #'elpaish-install--on-bootstrap-finished
                                      elpaish-install-bootstrap-finished-functions)))
                        (when (and changed quickstart-enabled)
-                         (elpaish-install-flush-package-quickstart))
+                         (elpaish-install-flush-package-quickstart t))
                        (setq quickstart-state (if (and changed quickstart-enabled) "[x]" "[-]")
                              results final-results stage 'done
                              elpaish-install--active-cancel-handle nil)
@@ -1146,12 +1156,14 @@ When FORCE is nil, do nothing unless quickstart file is stale."
     (package-quickstart-refresh)))
 
 ;;;###autoload
-(defun elpaish-install-flush-package-quickstart ()
-  "Ensure any pending `package-quickstart-refresh' runs immediately."
-  (when (timerp elpaish-install--quickstart-refresh-timer)
-    (cancel-timer elpaish-install--quickstart-refresh-timer)
-    (setq elpaish-install--quickstart-refresh-timer nil))
-  (elpaish-install-refresh-package-quickstart t))
+(defun elpaish-install-flush-package-quickstart (&optional force)
+  "Ensure any pending `package-quickstart-refresh' runs immediately.
+When FORCE is non-nil, force refresh even if no debounce timer was pending."
+  (when (or force (timerp elpaish-install--quickstart-refresh-timer))
+    (when (timerp elpaish-install--quickstart-refresh-timer)
+      (cancel-timer elpaish-install--quickstart-refresh-timer)
+      (setq elpaish-install--quickstart-refresh-timer nil))
+    (elpaish-install-refresh-package-quickstart t)))
 
 ;;;###autoload
 (defun elpaish-install-schedule-quickstart-refresh (&rest _)

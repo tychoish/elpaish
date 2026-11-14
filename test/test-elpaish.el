@@ -2436,7 +2436,7 @@ source's last commit time rather than the time of the build."
          (refreshes 0) (finished nil))
      (cl-letf (((symbol-function 'display-buffer) #'ignore)
                ((symbol-function 'elpaish-install-flush-package-quickstart)
-                (lambda () (cl-incf refreshes)))
+                (lambda (&optional _) (cl-incf refreshes)))
                ((symbol-function 'elpaish-install--process-package)
                 (lambda (pkg &rest _)
                   (if (eq pkg 'good)
@@ -2477,6 +2477,25 @@ source's last commit time rather than the time of the build."
       (elpaish-install--on-bootstrap-finished '((:status :installed)) 'install)
       (elpaish-install--on-bootstrap-finished '((:status :upgraded)) 'upgrade)
       (should (= refreshes 2)))))
+
+(ert-deftest elpaish-test-flush-package-quickstart-lifecycle ()
+  "Test `elpaish-install-flush-package-quickstart' only refreshes when pending or forced."
+  (let ((refreshes 0)
+        (elpaish-install--quickstart-refresh-timer nil))
+    (cl-letf (((symbol-function 'elpaish-install-refresh-package-quickstart)
+               (lambda (&rest _) (cl-incf refreshes))))
+      ;; When no timer is pending and force is nil, does nothing.
+      (elpaish-install-flush-package-quickstart)
+      (should (= refreshes 0))
+      ;; When forced, refreshes immediately.
+      (elpaish-install-flush-package-quickstart t)
+      (should (= refreshes 1))
+      ;; When a timer is active, cancels timer and refreshes.
+      (let ((timer (run-at-time 100 nil #'ignore)))
+        (setq elpaish-install--quickstart-refresh-timer timer)
+        (elpaish-install-flush-package-quickstart)
+        (should (= refreshes 2))
+        (should-not elpaish-install--quickstart-refresh-timer)))))
 
 (ert-deftest elpaish-test-quickstart-optimization-streamlines-content ()
   "Test `elpaish-install-optimize-quickstart-file' streamlines quickstart contents."
