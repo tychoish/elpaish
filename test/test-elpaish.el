@@ -2587,5 +2587,29 @@ source's last commit time rather than the time of the build."
                 (lambda (&rest _) '("commit-hash-ahead"))))
        (should-error (elpaish-install-rebuild-local-package 'test-pkg) :type 'user-error)))))
 
+(ert-deftest elpaish-test-clean-stale-packages ()
+  "Test `elpaish-install-clean-stale-packages' deletes older versions."
+  (let* ((temp-dir (make-temp-file "test-elpaish-stale-clean-" t))
+         (package-user-dir temp-dir)
+         (old-dir (expand-file-name "multipkg-1.0.0" temp-dir))
+         (new-dir (expand-file-name "multipkg-2.0.0" temp-dir))
+         (old-tar (expand-file-name "multipkg-1.0.0.tar" temp-dir))
+         (single-dir (expand-file-name "singlepkg-1.0" temp-dir)))
+    (unwind-protect
+        (progn
+          (make-directory old-dir t)
+          (make-directory new-dir t)
+          (make-directory single-dir t)
+          (with-temp-file old-tar (insert "tar"))
+          (cl-letf (((symbol-function 'elpaish-install-schedule-quickstart-refresh) #'ignore))
+            (let ((count (elpaish-install-clean-stale-packages t)))
+              (should (= count 1))
+              (should-not (file-directory-p old-dir))
+              (should-not (file-exists-p old-tar))
+              (should (file-directory-p new-dir))
+              (should (file-directory-p single-dir)))))
+      (when (file-directory-p temp-dir)
+        (delete-directory temp-dir t)))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here

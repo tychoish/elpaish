@@ -1097,6 +1097,90 @@ artifacts from `package-user-dir' before installing."
       (message "[elpaish] Successfully rebuilt and reinstalled %s from %s" pkg-name repo-dir)
       dest-file)))
 
+;;;###autoload
+(defun elpaish-install-clean-stale-packages (&optional noninteractive)
+  "Find and remove older, duplicate versions of packages in `package-user-dir'.
+For every package with multiple installed versions, keeps the newest version
+and prompts (yes/no/all/cancel) to delete each older version and its archives.
+When NONINTERACTIVE is non-nil, automatically deletes all stale versions without prompting."
+  (interactive)
+  (require 'package)
+  (unless (and (boundp 'package-user-dir)
+               (file-directory-p package-user-dir))
+    (user-error "Package directory %s does not exist" package-user-dir))
+  (let* ((entries (directory-files package-user-dir nil "\\`[^.]" t))
+         (groups (make-hash-table :test #'equal))
+         (stale-entries nil)
+         (deleted-count 0)
+         (delete-all noninteractive))
+    (seq-do
+     (lambda (entry)
+       (let ((full-path (expand-file-name entry package-user-dir)))
+         (when (file-directory-p full-path)
+           (unless (member entry '("archives" "gnupg"))
+             (let ((desc (condition-case nil
+                             (package-load-descriptor full-path)
+                           (error nil))))
+               (if desc
+                   (let* ((name (symbol-name (package-desc-name desc)))
+                          (ver (package-desc-version desc))
+                          (item (list :name name :version ver :dir entry :path full-path)))
+                     (setf (map-elt groups name) (cons item (map-elt groups name))))
+                 (when (string-match "\\`\\(.*?\\)-\\([0-9]+\\(?:\\.[0-9]+\\)*\\(?:\\.[0-9]+\\)?\\)\\'" entry)
+                   (let* ((name (match-string 1 entry))
+                          (ver-str (match-string 2 entry))
+                          (ver (condition-case nil (version-to-list ver-str) (error '(0))))
+                          (item (list :name name :version ver :dir entry :path full-path)))
+                     (setf (map-elt groups name) (cons item (map-elt groups name)))))))))))
+     entries)
+    (map-do
+     (lambda (_name items)
+       (when (> (length items) 1)
+         (let ((sorted (sort items (lambda (a b)
+                                     (version-list-< (plist-get b :version)
+                                                     (plist-get a :version))))))
+           (seq-do (lambda (stale) (push stale stale-entries)) (cdr sorted)))))
+     groups)
+    (if (null stale-entries)
+        (progn
+          (message "[elpaish] No stale package versions found in %s" package-user-dir)
+          0)
+      (catch 'cancel
+        (seq-do
+         (lambda (item)
+           (let* ((dir-name (plist-get item :dir))
+                  (full-dir (plist-get item :path))
+                  (prefix (expand-file-name dir-name package-user-dir))
+                  (associated (seq-filter #'file-exists-p
+                                          (list (concat prefix ".tar")
+                                                (concat prefix ".tar.sig")
+                                                (concat prefix ".signed")
+                                                (concat prefix ".el"))))
+                  (should-delete nil))
+             (if delete-all
+                 (setq should-delete t)
+               (let ((answer (read-answer
+                              (format "Delete stale package %s? " dir-name)
+                              '(("yes" ?y "delete this package")
+                                ("no" ?n "skip this package")
+                                ("all" ?! "delete all remaining stale packages")
+                                ("cancel" ?q "abort remaining deletions")))))
+                 (pcase answer
+                   ("yes" (setq should-delete t))
+                   ("no" (setq should-delete nil))
+                   ("all" (setq delete-all t) (setq should-delete t))
+                   ("cancel" (throw 'cancel nil)))))
+             (when should-delete
+               (delete-directory full-dir t)
+               (seq-do #'delete-file associated)
+               (cl-incf deleted-count)
+               (message "[elpaish] Deleted stale package %s" dir-name))))
+         (nreverse stale-entries)))
+      (when (> deleted-count 0)
+        (elpaish-install-schedule-quickstart-refresh))
+      (message "[elpaish] Finished cleaning: deleted %d stale package version(s)" deleted-count)
+      deleted-count)))
+
 ;;;; Quickstart management and optimization
 
 (defvar elpaish-install--quickstart-refresh-timer nil
