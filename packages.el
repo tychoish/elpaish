@@ -220,15 +220,6 @@
  :keywords '("tools" "mcp" "denote" "notes"))
 
 (elpaish-register-package
- 'gptel-mcp
- (elpaish-recipe-path "https://github.com/tychoish/gptel-mcp.git")
- :branch "main"
- :test-dir "test"
- :summary "Bridges mcpkit tool registrations onto gptel's tool-calling framework"
- :url "https://github.com/tychoish/gptel-mcp"
- :keywords '("tools" "mcp" "gptel" "llm"))
-
-(elpaish-register-package
  'gptel-pup
  (elpaish-recipe-path "https://github.com/tychoish/gptel-pup.git")
  :branch "main"
