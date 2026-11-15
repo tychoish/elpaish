@@ -74,6 +74,10 @@
 (require 'compat nil t)
 (require 'package-build nil t)
 (declare-function package-build--generate-info-files "package-build" (recipe files target-dir))
+(declare-function sprite-fleet-mapcar "sprite-fleet" (fn-or-form items &rest args))
+(declare-function sprite-future-then "sprite-future" (future on-resolve &optional on-reject))
+(defvar elpaish-packages-files)
+(defvar elpaish-recipe-local-search-dirs)
 (defvar package-build-run-recipe-org-exports)
 (defvar package-build--use-sandbox)
 (defvar package-build-archive-dir)
@@ -1690,7 +1694,7 @@ OUTPUT-DIRECTORY-PATH overrides destination directory."
   (let ((s (or server elpaish-server-process)))
     (cond
      ((null s) nil)
-     ((and (fboundp 'ws-port) (ws-port s))
+     ((and (fboundp 'ws-port) (ws-port s) (> (ws-port s) 0))
       (ws-port s))
      ((and (fboundp 'ws-process) (ws-process s) (process-live-p (ws-process s)))
       (process-contact (ws-process s) :service))
@@ -1806,6 +1810,180 @@ PORT defaults to `elpaish-preview-server-port'."
         (delete-process elpaish-server-process))))
     (setq elpaish-server-process nil)
     (message "ELPAish preview server stopped.")))
+
+(defun elpaish--resolve-signing-p (sign)
+  "Resolve SIGN policy (`auto', `if-possible', t, or nil) to a boolean.
+When SIGN is `auto' or `if-possible', return non-nil only if `gpg' is
+installed and a signing key is available via `elpaish--get-signing-key'."
+  (pcase sign
+    ((or 'auto 'if-possible)
+     (and (executable-find "gpg")
+          (elpaish--get-signing-key)
+          t))
+    (_ (and sign t))))
+
+;;;###autoload
+(defun elpaish-test-server-url (&optional stream)
+  "Return the localhost archive URL for STREAM on the local test server.
+STREAM defaults to `snapshot'."
+  (let* ((port (or (elpaish--server-port) elpaish-preview-server-port))
+         (canon (elpaish-canonical-stream (or stream 'snapshot)))
+         (target-stream (if (eq canon 'all) 'snapshot canon)))
+    (format "http://127.0.0.1:%d/%s/" port target-stream)))
+
+(defun elpaish--test-server-sprite-form (opts)
+  "Build a self-contained Lisp form to rebuild ELPAish in a sprite using OPTS."
+  `(progn
+     (dolist (p ',(plist-get opts :load-path))
+       (add-to-list 'load-path p))
+     (add-to-list 'load-path ,(plist-get opts :elpaish-dir))
+     (require 'elpaish)
+     (require 'elpaish-recipes)
+     (let ((default-directory ,(plist-get opts :work-cwd))
+           (elpaish-output-dir ,(plist-get opts :output-dir))
+           (elpaish-work-dir ,(plist-get opts :work-dir))
+           (elpaish-sign-packages ,(plist-get opts :sign))
+           (elpaish-gpg-key ,(plist-get opts :gpg-key))
+           (elpaish-gpg-passphrase ,(plist-get opts :gpg-passphrase))
+           (elpaish-recipe-local-search-dirs ',(plist-get opts :search-dirs))
+           (elpaish-packages-files ',(plist-get opts :packages-files))
+           (elpaish-parallel-jobs 1))
+       (elpaish-load-packages)
+       (elpaish-build-all ',(plist-get opts :mode) ,(plist-get opts :output-dir))
+       (list :status 'ok
+             :url ,(plist-get opts :url)
+             :output-dir ,(plist-get opts :output-dir)
+             :mode ',(plist-get opts :mode)
+             :signed ,(plist-get opts :sign)
+             :packages (hash-table-count elpaish-registry)))))
+
+;;;###autoload
+(cl-defun elpaish-test-server (&key port output-dir mode (sign 'auto) sync (sprite t) packages-files callback)
+  "Rebuild configured packages and run a local ELPAish `web-server'.
+PORT defaults to `elpaish-preview-server-port'.  OUTPUT-DIR defaults to
+`elpaish-output-dir'.  MODE defaults to `elpaish-release-mode'.
+SIGN controls GPG signing: `auto' (default) signs if a GPG key is
+available, t requires signing, and nil builds unsigned packages.
+When SPRITE is non-nil (default) and SYNC is nil, the full package
+rebuild is delegated to a background `sprite' worker via `sprite-fleet'.
+CALLBACK, if non-nil, is invoked with the result plist once ready."
+  (interactive (list :sync current-prefix-arg))
+  (require 'elpaish-recipes)
+  (let* ((effective-port (or port elpaish-preview-server-port))
+         (effective-dir (file-name-as-directory
+                         (expand-file-name (or output-dir elpaish-output-dir))))
+         (effective-mode (or mode elpaish-release-mode))
+         (resolved-sign (elpaish--resolve-signing-p sign))
+         (effective-pkg-files (or packages-files elpaish-packages-files))
+         (use-sprite (and sprite
+                          (not sync)
+                          (require 'sprite nil t)
+                          (require 'sprite-fleet nil t)
+                          (require 'sprite-future nil t)
+                          (fboundp 'sprite-fleet-mapcar)
+                          (fboundp 'sprite-future-then))))
+    (elpaish-serve-local effective-port effective-dir)
+    (let* ((actual-port (or (elpaish--server-port) effective-port))
+           (server-url (format "http://127.0.0.1:%d/snapshot/" actual-port)))
+      (if use-sprite
+          (let* ((elpaish-lib (locate-library "elpaish"))
+                 (elpaish-dir (if elpaish-lib
+                                  (file-name-directory elpaish-lib)
+                                (expand-file-name "pkg/" default-directory)))
+                 (opts (list :load-path load-path
+                             :elpaish-dir elpaish-dir
+                             :work-cwd default-directory
+                             :output-dir effective-dir
+                             :work-dir (expand-file-name elpaish-work-dir)
+                             :sign resolved-sign
+                             :gpg-key elpaish-gpg-key
+                             :gpg-passphrase elpaish-gpg-passphrase
+                             :search-dirs elpaish-recipe-local-search-dirs
+                             :packages-files effective-pkg-files
+                             :mode effective-mode
+                             :url server-url))
+                 (future (sprite-fleet-mapcar
+                          (elpaish--test-server-sprite-form opts)
+                          (list t)
+                          :fleet-size 1
+                          :timeout elpaish-build-timeout
+                          :async t
+                          :order 'preserve
+                          :error-policy :collect-error)))
+            (message "[elpaish] Rebuilding test server archive in sprite (port %d, signed: %s)..."
+                     actual-port (if resolved-sign "yes" "no"))
+            (sprite-future-then
+             future
+             (lambda (results)
+               (let ((res (car results)))
+                 (if (elpaish-async-error-p res)
+                     (message "[elpaish] Test server sprite build failed: %s"
+                              (error-message-string (plist-get res :error)))
+                   (unless (elpaish-server-running-p)
+                     (elpaish-serve-local actual-port effective-dir))
+                   (message "[elpaish] Test server ready at %s (packages: %d, signed: %s)"
+                            server-url
+                            (or (plist-get res :packages) 0)
+                            (if resolved-sign "yes" "no")))
+                 (when callback (funcall callback res)))))
+            future)
+        (let ((elpaish-sign-packages resolved-sign)
+              (elpaish-packages-files effective-pkg-files))
+          (elpaish-load-packages)
+          (elpaish-build-all effective-mode effective-dir)
+          (unless (elpaish-server-running-p)
+            (elpaish-serve-local actual-port effective-dir))
+          (let ((res (list :status 'ok
+                           :url server-url
+                           :output-dir effective-dir
+                           :mode effective-mode
+                           :signed resolved-sign
+                           :packages (hash-table-count elpaish-registry))))
+            (message "[elpaish] Test server ready at %s (packages: %d, signed: %s)"
+                     server-url
+                     (plist-get res :packages)
+                     (if resolved-sign "yes" "no"))
+            (when callback (funcall callback res))
+            res))))))
+
+;;;###autoload
+(defun elpaish-test-server-upgrade (&rest args)
+  "Upgrade configured packages against the local ELPAish test server.
+Temporarily prepends the local test server archive to `package-archives'
+with highest priority and delegates to `elpaish-install-upgrade-packages'.
+
+When called interactively, a prefix argument forces synchronous execution.
+ARGS accepts all arguments supported by `elpaish-install-upgrade-packages',
+plus `:stream' (default `snapshot'), `:archive-name' (default
+\"elpaish-local\"), and `:url' to override the local archive URL."
+  (interactive "P")
+  (let* ((interactive-p (called-interactively-p 'any))
+         (prefix-arg-val (when interactive-p (car args)))
+         (remaining (if interactive-p nil args))
+         (stream 'snapshot)
+         (archive-name "elpaish-local")
+         (url nil)
+         (passthrough nil))
+    (while remaining
+      (let ((arg (pop remaining)))
+        (pcase arg
+          (:stream (setq stream (pop remaining)))
+          (:archive-name (setq archive-name (pop remaining)))
+          (:url (setq url (pop remaining)))
+          (_ (push arg passthrough)))))
+    (setq passthrough (nreverse passthrough))
+    (unless (or url (elpaish-server-running-p))
+      (user-error "ELPAish test server is not running; start it with `M-x elpaish-test-server'"))
+    (let* ((local-url (or url (elpaish-test-server-url stream)))
+           (local-archive (cons archive-name local-url))
+           (package-archives (append (list local-archive) package-archives))
+           (package-archive-priorities
+            (append (list (cons archive-name 1000))
+                    (and (boundp 'package-archive-priorities)
+                         package-archive-priorities))))
+      (if interactive-p
+          (elpaish-install-upgrade-packages :sync (not (null prefix-arg-val)))
+        (apply #'elpaish-install-upgrade-packages passthrough)))))
 
 ;;; Automated Rebuild Timer
 
@@ -1999,6 +2177,8 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
     ("g" "Rebuild website only" elpaish-build-website)
     ("wo" "Start local preview server" elpaish-serve-local)
     ("wc" "Stop preview server" elpaish-stop-server)
+    ("wt" "Build & start local test server" elpaish-test-server)
+    ("wu" "Upgrade packages from local server" elpaish-test-server-upgrade)
     ("rr" "Reload package recipes" (lambda () (interactive) (elpaish-load-packages) (message "Reloaded package recipes.")))]
    ["Keyring & Operations"
     ("k" "Export GPG keyring" elpaish-export-keyring)

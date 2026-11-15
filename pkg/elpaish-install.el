@@ -962,6 +962,9 @@ ACTION is \='upgrade (default) or \='install."
          (results nil)
          (timer nil)
          (step nil)
+         (captured-archives (copy-alist package-archives))
+         (captured-priorities (and (boundp 'package-archive-priorities)
+                                   (copy-alist package-archive-priorities)))
          (render (lambda (&optional cur-pkg)
                    (elpaish-install--upgrade-progress
                     buffer entries refresh-state quickstart-state global-state cur-pkg act))))
@@ -975,7 +978,8 @@ ACTION is \='upgrade (default) or \='install."
     (display-buffer buffer)
     (setq step
           (lambda ()
-            (progn
+            (let ((package-archives captured-archives)
+                  (package-archive-priorities captured-priorities))
               (condition-case err
                   (pcase stage
                     ('refresh

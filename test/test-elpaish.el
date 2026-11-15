@@ -2646,5 +2646,158 @@ source's last commit time rather than the time of the build."
       (when (buffer-live-p buf)
         (kill-buffer buf)))))
 
+(ert-deftest elpaish-test-resolve-signing-policy ()
+  "Test `elpaish--resolve-signing-p' for explicit and auto policies."
+  (should-not (elpaish--resolve-signing-p nil))
+  (should (eq (elpaish--resolve-signing-p t) t))
+  (cl-letf (((symbol-function 'executable-find) (lambda (_) "/usr/bin/gpg"))
+            ((symbol-function 'elpaish--get-signing-key) (lambda () "ABCD1234")))
+    (should (eq (elpaish--resolve-signing-p 'auto) t))
+    (should (eq (elpaish--resolve-signing-p 'if-possible) t)))
+  (cl-letf (((symbol-function 'executable-find) (lambda (_) nil))
+            ((symbol-function 'elpaish--get-signing-key) (lambda () "ABCD1234")))
+    (should-not (elpaish--resolve-signing-p 'auto)))
+  (cl-letf (((symbol-function 'executable-find) (lambda (_) "/usr/bin/gpg"))
+            ((symbol-function 'elpaish--get-signing-key) (lambda () nil)))
+    (should-not (elpaish--resolve-signing-p 'auto))))
+
+(ert-deftest elpaish-test-server-sync-build-and-serve ()
+  "Test `elpaish-test-server' builds packages and starts `web-server'."
+  (let* ((tmp (make-temp-file "elpaish-test-srv-" t))
+         (repo-dir (expand-file-name "repo" tmp))
+         (out-dir (expand-file-name "public" tmp))
+         (pkg-file (expand-file-name "packages.el" tmp))
+         (elpaish-registry (make-hash-table :test 'equal))
+         (elpaish-server-process nil)
+         (callback-res nil))
+    (unwind-protect
+        (progn
+          (make-directory repo-dir t)
+          (with-temp-file (expand-file-name "srvpkg.el" repo-dir)
+            (insert ";;; srvpkg.el --- Test server package -*- lexical-binding: t; -*-\n"
+                    ";; Version: 0.1.0\n"
+                    "(provide 'srvpkg)\n"
+                    ";;; srvpkg.el ends here\n"))
+          (let ((default-directory repo-dir))
+            (call-process "git" nil nil nil "init" "-b" "main")
+            (call-process "git" nil nil nil "config" "user.email" "test@example.com")
+            (call-process "git" nil nil nil "config" "user.name" "Test User")
+            (call-process "git" nil nil nil "add" "srvpkg.el")
+            (call-process "git" nil nil nil "commit" "-m" "Initial commit"))
+          (with-temp-file pkg-file
+            (insert (format "(elpaish-register-package 'srvpkg %S :branch \"main\" :preflight-skip t)\n"
+                            repo-dir)))
+          (let ((res (elpaish-test-server
+                      :port 0
+                      :output-dir out-dir
+                      :mode 'snapshot
+                      :sign nil
+                      :sync t
+                      :packages-files (list pkg-file)
+                      :callback (lambda (r) (setq callback-res r)))))
+            (should (elpaish-server-running-p))
+            (should (equal res callback-res))
+            (should (eq (plist-get res :status) 'ok))
+            (should (= (plist-get res :packages) 1))
+            (should (string-prefix-p "http://127.0.0.1:" (elpaish-test-server-url 'snapshot)))
+            (should (string-suffix-p "/snapshot/" (elpaish-test-server-url 'snapshot)))
+            (should (file-exists-p (expand-file-name "snapshot/archive-contents" out-dir)))))
+      (elpaish-stop-server)
+      (when (file-directory-p tmp)
+        (delete-directory tmp t)))))
+
+(ert-deftest elpaish-test-server-sprite-delegation ()
+  "Test `elpaish-test-server' delegates rebuild to `sprite-fleet' when available."
+  (let* ((tmp (make-temp-file "elpaish-test-sprite-" t))
+         (out-dir (expand-file-name "public" tmp))
+         (elpaish-server-process nil)
+         (captured-form nil)
+         (captured-args nil)
+         (fake-future (list :fake-future t))
+         (callback-res nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'require)
+                   (lambda (feature &optional _filename _noerror)
+                     (memq feature '(sprite sprite-fleet sprite-future elpaish-recipes))))
+                  ((symbol-function 'sprite-fleet-mapcar)
+                   (lambda (form items &rest args)
+                     (setq captured-form form
+                           captured-args (list :items items :args args))
+                     fake-future))
+                  ((symbol-function 'sprite-future-then)
+                   (lambda (future cb)
+                     (should (eq future fake-future))
+                     (funcall cb (list (list :status 'ok :packages 3)))))
+                  ((symbol-function 'elpaish--resolve-signing-p) (lambda (_) nil)))
+          (let ((res (elpaish-test-server
+                      :port 0
+                      :output-dir out-dir
+                      :mode 'snapshot
+                      :sign 'auto
+                      :sprite t
+                      :callback (lambda (r) (setq callback-res r)))))
+            (should (eq res fake-future))
+            (should (elpaish-server-running-p))
+            (should (consp captured-form))
+            (should (equal (plist-get captured-args :items) '(t)))
+            (should (eq (plist-get (plist-get captured-args :args) :async) t))
+            (should (= (plist-get (plist-get captured-args :args) :fleet-size) 1))
+            (should (equal callback-res '(:status ok :packages 3)))))
+      (elpaish-stop-server)
+      (when (file-directory-p tmp)
+        (delete-directory tmp t)))))
+
+(ert-deftest elpaish-test-server-upgrade-overrides-archives ()
+  "Test `elpaish-test-server-upgrade' prepends local test server archive."
+  (let ((elpaish-server-process nil))
+    (should-error (elpaish-test-server-upgrade 'pkg-a) :type 'user-error))
+  (let* ((elpaish-server-process nil)
+         (package-archives '(("melpa" . "https://melpa.org/packages/")))
+         (package-archive-priorities '(("melpa" . 100)))
+         (seen-archives nil)
+         (seen-priorities nil)
+         (seen-args nil))
+    (cl-letf (((symbol-function 'elpaish-server-running-p) (lambda (&optional _) t))
+              ((symbol-function 'elpaish--server-port) (lambda (&optional _) 19001))
+              ((symbol-function 'elpaish-install-upgrade-packages)
+               (lambda (&rest args)
+                 (setq seen-archives package-archives
+                       seen-priorities package-archive-priorities
+                       seen-args args))))
+      (elpaish-test-server-upgrade 'pkg-a :sync t)
+      (should (equal (car seen-archives)
+                     '("elpaish-local" . "http://127.0.0.1:19001/snapshot/")))
+      (should (equal (cadr seen-archives)
+                     '("melpa" . "https://melpa.org/packages/")))
+      (should (= (cdr (assoc "elpaish-local" seen-priorities)) 1000))
+      (should (equal seen-args '(pkg-a :sync t))))))
+
+(ert-deftest elpaish-test-upgrade-run-preserves-let-bound-archives ()
+  "Test async `elpaish-install--upgrade-run' preserves `let'-bound archives."
+  (let ((seen-archives nil)
+        (elpaish-install--active-cancel-handle nil)
+        (elpaish-install-bootstrap-finished-functions nil)
+        (package-archives '(("global" . "https://example.com/packages/")))
+        (done nil))
+    (cl-letf (((symbol-function 'package-initialize) #'ignore)
+              ((symbol-function 'package-refresh-contents)
+               (lambda () (setq seen-archives package-archives)))
+              ((symbol-function 'elpaish-install--installed-version) (lambda (_) "0.1.0"))
+              ((symbol-function 'elpaish-install--process-package)
+               (lambda (pkg _act _refresh) (list :package pkg :status :up-to-date)))
+              ((symbol-function 'elpaish-install--report-summary) #'ignore)
+              ((symbol-function 'display-buffer) #'ignore))
+      (let ((package-archives '(("elpaish-local" . "http://127.0.0.1:9999/snapshot/"))))
+        (elpaish-install--upgrade-run
+         '(test-pkg) t nil 0.001
+         (lambda (_res) (setq done t))
+         'upgrade))
+      (let ((deadline (+ (float-time) 2.0)))
+        (while (and (not done) (< (float-time) deadline))
+          (accept-process-output nil 0.01)))
+      (should done)
+      (should (equal seen-archives
+                     '(("elpaish-local" . "http://127.0.0.1:9999/snapshot/")))))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here

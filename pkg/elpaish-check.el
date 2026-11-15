@@ -335,7 +335,7 @@ VERBOSE enables logging.  Return list of error strings."
     (setq load-args (nreverse load-args))
     (unwind-protect
                 (let* ((selector (format "\\`%s" (regexp-quote pkg-name)))
-               (args (append (list "-Q" "--batch")
+               (args (append (list "-Q" "--batch" "-l" "cl-lib")
                              load-args
                              (list "--eval"
                                    (format "(ert-run-tests-batch-and-exit %S)" selector))))
