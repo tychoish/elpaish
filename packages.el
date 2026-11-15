@@ -426,7 +426,7 @@
  (elpaish-recipe-path "https://github.com/tychoish/logx.git")
  :branch "main"
  :test-dir "test"
- :requires '(jsonl)
+ :requires nil
  :summary "Structured logging framework and line-oriented JSON viewer"
  :url "https://github.com/tychoish/logx"
  :keywords '("tools" "convenience" "logging"))
