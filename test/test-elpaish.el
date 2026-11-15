@@ -2628,5 +2628,23 @@ source's last commit time rather than the time of the build."
             (should (equal compiled-file tmp-el))))
       (when (file-exists-p tmp-el) (delete-file tmp-el)))))
 
+(ert-deftest elpaish-test-progress-mode-and-controls ()
+  "Test `elpaish-install-progress-mode' keybindings and restart mechanism."
+  (let* ((buf (get-buffer-create "*ELPAish Progress Test*"))
+         (restarted nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (elpaish-install-progress-mode)
+          (should (eq major-mode 'elpaish-install-progress-mode))
+          (should (keymapp (current-local-map)))
+          (setq-local elpaish-install--progress-context
+                      (list :pkgs '(test-a) :refresh nil :sync t :running nil))
+          (cl-letf (((symbol-function 'elpaish-install--upgrade-run)
+                     (lambda (pkgs &rest _) (setq restarted pkgs))))
+            (elpaish-install-progress-restart)
+            (should (equal restarted '(test-a)))))
+      (when (buffer-live-p buf)
+        (kill-buffer buf)))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here
