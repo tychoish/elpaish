@@ -2531,5 +2531,61 @@ source's last commit time rather than the time of the build."
         (should (elpaish-install-package-quickstart-stale-p))
       (when (file-exists-p tmp-el) (delete-file tmp-el)))))
 
+(ert-deftest elpaish-test-delete-package-artifacts ()
+  "Test `elpaish-install-delete-package-artifacts' removes all matching artifacts."
+  (let* ((temp-dir (make-temp-file "test-elpaish-artifacts-" t))
+         (package-user-dir temp-dir)
+         (pkg-dir (expand-file-name "testpkg-1.2.3" temp-dir))
+         (tar-file (expand-file-name "testpkg-1.2.3.tar" temp-dir))
+         (sig-file (expand-file-name "testpkg-1.2.3.tar.sig" temp-dir))
+         (other-dir (expand-file-name "otherpkg-1.0.0" temp-dir))
+         (package-alist '((testpkg (1 2 3)) (otherpkg (1 0 0)))))
+    (unwind-protect
+        (progn
+          (make-directory pkg-dir t)
+          (make-directory other-dir t)
+          (with-temp-file tar-file (insert "dummy tar"))
+          (with-temp-file sig-file (insert "dummy sig"))
+          (let ((deleted (elpaish-install-delete-package-artifacts 'testpkg)))
+            (should (member pkg-dir deleted))
+            (should (member tar-file deleted))
+            (should (member sig-file deleted))
+            (should-not (file-exists-p pkg-dir))
+            (should-not (file-exists-p tar-file))
+            (should-not (file-exists-p sig-file))
+            (should (file-directory-p other-dir))
+            (should-not (assq 'testpkg package-alist))
+            (should (assq 'otherpkg package-alist))))
+      (when (file-directory-p temp-dir)
+        (delete-directory temp-dir t)))))
+
+(ert-deftest elpaish-test-rebuild-local-package-git-checks ()
+  "Test `elpaish-install-rebuild-local-package' validates git repository state."
+  (elpaish-test-with-temp-env
+   (let* ((recipe (elpaish-register-package 'test-pkg temp-dir))
+          (package-user-dir temp-dir)
+          (package-alist nil)
+          (git-dir (expand-file-name ".git" temp-dir)))
+     (make-directory git-dir t)
+     ;; 1. Refuse if dirty
+     (cl-letf (((symbol-function 'elpaish--git-string)
+                (lambda (dir &rest args)
+                  (if (member "status" args) " M dirty.el" "origin/main")))
+               ((symbol-function 'elpaish--git-lines) (lambda (&rest _) nil)))
+       (should-error (elpaish-install-rebuild-local-package 'test-pkg) :type 'user-error))
+     ;; 2. Refuse if no upstream remote
+     (cl-letf (((symbol-function 'elpaish--git-string)
+                (lambda (dir &rest args)
+                  (if (member "status" args) "" nil)))
+               ((symbol-function 'elpaish--git-lines) (lambda (&rest _) nil)))
+       (should-error (elpaish-install-rebuild-local-package 'test-pkg) :type 'user-error))
+     ;; 3. Refuse if unpushed commits exist
+     (cl-letf (((symbol-function 'elpaish--git-string)
+                (lambda (dir &rest args)
+                  (if (member "status" args) "" "origin/main")))
+               ((symbol-function 'elpaish--git-lines)
+                (lambda (&rest _) '("commit-hash-ahead"))))
+       (should-error (elpaish-install-rebuild-local-package 'test-pkg) :type 'user-error)))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here

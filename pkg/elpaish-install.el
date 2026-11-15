@@ -28,10 +28,16 @@
 (declare-function package--reload-previously-loaded "package" (pkg-desc &optional warn))
 (declare-function package--description-file "package" (dir))
 (declare-function package-quickstart-refresh "package" ())
+(declare-function elpaish--git-string "elpaish" (dir &rest args))
+(declare-function elpaish--git-lines "elpaish" (dir &rest args))
+(declare-function elpaish--resolve-repo-path "elpaish" (recipe))
+(declare-function elpaish-load-packages "elpaish-recipes" (&optional files))
+(declare-function annotated-completing-read "annotated-completing-read" (prompt collection &rest args))
 
 (defvar elpaish-work-dir)
 (defvar elpaish-sign-packages)
 (defvar elpaish-registry)
+(defvar elpaish-release-mode)
 (defvar elpaish--resolved-repo-path-cache)
 (defvar package-quickstart-file)
 (defvar package-user-dir)
@@ -1004,6 +1010,92 @@ concurrency.  Calls CALLBACK when complete."
   'elpaish-install-upgrade-packages-async
   #'elpaish-install-packages-async
   "0.2.0")
+
+;;;; Package Maintenance Tools
+
+;;;###autoload
+(defun elpaish-install-delete-package-artifacts (pkg)
+  "Delete installed directory and artifacts for PKG in `package-user-dir'.
+PKG can be a string or symbol. Returns list of deleted file paths."
+  (let* ((pkg-sym (if (stringp pkg) (intern pkg) pkg))
+         (pkg-name (symbol-name pkg-sym))
+         (prefix (regexp-quote (concat pkg-name "-")))
+         (deleted nil))
+    (when (and (boundp 'package-user-dir)
+               (file-directory-p package-user-dir))
+      (seq-do (lambda (entry)
+                (let ((full-path (expand-file-name entry package-user-dir)))
+                  (when (and (string-prefix-p (concat pkg-name "-") entry)
+                             (string-match-p (format "\\`%s[0-9]" prefix) entry))
+                    (if (file-directory-p full-path)
+                        (delete-directory full-path t)
+                      (delete-file full-path))
+                    (push full-path deleted))))
+              (directory-files package-user-dir nil "\\`[^.]" t)))
+    (when (boundp 'package-alist)
+      (setq package-alist (assq-delete-all pkg-sym package-alist)))
+    (nreverse deleted)))
+
+;;;###autoload
+(defun elpaish-install-rebuild-local-package (pkg &optional stream)
+  "Rebuild PKG from its local Git checkout and reinstall into `package-user-dir'.
+Refuses if the local repository has uncommitted changes, has unpushed commits,
+or has no remote tracking branch. Deletes prior versions of PKG and its signed
+artifacts from `package-user-dir' before installing."
+  (interactive
+   (list (let* ((pkgs (progn
+                        (require 'elpaish)
+                        (require 'elpaish-recipes)
+                        (unless (> (hash-table-count elpaish-registry) 0)
+                          (elpaish-load-packages))
+                        (delete-dups
+                         (append (map-keys elpaish-registry)
+                                 (mapcar #'symbol-name elpaish-install-packages-list)))))
+                (prompt "Rebuild local package: "))
+           (intern (if (fboundp 'annotated-completing-read)
+                       (annotated-completing-read prompt pkgs)
+                     (completing-read prompt pkgs nil t))))))
+  (require 'elpaish)
+  (require 'elpaish-recipes)
+  (require 'package)
+  (unless (> (hash-table-count elpaish-registry) 0)
+    (elpaish-load-packages))
+  (let* ((pkg-sym (if (stringp pkg) (intern pkg) pkg))
+         (pkg-name (symbol-name pkg-sym))
+         (recipe (or (map-elt elpaish-registry pkg-name)
+                     (map-elt elpaish-registry pkg-sym)
+                     (user-error "No ELPAish recipe found for %s" pkg-name)))
+         (repo-dir (elpaish--resolve-repo-path recipe))
+         (effective-stream (or stream (and (boundp 'elpaish-release-mode) elpaish-release-mode) 'snapshot)))
+    (unless (and repo-dir (file-directory-p repo-dir))
+      (user-error "Local checkout directory not found for %s: %s" pkg-name repo-dir))
+    (let ((git-dir (expand-file-name ".git" repo-dir)))
+      (unless (or (file-directory-p git-dir) (file-regular-p git-dir))
+        (user-error "Local directory is not a Git repository: %s" repo-dir)))
+    ;; Check Git state:
+    ;; 1. Dirty check
+    (let ((dirty (elpaish--git-string repo-dir "status" "--porcelain")))
+      (when (and dirty (not (string-empty-p (string-trim dirty))))
+        (user-error "Cannot rebuild %s: repository at %s has uncommitted changes" pkg-name repo-dir)))
+    ;; 2. Remote tracking check
+    (let ((upstream (elpaish--git-string repo-dir "rev-parse" "--abbrev-ref" "--symbolic-full-name" "@{u}")))
+      (when (or (null upstream) (string-empty-p (string-trim upstream)))
+        (user-error "Cannot rebuild %s: current branch in %s has no remote tracking branch" pkg-name repo-dir)))
+    ;; 3. Unpushed commits check
+    (let ((unpushed (elpaish--git-lines repo-dir "rev-list" "@{u}..HEAD")))
+      (when (and unpushed (not (seq-empty-p unpushed)))
+        (user-error "Cannot rebuild %s: local repository in %s has unpushed commits" pkg-name repo-dir)))
+    ;; Clean previous installations and signed artifacts from package-user-dir
+    (elpaish-install-delete-package-artifacts pkg-name)
+    ;; Build the package artifact
+    (let ((dest-file (elpaish-build-package recipe effective-stream)))
+      (unless (and dest-file (file-exists-p dest-file))
+        (error "Failed to build package artifact for %s" pkg-name))
+      ;; Install the built package
+      (package-install-file dest-file)
+      (elpaish-install-schedule-quickstart-refresh)
+      (message "[elpaish] Successfully rebuilt and reinstalled %s from %s" pkg-name repo-dir)
+      dest-file)))
 
 ;;;; Quickstart management and optimization
 
