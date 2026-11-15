@@ -1278,7 +1278,7 @@ removes autoload feature provisions, and eliminates extraneous whitespace."
         (write-region (point-min) (point-max) file nil 'silent)))))
 
 (defun elpaish-install--package-quickstart-refresh-optimize (orig-fn &rest args)
-  "Optimize quickstart file format and compile bytecode."
+  "Optimize quickstart file format, byte-compile, and native-compile when supported."
   (require 'bytecomp)
   (let ((real-byte-compile (symbol-function 'byte-compile-file)))
     (cl-letf (((symbol-function 'byte-compile-file)
@@ -1296,6 +1296,12 @@ removes autoload feature provisions, and eliminates extraneous whitespace."
                          (inhibit-message t)
                          (message-log-max nil))
                      (funcall real-byte-compile file)))
+                 (when (and (fboundp 'native-comp-available-p)
+                            (native-comp-available-p))
+                   (if (fboundp 'native-compile-async)
+                       (native-compile-async file)
+                     (when (fboundp 'native-compile)
+                       (native-compile file))))
                  file)))
       (apply orig-fn args))))
 
@@ -1329,7 +1335,15 @@ When FORCE is nil, do nothing unless quickstart file is stale."
                "Package quickstart is stale"))
     (require 'package)
     (elpaish-install-sync-package-load-paths)
-    (package-quickstart-refresh)))
+    (package-quickstart-refresh)
+    (when (and (fboundp 'native-comp-available-p)
+               (native-comp-available-p)
+               (boundp 'package-quickstart-file)
+               (file-exists-p package-quickstart-file))
+      (if (fboundp 'native-compile-async)
+          (native-compile-async package-quickstart-file)
+        (when (fboundp 'native-compile)
+          (native-compile package-quickstart-file))))))
 
 ;;;###autoload
 (defun elpaish-install-flush-package-quickstart (&optional force)

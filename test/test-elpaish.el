@@ -2611,5 +2611,22 @@ source's last commit time rather than the time of the build."
       (when (file-directory-p temp-dir)
         (delete-directory temp-dir t)))))
 
+(ert-deftest elpaish-test-quickstart-native-compile ()
+  "Test quickstart refresh triggers native-compile when supported."
+  (let* ((tmp-el (make-temp-file "test-elpaish-nc-" nil ".el"))
+         (package-quickstart-file tmp-el)
+         (compiled-file nil))
+    (unwind-protect
+        (progn
+          (with-temp-file tmp-el (insert ";;; quickstart\n"))
+          (cl-letf (((symbol-function 'native-comp-available-p) (lambda () t))
+                    ((symbol-function 'native-compile-async)
+                     (lambda (file) (setq compiled-file file)))
+                    ((symbol-function 'package-quickstart-refresh) #'ignore)
+                    ((symbol-function 'elpaish-install-sync-package-load-paths) #'ignore))
+            (elpaish-install-refresh-package-quickstart t)
+            (should (equal compiled-file tmp-el))))
+      (when (file-exists-p tmp-el) (delete-file tmp-el)))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here
