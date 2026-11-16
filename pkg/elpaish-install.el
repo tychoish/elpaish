@@ -12,6 +12,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'map)
 (require 'package)
 (require 'gen nil t)
 
@@ -61,7 +62,7 @@
   "0.2.0")
 
 (defcustom elpaish-install-packages-list
-  '(compat web-server htmlize annotated-completing-read transient package-lint)
+  '(compat web-server htmlize annotated-completing-read transient package-lint elpaish-keyring elpaish)
   "List of package symbols to ensure are installed on the system.
 Used as default target package list for `elpaish-install-packages'
 when no explicit packages are specified."
@@ -1419,16 +1420,39 @@ When NONINTERACTIVE is non-nil, automatically deletes all stale versions without
 Also ensures current ELPA directories and autoloads are loaded."
   (let ((elpa-dir (expand-file-name "elpa" user-emacs-directory)))
     (when (file-directory-p elpa-dir)
-      (setq load-path (seq-filter #'file-directory-p load-path))
-      (dolist (dir (directory-files elpa-dir t "^[^.]"))
-        (when (file-directory-p dir)
-          (add-to-list 'load-path dir)
-          (let* ((pkg-base (file-name-nondirectory dir))
-                 (pkg-name (replace-regexp-in-string "-[0-9].*\\'" "" pkg-base))
-                 (autoloads-file (expand-file-name (concat pkg-name "-autoloads") dir)))
-            (when (or (file-exists-p (concat autoloads-file ".el"))
-                      (file-exists-p (concat autoloads-file ".elc")))
-              (load autoloads-file t t))))))))
+      (let ((newest-dirs (make-hash-table :test #'equal))
+            (stale-dirs (make-hash-table :test #'equal)))
+        (setf (map-elt stale-dirs (directory-file-name (expand-file-name "archives" elpa-dir))) t)
+        (setf (map-elt stale-dirs (directory-file-name (expand-file-name "gnupg" elpa-dir))) t)
+        (dolist (dir (directory-files elpa-dir t "\\`[^.]" t))
+          (when (file-directory-p dir)
+            (let ((base (file-name-nondirectory dir)))
+              (unless (member base '("archives" "gnupg"))
+                (if (string-match "\\`\\(.*?\\)-\\([0-9]+\\(?:\\.[0-9]+\\)*\\)\\'" base)
+                    (let* ((name (match-string 1 base))
+                           (ver (condition-case nil (version-to-list (match-string 2 base)) (error '(0))))
+                           (prev (map-elt newest-dirs name)))
+                      (if (or (null prev) (version-list-< (car prev) ver))
+                          (progn
+                            (when prev
+                              (setf (map-elt stale-dirs (cdr prev)) t))
+                            (setf (map-elt newest-dirs name) (cons ver dir)))
+                        (setf (map-elt stale-dirs dir) t)))
+                  (setf (map-elt newest-dirs base) (cons '(0) dir)))))))
+        (setq load-path
+              (seq-filter (lambda (p)
+                            (and (file-directory-p p)
+                                 (not (map-elt stale-dirs (directory-file-name (expand-file-name p))))))
+                          load-path))
+        (map-do
+         (lambda (pkg-name entry)
+           (let* ((dir (cdr entry))
+                  (autoloads-file (expand-file-name (concat pkg-name "-autoloads") dir)))
+             (add-to-list 'load-path dir)
+             (when (or (file-exists-p (concat autoloads-file ".el"))
+                       (file-exists-p (concat autoloads-file ".elc")))
+               (load autoloads-file t t))))
+         newest-dirs)))))
 
 ;;;###autoload
 (defun elpaish-install-optimize-quickstart-file (file)
@@ -1500,7 +1524,7 @@ removes autoload feature provisions, and eliminates extraneous whitespace."
         (write-region (point-min) (point-max) file nil 'silent)))))
 
 (defun elpaish-install--package-quickstart-refresh-optimize (orig-fn &rest args)
-  "Optimize quickstart file format, byte-compile, and native-compile when supported."
+  "Optimize quickstart file format and compile bytecode."
   (require 'bytecomp)
   (let ((real-byte-compile (symbol-function 'byte-compile-file)))
     (cl-letf (((symbol-function 'byte-compile-file)
@@ -1518,12 +1542,6 @@ removes autoload feature provisions, and eliminates extraneous whitespace."
                          (inhibit-message t)
                          (message-log-max nil))
                      (funcall real-byte-compile file)))
-                 (when (and (fboundp 'native-comp-available-p)
-                            (native-comp-available-p))
-                   (if (fboundp 'native-compile-async)
-                       (native-compile-async file)
-                     (when (fboundp 'native-compile)
-                       (native-compile file))))
                  file)))
       (apply orig-fn args))))
 
@@ -1600,7 +1618,6 @@ When FORCE is non-nil, force refresh even if no debounce timer was pending."
 
 (add-hook 'elpaish-install-bootstrap-finished-functions
           #'elpaish-install--on-bootstrap-finished)
-(add-hook 'kill-emacs-hook #'elpaish-install-flush-package-quickstart)
 
 ;; Backward compatibility aliases for dot-emacs config
 (defalias 'bootstrap-optimize-quickstart-file #'elpaish-install-optimize-quickstart-file)

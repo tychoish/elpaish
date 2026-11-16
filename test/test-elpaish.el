@@ -2799,5 +2799,29 @@ source's last commit time rather than the time of the build."
       (should (equal seen-archives
                      '(("elpaish-local" . "http://127.0.0.1:9999/snapshot/")))))))
 
+(ert-deftest elpaish-test-sync-package-load-paths-prunes-stale-and-meta-dirs ()
+  "Test `elpaish-install-sync-package-load-paths' keeps only newest package versions and skips archives/gnupg."
+  (let* ((tmp (make-temp-file "elpaish-test-sync-lp-" t))
+         (user-emacs-directory tmp)
+         (elpa-dir (expand-file-name "elpa" tmp))
+         (archives-dir (expand-file-name "archives" elpa-dir))
+         (gnupg-dir (expand-file-name "gnupg" elpa-dir))
+         (old-pkg (expand-file-name "foo-1.0.0" elpa-dir))
+         (new-pkg (expand-file-name "foo-2.0.0" elpa-dir))
+         (load-path (list archives-dir gnupg-dir old-pkg)))
+    (unwind-protect
+        (progn
+          (make-directory archives-dir t)
+          (make-directory gnupg-dir t)
+          (make-directory old-pkg t)
+          (make-directory new-pkg t)
+          (elpaish-install-sync-package-load-paths)
+          (should (member new-pkg load-path))
+          (should-not (member old-pkg load-path))
+          (should-not (member archives-dir load-path))
+          (should-not (member gnupg-dir load-path)))
+      (when (file-directory-p tmp)
+        (delete-directory tmp t)))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here
