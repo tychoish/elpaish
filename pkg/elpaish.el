@@ -2280,6 +2280,8 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
     (display-buffer buf)))
 
 (declare-function elpaish-load-packages "elpaish-recipes" (&optional files))
+(declare-function elpaish-install-repository-package "elpaish-install" (&optional package &key stream callback))
+
 ;;;###autoload (autoload 'elpaish-menu "elpaish" nil t)
 (transient-define-prefix elpaish-menu ()
   "Transient dispatch menu for ELPAish package repository management."
@@ -2309,6 +2311,7 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
     ("TKO" "Rotate GPG signing keys" elpaish-rotate-keys)]
    ["Package Operations"
     ("i" "Install missing packages" elpaish-install-packages)
+    ("ip" "Install repository package" elpaish-install-repository-package)
     ("ir" "Install repository packages" elpaish-install-repository-packages)
     ("u" "Upgrade packages (background)" elpaish-install-upgrade-packages)]])
 

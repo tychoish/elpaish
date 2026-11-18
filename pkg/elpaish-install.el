@@ -52,16 +52,6 @@
   :group 'package
   :prefix "elpaish-install-")
 
-(define-obsolete-variable-alias
-  'elpaish-install-bootstrap-packages-list
-  'elpaish-install-packages-list
-  "0.3.0")
-
-(define-obsolete-variable-alias
-  'elpaish-install-bootstrap-packages
-  'elpaish-install-packages-list
-  "0.2.0")
-
 (defcustom elpaish-install-packages-list
   '(compat web-server htmlize annotated-completing-read logx transient package-lint elpaish-keyring elpaish)
   "List of package symbols to ensure are installed on the system.
@@ -316,16 +306,6 @@ selection across installed, upgrade, or all), see
               desc))
         (delete-directory temp-dir t))))))
 
-(define-obsolete-function-alias
-  'elpaish-install-git-repository
-  #'elpaish-install-repository
-  "0.3.0")
-
-(define-obsolete-function-alias
-  'elpaish-install-from-repository
-  #'elpaish-install-repository
-  "0.3.0")
-
 ;;;###autoload
 (cl-defun elpaish-install-repository-packages (&optional scope &key stream callback)
   "Build and install packages from the local ELPAish repository into Emacs.
@@ -480,6 +460,57 @@ Returns list of installed `package-desc' objects."
           (when callback (funcall callback result))
           result)))))
 
+;;;###autoload
+(cl-defun elpaish-install-repository-package (&optional package &key stream callback)
+  "Build and install a PACKAGE from the local ELPAish repository into Emacs.
+PACKAGE can be a package symbol, string name, recipe, or a list of packages.
+When called interactively, prompts with an ACR (`annotated-completing-read')
+interface allowing selection of a package from repository definitions (or
+multiple packages when called with a prefix argument).
+
+STREAM is the release mode stream to build (defaults to \\='snapshot).
+CALLBACK is an optional function invoked with the installed `package-desc'
+object upon completion.
+
+Returns the installed `package-desc' object (or list of `package-desc' objects
+if multiple packages were selected or passed)."
+  (interactive
+   (list
+    (progn
+      (require 'elpaish)
+      (require 'elpaish-recipes)
+      (unless (and (boundp 'elpaish-registry)
+                   (hash-table-p elpaish-registry)
+                   (> (hash-table-count elpaish-registry) 0))
+        (elpaish-load-packages))
+      (let* ((names (sort (hash-table-keys elpaish-registry) #'string<))
+             (table (mapcar (lambda (n)
+                              (let* ((r (gethash n elpaish-registry))
+                                     (summary (if r (elpaish-recipe-summary r) "")))
+                                (cons n (if (string-empty-p summary) "registered recipe" summary))))
+                            names))
+             (multi current-prefix-arg)
+             (prompt (if multi "Install repository package(s): " "Install repository package: "))
+             (choice (if (fboundp 'annotated-completing-read)
+                         (annotated-completing-read table
+                                                    :prompt prompt
+                                                    :require-match t
+                                                    :multiple (and multi t))
+                       (if multi
+                           (completing-read-multiple prompt table nil t)
+                         (completing-read prompt table nil t)))))
+        (if (listp choice)
+            (mapcar (lambda (c) (intern (string-trim c))) choice)
+          (intern (string-trim choice)))))))
+  (unless package
+    (user-error "No package specified"))
+  (let* ((is-list (listp package))
+         (targets (if is-list package (list package)))
+         (descs (elpaish-install-repository-packages targets :stream stream :callback callback)))
+    (if is-list
+        descs
+      (or (car descs)
+          (error "Failed to install repository package: %s" package)))))
 
 ;;;; Core Single Package Operation
 
@@ -1088,6 +1119,7 @@ Preserves underlying string text so ERT string matching remains intact."
   (let* ((actions '(("Restart operation" . elpaish-install-progress-restart)
                     ("Continue / Resume operation" . elpaish-install-progress-continue)
                     ("Cancel operation" . elpaish-install-progress-cancel)
+                    ("Install repository package" . elpaish-install-repository-package)
                     ("Install repository packages" . elpaish-install-repository-packages)
                     ("Clean stale packages" . elpaish-install-clean-stale-packages)
                     ("Rebuild local package" . elpaish-install-rebuild-local-package)
@@ -1433,19 +1465,7 @@ When no packages are specified in ARGS, defaults to
   "Install PKGS asynchronously out-of-process using a sprite pool if available.
 If REFRESH is non-nil, refresh archive contents.  POOL-SIZE is the sprite pool
 concurrency.  Calls CALLBACK when complete."
-  (elpaish-install-bootstrap-packages pkgs :action 'install :refresh refresh :pool-size (or pool-size 2) :callback callback :async t))
-
-(define-obsolete-function-alias
-  'elpaish-upgrade-packages
-  #'elpaish-install-upgrade-packages
-  "0.3.0")
-
-(define-obsolete-function-alias
-  'elpaish-install-upgrade-packages-async
-  #'elpaish-install-upgrade-packages
-  "0.3.0")
-
-
+  (elpaish-install-packages pkgs :action 'install :refresh refresh :pool-size (or pool-size 2) :callback callback :async t))
 
 ;;;; Package Maintenance Tools
 
@@ -1837,17 +1857,6 @@ When FORCE is non-nil, force refresh even if no debounce timer was pending."
 
 (add-hook 'elpaish-install-bootstrap-finished-functions
           #'elpaish-install--on-bootstrap-finished)
-
-;; Backward compatibility aliases for dot-emacs config
-(defalias 'bootstrap-optimize-quickstart-file #'elpaish-install-optimize-quickstart-file)
-(defalias 'ad:package-quickstart-refresh--optimize #'elpaish-install--package-quickstart-refresh-optimize)
-(defalias 'bootstrap-sync-package-load-paths #'elpaish-install-sync-package-load-paths)
-(defalias 'bootstrap-package-quickstart-stale-p #'elpaish-install-package-quickstart-stale-p)
-(defalias 'bootstrap-refresh-package-quickstart #'elpaish-install-refresh-package-quickstart)
-(defalias 'bootstrap-force-refresh-package-quickstart #'elpaish-install-refresh-package-quickstart)
-(defalias 'bootstrap-flush-package-quickstart #'elpaish-install-flush-package-quickstart)
-(defalias 'ad:refresh-package-quickstart #'elpaish-install-schedule-quickstart-refresh)
-(defalias 'bootstrap-package-quickstart (lambda () (elpaish-install-refresh-package-quickstart nil)))
 
 (provide 'elpaish-install)
 

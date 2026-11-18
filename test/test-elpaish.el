@@ -1569,16 +1569,16 @@ source's last commit time rather than the time of the build."
        (should (equal installed-log '(pkg-c pkg-b pkg-a)))))))
 
 (ert-deftest elpaish-test-add-bootstrap-packages ()
-  "Test `elpaish-install-register-bootstrap-package' appends unique symbols and obsolete alias works."
+  "Test `elpaish-install-register-package' appends unique symbols."
   (elpaish-test-with-temp-env
-   (let ((elpaish-install-bootstrap-packages-list '(pkg-a pkg-b)))
+   (let ((elpaish-install-packages-list '(pkg-a pkg-b)))
      ;; Append single symbols and list of symbols
-     (elpaish-install-register-bootstrap-package 'pkg-c 'pkg-b '(pkg-d pkg-a))
-     (should (equal elpaish-install-bootstrap-packages-list '(pkg-a pkg-b pkg-c pkg-d)))
+     (elpaish-install-register-package 'pkg-c 'pkg-b '(pkg-d pkg-a))
+     (should (equal elpaish-install-packages-list '(pkg-a pkg-b pkg-c pkg-d)))
 
-     ;; Append additional symbols via obsolete alias
-     (elpaish-install-add-bootstrap-packages '(pkg-e pkg-c) 'pkg-f)
-     (should (equal elpaish-install-bootstrap-packages-list '(pkg-a pkg-b pkg-c pkg-d pkg-e pkg-f))))))
+     ;; Append additional symbols
+     (elpaish-install-register-package '(pkg-e pkg-c) 'pkg-f)
+     (should (equal elpaish-install-packages-list '(pkg-a pkg-b pkg-c pkg-d pkg-e pkg-f))))))
 
 (ert-deftest elpaish-test-install-packages-async-sprite ()
   "Test `elpaish-install-packages' async path using sprite pool."
@@ -2928,6 +2928,52 @@ source's last commit time rather than the time of the build."
           (should-not (member gnupg-dir load-path)))
       (when (file-directory-p tmp)
         (delete-directory tmp t)))))
+
+(ert-deftest elpaish-test-install-repository-package-non-interactive ()
+  "Test `elpaish-install-repository-package' installs single and multiple packages."
+  (let ((installed nil))
+    (cl-letf (((symbol-function 'elpaish-install-repository-packages)
+               (lambda (targets &rest _args)
+                 (setq installed (append installed targets))
+                 (mapcar (lambda (p) (package-desc-create :name (if (symbolp p) p (intern p))))
+                         targets))))
+      ;; Single symbol
+      (let ((res (elpaish-install-repository-package 'foo)))
+        (should (equal installed '(foo)))
+        (should (eq (package-desc-name res) 'foo)))
+
+      ;; String or list
+      (setq installed nil)
+      (let ((res (elpaish-install-repository-package '("bar" baz))))
+        (should (equal installed '("bar" baz)))
+        (should (equal (mapcar #'package-desc-name res) '(bar baz)))))))
+
+(ert-deftest elpaish-test-install-repository-package-interactive ()
+  "Test `elpaish-install-repository-package' interactive ACR selection."
+  (elpaish-test-with-temp-env
+   (let ((installed nil))
+     (puthash "alpha" (elpaish-recipe-create :name 'alpha :summary "Alpha pkg") elpaish-registry)
+     (puthash "beta" (elpaish-recipe-create :name 'beta :summary "Beta pkg") elpaish-registry)
+     (cl-letf (((symbol-function 'elpaish-install-repository-packages)
+                (lambda (targets &rest _args)
+                  (setq installed (append installed targets))
+                  (mapcar (lambda (p) (package-desc-create :name (if (symbolp p) p (intern p))))
+                          targets)))
+               ((symbol-function 'annotated-completing-read)
+                (lambda (_table &rest plist)
+                  (if (plist-get plist :multiple)
+                      '("alpha" "beta")
+                    "alpha"))))
+       ;; Single interactive selection
+       (let ((current-prefix-arg nil))
+         (call-interactively #'elpaish-install-repository-package)
+         (should (equal installed '(alpha))))
+
+       ;; Multiple interactive selection with prefix arg
+       (setq installed nil)
+       (let ((current-prefix-arg '(4)))
+         (call-interactively #'elpaish-install-repository-package)
+         (should (equal installed '(alpha beta))))))))
 
 (ert-deftest elpaish-test-build-all-non-blocking-interactive ()
   "Test `elpaish-build-all' runs asynchronously in interactive mode and with :async t."
