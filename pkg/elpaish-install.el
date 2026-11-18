@@ -240,11 +240,25 @@ and invokes `package-install' for any uninstalled dependency."
                (message "Warning: Failed to install package dependency %s: %s"
                         dep-pkg (error-message-string err))))))))))
 
+(defun elpaish-install--resolve-repository-recipe (pkg)
+  "Return `elpaish-recipe' for PKG (symbol or string) from `elpaish-registry'."
+  (when (and (boundp 'elpaish-registry)
+             (hash-table-p elpaish-registry))
+    (let ((name-str (if (symbolp pkg) (symbol-name pkg) pkg))
+          (name-sym (if (symbolp pkg) pkg (intern pkg))))
+      (or (gethash name-str elpaish-registry)
+          (gethash name-sym elpaish-registry)))))
+
 ;;;###autoload
-(defun elpaish-install-repository (repository &rest options)
+(defun elpaish-install-repository (&optional repository &rest options)
   "Build REPOSITORY and install its package in the current Emacs session.
-REPOSITORY is a local directory, Git URL, or `elpaish-recipe'.  For
-strings, OPTIONS are keyword arguments accepted by
+REPOSITORY is a local directory, Git URL, or `elpaish-recipe'.  When
+REPOSITORY is omitted, nil, empty, or one of the scope symbols/keywords
+\\='installed, \\='upgrade, or \\='all, delegates to
+`elpaish-install-repository-packages' to build and install packages defined in
+the current ELPAish repository.
+
+For single repository strings, OPTIONS are keyword arguments accepted by
 `elpaish-register-package'; :name overrides the name derived from the
 repository path.  For example:
 
@@ -256,48 +270,220 @@ The build uses the snapshot stream and a temporary output directory.  Remote
 repositories are cloned into a temporary checkout; local directories are used
 as-is, so :branch applies only to remote repositories.  Artifacts are not
 signed.  Dependencies are installed by package.el.
-Return the installed `package-desc', or signal an error if the build fails."
-  (interactive (list (read-string "Repository directory or Git URL: ")))
+Return the installed `package-desc', or signal an error if the build fails.
+
+To install packages defined in the current ELPAish repository (with ACR menu
+selection across installed, upgrade, or all), see
+`elpaish-install-repository-packages'."
+  (interactive
+   (list (let ((input (read-string "Repository directory, Git URL, or scope (installed/upgrade/all, default installed): ")))
+           (if (string-empty-p (string-trim input))
+               'installed
+             input))))
+  (cond
+   ((or (null repository)
+        (and (stringp repository) (string-empty-p (string-trim repository)))
+        (memq repository '(installed upgrade all :installed :upgrade :all)))
+    (let ((scope (cond
+                  ((memq repository '(:installed installed)) 'installed)
+                  ((memq repository '(:upgrade upgrade)) 'upgrade)
+                  ((memq repository '(:all all)) 'all)
+                  (t 'installed))))
+      (apply #'elpaish-install-repository-packages scope options)))
+   (t
+    (require 'elpaish-recipes)
+    (when (and (elpaish-recipe-p repository) options)
+      (error "Recipe objects cannot be combined with registration options"))
+    (unless (or (elpaish-recipe-p repository) (stringp repository))
+      (signal 'wrong-type-argument (list 'string-or-recipe-p repository)))
+    (unless (and (zerop (% (length options) 2))
+                 (cl-loop for (key _value) on options by #'cddr always (keywordp key)))
+      (error "Registration options must be keyword/value pairs"))
+    (let* ((temp-dir (make-temp-file "elpaish-install-" t))
+           (elpaish-work-dir (expand-file-name "repos" temp-dir))
+           (elpaish-sign-packages nil)
+           (elpaish-registry (make-hash-table :test 'equal))
+           (elpaish--resolved-repo-path-cache (make-hash-table :test 'eq)))
+      (unwind-protect
+          (let* ((recipe
+                  (if (elpaish-recipe-p repository)
+                      (copy-elpaish-recipe repository)
+                    (let ((name (or (plist-get options :name)
+                                    (elpaish-recipe-name-from-url
+                                     (directory-file-name repository))))
+                          (args nil))
+                      (while options
+                        (let ((key (pop options)) (value (pop options)))
+                          (unless (eq key :name)
+                            (setq args (append args (list key value))))))
+                      (apply #'elpaish-register-package name repository args))))
+                 (artifact (elpaish-build-package recipe 'snapshot
+                                                  (expand-file-name "build" temp-dir))))
+            (unless artifact
+              (error "Could not build package %s" (elpaish-recipe-name recipe)))
+            (let* ((built-desc (package-install-file artifact))
+                   (desc (or (seq-find (lambda (candidate)
+                                         (equal (package-desc-version candidate)
+                                                (package-desc-version built-desc)))
+                                       (cdr (assq (package-desc-name built-desc) package-alist)))
+                             built-desc)))
+              (when (and desc (fboundp 'package--reload-previously-loaded))
+                (package--reload-previously-loaded desc))
+              desc))
+        (delete-directory temp-dir t))))))
+
+;;;###autoload
+(defalias 'elpaish-install-git-repository #'elpaish-install-repository)
+
+;;;###autoload
+(cl-defun elpaish-install-repository-packages (&optional scope &key stream callback)
+  "Build and install packages from the local ELPAish repository into Emacs.
+Unlike `elpaish-install-packages' (which installs pre-built archives from
+`package-archives') and `elpaish-install-repository' (which builds a single
+package from an external Git URL or local directory), this operation builds
+packages directly from the recipe definitions registered in `elpaish-registry'
+and installs them into `package-user-dir' using `package-install-file'.
+
+SCOPE specifies which subset of repository packages to install:
+  \\='installed (default) - Only packages in `elpaish-install-packages-list'
+                         that have recipes in the repository.
+  \\='upgrade            - Only packages in
+                         `elpaish-install-upgrade-packages-list' that have
+                         recipes in the repository.
+  \\='all                - All packages defined in the ELPAish repository
+                         (`elpaish-registry').
+  A list of symbols/strings - The specified package recipes.
+  A single symbol/string   - The specified single package recipe.
+
+When called interactively, prompts with an ACR (`annotated-completing-read')
+menu displaying candidate package counts for each scope
+(installed, upgrade, all) to resolve ambiguity over which packages to install.
+
+STREAM is the release mode stream to build (defaults to \\='snapshot).
+Returns list of installed `package-desc' objects."
+  (interactive
+   (list
+    (progn
+      (require 'elpaish)
+      (require 'elpaish-recipes)
+      (unless (and (boundp 'elpaish-registry)
+                   (hash-table-p elpaish-registry)
+                   (> (hash-table-count elpaish-registry) 0))
+        (elpaish-load-packages))
+      (let* ((installed-pkgs
+              (seq-filter (lambda (p) (elpaish-install--resolve-repository-recipe p))
+                          elpaish-install-packages-list))
+             (upgrade-pkgs
+              (seq-filter (lambda (p) (elpaish-install--resolve-repository-recipe p))
+                          (or (elpaish-install--get-upgrade-packages)
+                              elpaish-install-upgrade-packages-list)))
+             (all-count (if (and (boundp 'elpaish-registry) (hash-table-p elpaish-registry))
+                            (hash-table-count elpaish-registry)
+                          0))
+             (table `(("installed" . ,(format "Packages registered for installation (%d package%s)"
+                                              (length installed-pkgs)
+                                              (if (= (length installed-pkgs) 1) "" "s")))
+                      ("upgrade"   . ,(format "Packages registered for upgrade (%d package%s)"
+                                              (length upgrade-pkgs)
+                                              (if (= (length upgrade-pkgs) 1) "" "s")))
+                      ("all"       . ,(format "All packages defined in repository (%d package%s)"
+                                              all-count
+                                              (if (= all-count 1) "" "s")))))
+             (prompt "Install repository packages: ")
+             (choice (if (fboundp 'annotated-completing-read)
+                         (annotated-completing-read table
+                                                    :prompt prompt
+                                                    :default "installed"
+                                                    :require-match t)
+                       (completing-read prompt table nil t nil nil "installed"))))
+        (intern (downcase (string-trim choice)))))))
+  (require 'elpaish)
   (require 'elpaish-recipes)
-  (when (and (elpaish-recipe-p repository) options)
-    (error "Recipe objects cannot be combined with registration options"))
-  (unless (or (elpaish-recipe-p repository) (stringp repository))
-    (signal 'wrong-type-argument (list 'string-or-recipe-p repository)))
-  (unless (and (zerop (% (length options) 2))
-               (cl-loop for (key _value) on options by #'cddr always (keywordp key)))
-    (error "Registration options must be keyword/value pairs"))
-  (let* ((temp-dir (make-temp-file "elpaish-install-" t))
-         (elpaish-work-dir (expand-file-name "repos" temp-dir))
-         (elpaish-sign-packages nil)
-         (elpaish-registry (make-hash-table :test 'equal))
-         (elpaish--resolved-repo-path-cache (make-hash-table :test 'eq)))
-    (unwind-protect
-        (let* ((recipe
-                (if (elpaish-recipe-p repository)
-                    (copy-elpaish-recipe repository)
-                  (let ((name (or (plist-get options :name)
-                                  (elpaish-recipe-name-from-url
-                                   (directory-file-name repository))))
-                        (args nil))
-                    (while options
-                      (let ((key (pop options)) (value (pop options)))
-                        (unless (eq key :name)
-                          (setq args (append args (list key value))))))
-                    (apply #'elpaish-register-package name repository args))))
-               (artifact (elpaish-build-package recipe 'snapshot
-                                                (expand-file-name "build" temp-dir))))
-          (unless artifact
-            (error "Could not build package %s" (elpaish-recipe-name recipe)))
-          (let* ((built-desc (package-install-file artifact))
-                 (desc (or (seq-find (lambda (candidate)
-                                       (equal (package-desc-version candidate)
-                                              (package-desc-version built-desc)))
-                                     (cdr (assq (package-desc-name built-desc) package-alist)))
-                           built-desc)))
-            (when (and desc (fboundp 'package--reload-previously-loaded))
-              (package--reload-previously-loaded desc))
-            desc))
-      (delete-directory temp-dir t))))
+  (require 'package)
+  (unless (and (boundp 'elpaish-registry)
+               (hash-table-p elpaish-registry)
+               (> (hash-table-count elpaish-registry) 0))
+    (elpaish-load-packages))
+  (let* ((scope-sym (cond
+                     ((null scope) 'installed)
+                     ((stringp scope) (intern (downcase (string-trim scope))))
+                     ((keywordp scope) (intern (substring (symbol-name scope) 1)))
+                     ((symbolp scope) (intern (downcase (symbol-name scope))))
+                     (t scope)))
+         (target-pkgs
+          (cond
+           ((listp scope)
+            scope)
+           ((eq scope-sym 'all)
+            (mapcar #'intern (map-keys elpaish-registry)))
+           ((eq scope-sym 'upgrade)
+            (seq-filter (lambda (p) (elpaish-install--resolve-repository-recipe p))
+                        (or (elpaish-install--get-upgrade-packages)
+                            elpaish-install-upgrade-packages-list)))
+           ((eq scope-sym 'installed)
+            (seq-filter (lambda (p) (elpaish-install--resolve-repository-recipe p))
+                        elpaish-install-packages-list))
+           ((symbolp scope-sym)
+            (list scope-sym))
+           (t
+            (seq-filter (lambda (p) (elpaish-install--resolve-repository-recipe p))
+                        elpaish-install-packages-list))))
+         (effective-stream (or stream 'snapshot)))
+    (if (null target-pkgs)
+        (progn
+          (message "[elpaish] No repository package recipes found matching scope '%s'." scope-sym)
+          (when callback (funcall callback nil))
+          nil)
+      (let* ((temp-dir (make-temp-file "elpaish-install-repo-" t))
+             (build-dir (expand-file-name "build" temp-dir))
+             (elpaish-sign-packages nil)
+             (installed-descs nil)
+             (failed nil)
+             (total (length target-pkgs))
+             (idx 0))
+        (unwind-protect
+            (dolist (pkg target-pkgs)
+              (cl-incf idx)
+              (let ((recipe (elpaish-install--resolve-repository-recipe pkg))
+                    (pkg-name (if (symbolp pkg) (symbol-name pkg) pkg)))
+                (if (null recipe)
+                    (progn
+                      (message "[elpaish] [%d/%d] Skipping %s: no recipe found in repository"
+                               idx total pkg-name)
+                      (push (cons pkg "No recipe found in repository") failed))
+                  (condition-case err
+                      (let ((artifact (elpaish-build-package recipe effective-stream build-dir)))
+                        (if (not (and artifact (file-exists-p artifact)))
+                            (progn
+                              (message "[elpaish] [%d/%d] Failed to build %s" idx total pkg-name)
+                              (push (cons pkg "Build produced no artifact") failed))
+                          (let* ((built-desc (package-install-file artifact))
+                                 (desc (or (seq-find (lambda (candidate)
+                                                       (equal (package-desc-version candidate)
+                                                              (package-desc-version built-desc)))
+                                                     (cdr (assq (package-desc-name built-desc) package-alist)))
+                                           built-desc)))
+                            (when (and desc (fboundp 'package--reload-previously-loaded))
+                              (package--reload-previously-loaded desc))
+                            (message "[elpaish] [%d/%d] Installed %s (%s)"
+                                     idx total pkg-name
+                                     (package-version-join (package-desc-version desc)))
+                            (push desc installed-descs))))
+                    (error
+                     (message "[elpaish] [%d/%d] Failed %s: %s"
+                              idx total pkg-name (error-message-string err))
+                     (push (cons pkg (error-message-string err)) failed))))))
+          (delete-directory temp-dir t))
+        (when installed-descs
+          (elpaish-install-schedule-quickstart-refresh))
+        (let ((result (nreverse installed-descs)))
+          (message "[elpaish] Repository package installation complete: %d installed, %d failed."
+                   (length result) (length failed))
+          (when callback (funcall callback result))
+          result)))))
+
+;;;###autoload
+(defalias 'elpaish-install-from-repository #'elpaish-install-repository-packages)
 
 ;;;; Core Single Package Operation
 
@@ -881,6 +1067,7 @@ Preserves underlying string text so ERT string matching remains intact."
   (let* ((actions '(("Restart operation" . elpaish-install-progress-restart)
                     ("Continue / Resume operation" . elpaish-install-progress-continue)
                     ("Cancel operation" . elpaish-install-progress-cancel)
+                    ("Install repository packages" . elpaish-install-repository-packages)
                     ("Clean stale packages" . elpaish-install-clean-stale-packages)
                     ("Rebuild local package" . elpaish-install-rebuild-local-package)
                     ("Quit progress window" . elpaish-install-progress-quit)))

@@ -1706,6 +1706,96 @@ source's last commit time rather than the time of the build."
        (should-error (elpaish-install-repository temp-dir :name 'missing))
        (should-not installed)))))
 
+(ert-deftest elpaish-test-install-repository-packages-scopes ()
+  "Test `elpaish-install-repository-packages' across installed, upgrade, and all scopes."
+  (elpaish-test-with-temp-env
+   (let* ((repo1 (expand-file-name "repo1" temp-dir))
+          (repo2 (expand-file-name "repo2" temp-dir))
+          (repo3 (expand-file-name "repo3" temp-dir))
+          (package-user-dir (expand-file-name "installed" temp-dir))
+          (package-alist nil)
+          (package-selected-packages nil)
+          (package-quickstart nil)
+          (package-quickstart-file (expand-file-name "quickstart.el" temp-dir))
+          (load-path (copy-sequence load-path))
+          (built-packages nil))
+     (elpaish-test-create-dummy-pkg repo1 "pkg-one" "1.0" "Package One")
+     (elpaish-test-create-dummy-pkg repo2 "pkg-two" "1.0" "Package Two")
+     (elpaish-test-create-dummy-pkg repo3 "pkg-three" "1.0" "Package Three")
+     (let ((rec1 (elpaish-register-package 'pkg-one repo1))
+           (rec2 (elpaish-register-package 'pkg-two repo2))
+           (rec3 (elpaish-register-package 'pkg-three repo3))
+           (elpaish-install-packages-list '(pkg-one pkg-two))
+           (elpaish-install-upgrade-packages-list '(pkg-one)))
+       (cl-letf (((symbol-function 'package--save-selected-packages) #'ignore)
+                 ((symbol-function 'native-compile-async) #'ignore))
+         ;; 1. Test scope 'upgrade installs only pkg-one
+         (let ((descs (elpaish-install-repository-packages 'upgrade)))
+           (should (= (length descs) 1))
+           (should (eq (package-desc-name (car descs)) 'pkg-one)))
+         ;; 2. Test scope 'installed installs pkg-one and pkg-two
+         (let ((descs (elpaish-install-repository-packages 'installed)))
+           (should (= (length descs) 2))
+           (should (member (package-desc-name (nth 0 descs)) '(pkg-one pkg-two)))
+           (should (member (package-desc-name (nth 1 descs)) '(pkg-one pkg-two))))
+         ;; 3. Test explicit list installs specified package
+         (let ((descs (elpaish-install-repository-packages '(pkg-three))))
+           (should (= (length descs) 1))
+           (should (eq (package-desc-name (car descs)) 'pkg-three)))
+         ;; 4. Test scope 'all installs all 3 packages
+         (let ((descs (elpaish-install-repository-packages 'all)))
+           (should (= (length descs) 3))))))))
+
+(ert-deftest elpaish-test-install-repository-delegation ()
+  "Test that `elpaish-install-repository' delegates to `elpaish-install-repository-packages'."
+  (elpaish-test-with-temp-env
+   (let ((invoked-scope nil))
+     (cl-letf (((symbol-function 'elpaish-install-repository-packages)
+                (lambda (scope &rest _) (setq invoked-scope scope) '(:mock-desc))))
+       ;; Nil repository defaults to 'installed
+       (should (equal (elpaish-install-repository nil) '(:mock-desc)))
+       (should (eq invoked-scope 'installed))
+       ;; Empty string defaults to 'installed
+       (setq invoked-scope nil)
+       (should (equal (elpaish-install-repository "   ") '(:mock-desc)))
+       (should (eq invoked-scope 'installed))
+       ;; Scope symbols and keywords delegate appropriately
+       (setq invoked-scope nil)
+       (should (equal (elpaish-install-repository 'upgrade) '(:mock-desc)))
+       (should (eq invoked-scope 'upgrade))
+       (setq invoked-scope nil)
+       (should (equal (elpaish-install-repository :all) '(:mock-desc)))
+       (should (eq invoked-scope 'all))))))
+
+(ert-deftest elpaish-test-install-repository-packages-acr-menu ()
+  "Test interactive ACR selection for `elpaish-install-repository-packages'."
+  (elpaish-test-with-temp-env
+   (let* ((repo (expand-file-name "repo" temp-dir))
+          (package-user-dir (expand-file-name "installed" temp-dir))
+          (package-alist nil)
+          (package-selected-packages nil)
+          (package-quickstart nil)
+          (package-quickstart-file (expand-file-name "quickstart.el" temp-dir))
+          (load-path (copy-sequence load-path)))
+     (elpaish-test-create-dummy-pkg repo "pkg-one" "1.0" "Package One")
+     (elpaish-register-package 'pkg-one repo)
+     (let ((elpaish-install-packages-list '(pkg-one))
+           (elpaish-install-upgrade-packages-list '(pkg-one)))
+       (cl-letf (((symbol-function 'annotated-completing-read)
+                  (lambda (table &rest args)
+                    (should (assoc "installed" table))
+                    (should (assoc "upgrade" table))
+                    (should (assoc "all" table))
+                    (should (equal (plist-get args :default) "installed"))
+                    (should (equal (plist-get args :prompt) "Install repository packages: "))
+                    "upgrade"))
+                 ((symbol-function 'package--save-selected-packages) #'ignore)
+                 ((symbol-function 'native-compile-async) #'ignore))
+         ;; Interactive call exercises the interactive ACR spec
+         (let ((descs (call-interactively #'elpaish-install-repository-packages)))
+           (should (= (length descs) 1))
+           (should (eq (package-desc-name (car descs)) 'pkg-one))))))))
+
 (ert-deftest elpaish-test-upgrade-packages-alias-and-execution ()
   "Test `elpaish-upgrade-packages' alias calls upgrade sequence properly."
   (elpaish-test-with-temp-env

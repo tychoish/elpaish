@@ -2185,6 +2185,7 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
     ("TKO" "Rotate GPG signing keys" elpaish-rotate-keys)]
    ["Package Operations"
     ("i" "Install missing packages" elpaish-install-packages)
+    ("ir" "Install repository packages" elpaish-install-repository-packages)
     ("u" "Upgrade packages (background)" elpaish-install-upgrade-packages)]])
 
 (provide 'elpaish)
