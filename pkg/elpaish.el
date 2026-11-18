@@ -880,9 +880,14 @@ RECIPE or INFO-SKIP governs whether Info manual generation runs."
           (and (bound-and-true-p package-archive-contents)
                (assq sym package-archive-contents))
           ;; Known external/MELPA package dependencies fallback
-          (memq sym '(agent-shell alert request transient magit projectile htmlize web-server
-                                 modus-themes compat package-lint async dash s f yaml markdown-mode
-                                 ht kv llama tempel consult embark marshal package-build package-recipe ox-gfm))))))
+          (memq sym '(a agent-shell alert async cape closql compat consult consult-flycheck
+                        consult-flyspell corfu dash deadgrep deferred delight denote denote-org
+                        denote-review denote-sequence embark emojify f flycheck flycheck-aspell
+                        flycheck-eglot flycheck-vale flyspell-correct ghub gptel ht htmlize kv
+                        llama magit magit-section markdown-mode marshal modus-themes nerd-icons
+                        orderless ox-gfm package-build package-lint package-recipe projectile
+                        request s telega tempel tracking transient uuidgen vertico web-server
+                        yaml))))))
 
 (defun elpaish--recipe-provided-features (recipe)
   "Return list of feature/package symbols provided internally by RECIPE."
