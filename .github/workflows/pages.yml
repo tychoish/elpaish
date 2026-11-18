@@ -28,6 +28,9 @@ jobs:
 
       - name: Build ELPAish Repository
         uses: tychoish/elisp-ci/elpaish@main
+        env:
+          # The nested eval action overrides the outer action's archive inputs.
+          ELISP_CI_INCLUDE_ELPAISH: "true"
         with:
           packages-file: packages.el
           output-dir: public/
