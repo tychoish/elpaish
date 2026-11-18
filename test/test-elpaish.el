@@ -1005,6 +1005,16 @@ source's last commit time rather than the time of the build."
        (should (file-exists-p built))
        (should (string-suffix-p ".tar" built))))))
 
+(ert-deftest elpaish-test-dependency-fallback-without-archives ()
+  "Recognize known external dependencies without local package data."
+  (let ((elpaish-registry (make-hash-table :test 'equal))
+        (package-archive-contents nil))
+    (cl-letf (((symbol-function 'package-built-in-p) (lambda (&rest _) nil))
+              ((symbol-function 'package-installed-p) (lambda (&rest _) nil))
+              ((symbol-function 'locate-library) (lambda (&rest _) nil)))
+      (should (elpaish-dependency-valid-p 'marginalia))
+      (should-not (elpaish-dependency-valid-p 'unregistered-fake-dependency-xyz)))))
+
 (ert-deftest elpaish-test-package-dependency-validation ()
   "Test validation of package dependencies (builtin, MELPA, ELPAish, or self-provided)."
   (elpaish-test-with-temp-env

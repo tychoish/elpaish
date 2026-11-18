@@ -884,7 +884,7 @@ RECIPE or INFO-SKIP governs whether Info manual generation runs."
                         consult-flyspell corfu dash deadgrep deferred delight denote denote-org
                         denote-review denote-sequence embark emojify f flycheck flycheck-aspell
                         flycheck-eglot flycheck-vale flyspell-correct ghub gptel ht htmlize kv
-                        llama magit magit-section markdown-mode marshal modus-themes nerd-icons
+                        llama magit magit-section marginalia markdown-mode marshal modus-themes nerd-icons
                         orderless ox-gfm package-build package-lint package-recipe projectile
                         request s telega tempel tracking transient uuidgen vertico web-server
                         yaml))))))
