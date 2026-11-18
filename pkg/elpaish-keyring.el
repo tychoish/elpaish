@@ -12,9 +12,9 @@
 
 ;;; Code:
 
-(require 'logx)
 (require 'package)
 (require 'subr-x)
+(require 'logx nil t)
 
 (defvar elpaish-base-url)
 
@@ -46,8 +46,10 @@ STREAM defaults to \\='snapshot.  BASE-URL defaults to `elpaish-base-url'."
     (if existing
         (setcdr existing archive-url)
       (add-to-list 'package-archives (cons stream-name archive-url) t))
-    (logx 'info :msg (format "Added %s (%s) to `package-archives'." stream-name archive-url)
-          :stream stream-name :url archive-url)))
+    (if (fboundp 'logx)
+        (logx 'info :msg (format "Added %s (%s) to `package-archives'." stream-name archive-url)
+              :stream stream-name :url archive-url)
+      (message "Added %s (%s) to `package-archives'." stream-name archive-url))))
 
 (provide 'elpaish-keyring)
 
