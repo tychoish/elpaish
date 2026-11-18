@@ -14,8 +14,19 @@
 (require 'cl-lib)
 (require 'map)
 (require 'package)
-(require 'logx)
+(require 'logx nil t)
 (require 'gen nil t)
+
+(unless (fboundp 'logx)
+  (defmacro logx (&rest args)
+    "Fallback logx macro when logx is not loaded."
+    (let* ((tail (if (and args (not (keywordp (car args)))) (cdr args) args))
+           (msg-expr (or (plist-get tail :msg)
+                         (plist-get tail :message)
+                         (car tail))))
+      (if msg-expr
+          `(message "%s" ,msg-expr)
+        '(ignore)))))
 
 (declare-function elpaish-recipe-p "elpaish" (object))
 (declare-function elpaish-recipe-name "elpaish" (recipe))

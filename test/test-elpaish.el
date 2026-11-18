@@ -94,6 +94,7 @@
            (remove #'elpaish-install--on-bootstrap-finished
                    elpaish-install-bootstrap-finished-functions))
           (package-archives (copy-sequence package-archives))
+          (package-quickstart-file (expand-file-name "package-quickstart.el" temp-dir))
           (package-check-signature nil))
      (unwind-protect
          (progn ,@body)
@@ -1869,7 +1870,7 @@ source's last commit time rather than the time of the build."
                 (lambda (&rest _) (setq gen-run-called t) (lambda (&optional _) nil))))
        ;; Calling interactively with prefix arg '(4) forces synchronous execution
        (let ((current-prefix-arg '(4))
-             (elpaish-install-bootstrap-packages-list '(pkg-sync-a pkg-sync-b)))
+             (elpaish-install-packages-list '(pkg-sync-a pkg-sync-b)))
          (call-interactively #'elpaish-install-bootstrap-packages)
          (should-not gen-run-called)
          (should (equal installed-log '(pkg-sync-b pkg-sync-a))))))))

@@ -48,4 +48,4 @@ jobs:
             gen
             logx
           cache: "true"
-          cache-key: "20261016"
+          cache-key: "20261118"
