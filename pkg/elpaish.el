@@ -1619,14 +1619,78 @@ OUTPUT-DIRECTORY-PATH defaults to `elpaish-output-dir'."
       target-root)))
 
 ;;;###autoload
-(cl-defun elpaish-build-all (&optional mode output-directory-path)
+(defun elpaish-build-all (&rest args)
   "Build registered packages, generate indexes, and sign archives.
 MODE can be `all', `snapshot', `stable', or `staging'.
 Defaults to `elpaish-release-mode'.  OUTPUT-DIRECTORY-PATH defaults to
 `elpaish-output-dir'.  Every registered package is rebuilt unconditionally
-on every call; see `elpaish-build-package'."
+on every call; see `elpaish-build-package'.
+
+When called interactively (or when ASYNC is non-nil), building runs
+asynchronously in a background thread so interactive Emacs is not blocked.
+CALLBACK is an optional function invoked with target-root upon completion."
   (interactive)
-  (elpaish--build-all-sync mode output-directory-path))
+  (let* ((interactive-p (called-interactively-p 'any))
+         (positional nil)
+         (plist nil))
+    (let ((rest args))
+      (while (and rest (not (keywordp (car rest))))
+        (push (pop rest) positional))
+      (setq positional (nreverse positional)
+            plist rest))
+    (let* ((mode (nth 0 positional))
+           (output-directory-path (nth 1 positional))
+           (async (plist-get plist :async))
+           (callback (plist-get plist :callback)))
+      (if (or async (and interactive-p (not noninteractive)))
+          (let* ((effective-mode (or mode elpaish-release-mode))
+                 (target-root (or output-directory-path elpaish-output-dir))
+                 (captured-work-dir (and (boundp 'elpaish-work-dir) elpaish-work-dir))
+                 (captured-sign (and (boundp 'elpaish-sign-packages) elpaish-sign-packages))
+                 (captured-gpg-key (and (boundp 'elpaish-gpg-key) elpaish-gpg-key))
+                 (captured-passphrase (and (boundp 'elpaish-gpg-passphrase) elpaish-gpg-passphrase))
+                 (captured-registry (and (boundp 'elpaish-registry) elpaish-registry))
+                 (buf (get-buffer-create elpaish-build-buffer-name)))
+            (with-current-buffer buf
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (unless (eq major-mode 'elpaish-build-mode)
+                  (elpaish-build-mode))
+                (setq-local default-directory (expand-file-name target-root))
+                (insert (propertize (format "=== ELPAish Build: Build All (%s) [Background Thread] ===\nStarted: %s\n\n"
+                                            effective-mode
+                                            (format-time-string "%Y-%m-%d %H:%M:%S"))
+                                    'face 'bold))))
+            (unless noninteractive
+              (display-buffer buf))
+            (logx 'info :msg (format "Starting non-blocking repository build (%s)..." effective-mode)
+                  :mode effective-mode :output-dir target-root)
+            (make-thread
+             (lambda ()
+               (let ((elpaish-release-mode effective-mode)
+                     (elpaish-output-dir target-root)
+                     (elpaish-work-dir (or captured-work-dir elpaish-work-dir))
+                     (elpaish-sign-packages (if (boundp 'elpaish-sign-packages) captured-sign t))
+                     (elpaish-gpg-key (or captured-gpg-key (and (boundp 'elpaish-gpg-key) elpaish-gpg-key)))
+                     (elpaish-gpg-passphrase (or captured-passphrase (and (boundp 'elpaish-gpg-passphrase) elpaish-gpg-passphrase)))
+                     (elpaish-registry (or captured-registry elpaish-registry)))
+                 (condition-case err
+                     (let ((res (elpaish--build-all-sync effective-mode target-root)))
+                       (when (and callback (functionp callback))
+                         (funcall callback res))
+                       res)
+                   (error
+                    (logx 'error :msg (format "Background repository build failed: %s" (error-message-string err))
+                          :error (error-message-string err))
+                    nil))))
+             "elpaish-build-all-worker"))
+        (let ((res (elpaish--build-all-sync mode output-directory-path)))
+          (when (and callback (functionp callback))
+            (funcall callback res))
+          res)))))
+
+;;;###autoload
+(defalias 'elpaish-build-repository #'elpaish-build-all)
 
 ;;;###autoload
 (defun elpaish-build-single (recipe-or-name &optional stream output-directory-path)

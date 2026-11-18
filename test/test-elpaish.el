@@ -2929,5 +2929,26 @@ source's last commit time rather than the time of the build."
       (when (file-directory-p tmp)
         (delete-directory tmp t)))))
 
+(ert-deftest elpaish-test-build-all-non-blocking-interactive ()
+  "Test `elpaish-build-all' runs asynchronously in interactive mode and with :async t."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "async-pkg" temp-dir)))
+     (elpaish-test-create-dummy-pkg pkg-dir "async-pkg" "1.0.0" "Async Test")
+     (elpaish-register-package 'async-pkg pkg-dir :preflight-skip t)
+     ;; Interactive call returns a running thread
+     (let* ((noninteractive nil)
+            (thread (call-interactively #'elpaish-build-all)))
+       (should (threadp thread))
+       (thread-join thread)
+       (should (file-exists-p (expand-file-name "snapshot/archive-contents" elpaish-output-dir))))
+     ;; Alias elpaish-build-repository with :async t returns thread
+     (let ((thread (elpaish-build-repository :async t)))
+       (should (threadp thread))
+       (thread-join thread))
+     ;; Synchronous build with :async nil returns target-root and not a thread
+     (let ((res (elpaish-build-all :async nil)))
+       (should-not (threadp res))
+       (should (stringp res))))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here
