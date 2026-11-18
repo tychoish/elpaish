@@ -4,7 +4,7 @@
 ;; Version: 0.1.0
 ;; URL: https://github.com/tychoish/elpaish
 ;; Keywords: maint, tools, local, package, elpa
-;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (compat "30.0.0.0") (gen "0.1.0") (htmlize "1.34") (map "3.0") (modus-themes "4.0.0") (package-build "0.1") (seq "2.0") (web-server "0.1.2") (transient "0.3.0"))
+;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (compat "30.0.0.0") (gen "0.1.0") (htmlize "1.34") (logx "0.2.0") (map "3.0") (modus-themes "4.0.0") (package-build "0.1") (seq "2.0") (web-server "0.1.2") (transient "0.3.0"))
 
 ;;; Commentary:
 ;; ELPAish is a toolkit for building (and a prototype application of) an
@@ -42,6 +42,7 @@
 (require 'timer)
 (require 'compile)
 (require 'web-server)
+(require 'logx)
 (require 'elpaish-async)
 
 (require 'cl-lib)
@@ -771,7 +772,7 @@ VERSION, SUMMARY, REQS, URL, and KEYWORDS provide the descriptor metadata."
              (not elpaish--texinfo-warned)
              (not (elpaish--texinfo-available-p)))
     (setq elpaish--texinfo-warned t)
-    (elpaish--log "Warning: `texinfo' (makeinfo/install-info) not found in PATH; info manual generation will be skipped.")))
+    (logx 'warn :msg "Warning: `texinfo' (makeinfo/install-info) not found in PATH; info manual generation will be skipped.")))
 
 (defun elpaish--files-as-package-build-alist (files)
   "Convert list of relative file paths FILES into a package-build (SRC . REL) alist."
@@ -820,7 +821,8 @@ RECIPE or INFO-SKIP governs whether Info manual generation runs."
                ((not (elpaish--texinfo-available-p))
                 (elpaish--check-texinfo-prerequisites))
                ((not (require 'package-build nil t))
-                (elpaish--log "Warning: `package-build' is not available; info manual generation will be skipped for %s." name))
+                (logx 'warn :msg (format "Warning: `package-build' is not available; info manual generation will be skipped for %s." name)
+                      :pkg name))
                (t
                 (let* ((doc-staging (expand-file-name "doc-staging" temp-dir))
                        (org-files (seq-filter (lambda (f) (string-suffix-p ".org" f)) doc-files))
@@ -941,10 +943,11 @@ Returns an alist of (package . invalid-deps) for any packages with invalid depen
         (push (cons (elpaish-recipe-name recipe) invalid) invalid-map)))
     (if invalid-map
         (progn
-          (message "Invalid dependencies found: %S" invalid-map)
+          (logx 'error :msg (format "Invalid dependencies found: %S" invalid-map)
+                :invalid-deps invalid-map)
           invalid-map)
       (when (called-interactively-p 'any)
-        (message "✓ All registered package dependencies are valid (builtin, MELPA, or ELPAish)."))
+        (logx 'info :msg "All registered package dependencies are valid (builtin, MELPA, or ELPAish)."))
       nil)))
 
 (defvar elpaish--preflight-cache (make-hash-table :test 'equal)
@@ -971,9 +974,10 @@ Returns t if checks pass, nil if quarantined."
         t
       (if-let* ((invalid-deps (elpaish-check-recipe-dependencies recipe)))
           (progn
-            (message "PREFLIGHT QUARANTINE for %s: invalid dependency (%s) — must be builtin, in MELPA, or registered in ELPAish"
-                     (elpaish-recipe-name recipe)
-                     (mapconcat #'symbol-name invalid-deps ", "))
+            (logx 'warn :msg (format "PREFLIGHT QUARANTINE for %s: invalid dependency (%s) — must be builtin, in MELPA, or registered in ELPAish"
+                                     (elpaish-recipe-name recipe)
+                                     (mapconcat #'symbol-name invalid-deps ", "))
+                  :pkg (elpaish-recipe-name recipe) :invalid-deps invalid-deps)
             nil)
         (dolist (r (hash-table-values elpaish-registry))
           (elpaish-install-ensure-package-dependencies r))
@@ -1001,10 +1005,11 @@ Returns t if checks pass, nil if quarantined."
                    (passed (plist-get res :passed))
                    (errs (plist-get res :errors)))
               (unless passed
-                (message "PREFLIGHT QUARANTINE for %s: %d error(s)"
-                         name (length errs))
+                (logx 'warn :msg (format "PREFLIGHT QUARANTINE for %s: %d error(s)"
+                                         name (length errs))
+                      :pkg name :error-count (length errs) :errors errs)
                 (dolist (e errs)
-                  (message "   - %s" e)))
+                  (logx 'warn :msg (format "   - %s" e) :pkg name :error e)))
               passed)
           t)))))
 
@@ -1066,9 +1071,10 @@ publishing an archive without signatures."
         (error "elpaish-sign-packages is enabled but `gpg' was not found in PATH"))
       (let ((exit-code (elpaish--sign-with-gpg-cli file sig-file key-id passphrase)))
         (if (and (numberp exit-code) (zerop exit-code) (file-exists-p sig-file))
-            (message "Signed %s -> %s"
-                     (file-name-nondirectory file)
-                     (file-name-nondirectory sig-file))
+            (logx 'info :msg (format "Signed %s -> %s"
+                                     (file-name-nondirectory file)
+                                     (file-name-nondirectory sig-file))
+                  :file file :sig-file sig-file)
           (error "Failed to sign %s (gpg exit code %S)"
                  (file-name-nondirectory file) exit-code))))))
 
@@ -1086,14 +1092,16 @@ OUTPUT-FILE defaults to FILE.sig.  Return the signature path, or nil."
       (delete-file sig-file))
     (if (not (executable-find "gpg"))
         (progn
-          (message "GPG binary not found in PATH")
+          (logx 'error :msg "GPG binary not found in PATH")
           nil)
       (let ((exit-code (elpaish--sign-with-gpg-cli file sig-file resolved-key resolved-pass)))
         (if (and (numberp exit-code) (zerop exit-code) (file-exists-p sig-file))
             (progn
-              (message "Headless signature created: %s" sig-file)
+              (logx 'info :msg (format "Headless signature created: %s" sig-file)
+                    :sig-file sig-file)
               sig-file)
-          (message "Headless signing failed for %s (exit code %S)" file exit-code)
+          (logx 'error :msg (format "Headless signing failed for %s (exit code %S)" file exit-code)
+                :file file :exit-code exit-code)
           nil)))))
 (defun elpaish--gnupg-dir ()
   "Return the active GnuPG configuration and keyring directory."
@@ -1149,7 +1157,8 @@ and enables signing.  Return the detected signing key ID or nil."
       (setq elpaish-gpg-passphrase passphrase)
       (setq elpaish-gpg-key (elpaish--detect-secret-key-id))
       (when elpaish-gpg-key
-        (message "[elpaish] GPG signing initialized for key %s" elpaish-gpg-key))
+        (logx 'info :msg (format "GPG signing initialized for key %s" elpaish-gpg-key)
+              :key-id elpaish-gpg-key))
       elpaish-gpg-key)))
 
 (defun elpaish-setup-signing ()
@@ -1168,7 +1177,8 @@ and enables signing.  Return the detected signing key ID or nil."
                                             :require-match t)))
     (setq elpaish-gpg-key key-id
           elpaish-sign-packages t)
-    (message "GPG package signing enabled! Selected Key ID: %s." key-id)))
+    (logx 'info :msg (format "GPG package signing enabled! Selected Key ID: %s." key-id)
+          :key-id key-id)))
 
 ;;; Key Lifecycle, Subkey Rotation & Secret Sync
 
@@ -1188,7 +1198,8 @@ and enables signing.  Return the detected signing key ID or nil."
             (armor-pub (expand-file-name "elpaish.pub.asc" target-dir)))
         (call-process gpg-bin nil nil nil "--batch" "--yes" "--output" binary-ring "--export" key)
         (call-process gpg-bin nil nil nil "--batch" "--yes" "--armor" "--output" armor-pub "--export" key)
-        (message "Exported public keyrings to %s and %s" binary-ring armor-pub)))))
+        (logx 'info :msg (format "Exported public keyrings to %s and %s" binary-ring armor-pub)
+              :binary-ring binary-ring :armor-pub armor-pub)))))
 
 ;;;###autoload
 (cl-defun elpaish-rotate-keys (&key master-key-id repo-slug (output-dir elpaish-output-dir))
@@ -1205,26 +1216,30 @@ Syncs with GitHub secrets on REPO-SLUG."
          (gpg-bin (executable-find "gpg"))
          (gh-bin (executable-find "gh")))
 
-    (message "Generating new 1-year signing subkey for %s..." master)
+    (logx 'info :msg (format "Generating new 1-year signing subkey for %s..." master)
+          :master master)
     (call-process gpg-bin nil nil nil "--batch" "--quick-add-key" master "ed25519" "sign" "1y")
     (elpaish-export-keyring output-dir master)
 
     (if (not gh-bin)
-        (message "GitHub CLI `gh' not found; skipped automated secret sync.")
+        (logx 'warn :msg "GitHub CLI `gh' not found; skipped automated secret sync.")
       (with-temp-buffer
         (let ((export-code (call-process gpg-bin nil t nil "--batch" "--armor" "--export-secret-subkeys" master)))
           (if (not (zerop export-code))
-              (message "Warning: Failed to export secret subkeys for GitHub secret sync.")
+              (logx 'warn :msg "Warning: Failed to export secret subkeys for GitHub secret sync.")
             (let ((secret-str (buffer-string)))
               (with-temp-buffer
                 (insert secret-str)
                 (let ((gh-code (call-process-region (point-min) (point-max) gh-bin nil nil nil
                                                     "secret" "set" "ELPAISH_SIGNING_KEY" "-R" target-repo)))
                   (if (zerop gh-code)
-                      (message "Successfully synchronized ELPAISH_SIGNING_KEY secret to %s!" target-repo)
-                    (message "Warning: `gh secret set` failed with exit code %d" gh-code)))))))))
+                      (logx 'info :msg (format "Successfully synchronized ELPAISH_SIGNING_KEY secret to %s!" target-repo)
+                            :repo target-repo)
+                    (logx 'warn :msg (format "Warning: `gh secret set` failed with exit code %d" gh-code)
+                          :exit-code gh-code)))))))))
 
-    (message "Key rotation complete for %s." master)))
+    (logx 'info :msg (format "Key rotation complete for %s." master)
+          :master master)))
 
 ;;;###autoload
 (defun elpaish-revoke-key (key-id &optional output-dir)
@@ -1240,7 +1255,8 @@ Syncs with GitHub secrets on REPO-SLUG."
     (make-directory target-dir t)
     (call-process gpg-bin nil nil nil "--batch" "--yes" "--armor" "--output" rev-file "--gen-revoke" key-id)
     (elpaish-export-keyring target-dir)
-    (message "Published revocation certificate to %s" rev-file)))
+    (logx 'info :msg (format "Published revocation certificate to %s" rev-file)
+          :file rev-file)))
 
 ;;; Package Build Engine
 
@@ -1315,18 +1331,25 @@ Returns a plist with :summary, :reqs, :url, and :keywords."
         (insert (format "%s  %s\n" hash base)))
       sha-file)))
 
-(defun elpaish--log (format-string &rest args)
-  "Log message using FORMAT-STRING and ARGS to build buffer and `message'."
-  (let ((msg (apply #'format format-string args))
-        (time-str (format-time-string "%Y-%m-%d %H:%M:%S")))
-    (when-let* ((buf (get-buffer elpaish-build-buffer-name)))
+(defun elpaish--append-log-to-build-buffer (event)
+  "Append EVENT :msg to `elpaish-build-buffer-name' if buffer exists."
+  (when-let* ((buf (get-buffer elpaish-build-buffer-name))
+              (msg (plist-get event :msg)))
+    (when (buffer-live-p buf)
       (with-current-buffer buf
-        (let ((inhibit-read-only t))
+        (let ((inhibit-read-only t)
+              (time-str (format-time-string "%Y-%m-%d %H:%M:%S" (plist-get event :ts))))
           (goto-char (point-max))
           (insert (format "[%s] %s\n" time-str msg))
           (dolist (win (get-buffer-window-list buf nil t))
-            (set-window-point win (point-max))))))
-    (message "%s" msg)))
+            (set-window-point win (point-max))))))))
+
+(add-hook 'logx-event-hook #'elpaish--append-log-to-build-buffer)
+
+(defun elpaish--log (format-string &rest args)
+  "Log message using FORMAT-STRING and ARGS to `logx' and build buffer."
+  (let ((msg (apply #'format format-string args)))
+    (logx 'info :msg msg)))
 
 (defvar elpaish-build-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1406,13 +1429,15 @@ Version numbers still track the source's last commit (see
 
     ;; Check if package is disabled for this stream
     (when (elpaish-recipe-disabled-for-stream-p recipe effective-stream)
-      (elpaish--log "Omitting %s from %s: Package is suppressed for this stream." name effective-stream)
+      (logx 'info :msg (format "Omitting %s from %s: Package is suppressed for this stream." name effective-stream)
+            :pkg name :stream effective-stream)
       (cl-return-from elpaish-build-package nil))
 
     (unless (and main-file (file-exists-p main-file))
       (error "Main file %s not found in %s" main-file-name repo-dir))
     (unless (elpaish-preflight-package recipe)
-      (elpaish--log "Skipping %s due to preflight quarantine." name)
+      (logx 'warn :msg (format "Skipping %s due to preflight quarantine." name)
+            :pkg name)
       (push name elpaish--quarantined-packages)
       (cl-return-from elpaish-build-package nil))
 
@@ -1420,7 +1445,8 @@ Version numbers still track the source's last commit (see
     (let ((version-str (elpaish-derive-version recipe effective-stream)))
       (unless version-str
         (when (eq effective-stream 'stable)
-          (elpaish--log "Omitting %s from stable: No clean semver Git tag." name))
+          (logx 'info :msg (format "Omitting %s from stable: No clean semver Git tag." name)
+                :pkg name :stream 'stable))
         (cl-return-from elpaish-build-package nil))
       ;; 3. Build artifact
       (make-directory target-dir t)
@@ -1460,7 +1486,8 @@ Version numbers still track the source's last commit (see
               (elpaish-recipe-requires recipe) reqs
               (elpaish-recipe-built-hash recipe) current-commit)
 
-        (elpaish--log "Successfully built %s version %s on %s" name version-str effective-stream)
+        (logx 'info :msg (format "Successfully built %s version %s on %s" name version-str effective-stream)
+              :pkg name :version version-str :stream effective-stream)
         dest-file))))
 
 ;;; Archive Contents Generation
@@ -1508,14 +1535,10 @@ OUTPUT-DIRECTORY-PATH defaults to stream destination directory."
 
 ;;; Build Orchestration
 
-;;;###autoload
-(cl-defun elpaish-build-all (&optional mode output-directory-path)
-  "Build registered packages, generate indexes, and sign archives.
+(defun elpaish--build-all-sync (mode output-directory-path)
+  "Execute the synchronous build pipeline for registered packages.
 MODE can be `all', `snapshot', `stable', or `staging'.
-Defaults to `elpaish-release-mode'.  OUTPUT-DIRECTORY-PATH defaults to
-`elpaish-output-dir'.  Every registered package is rebuilt unconditionally
-on every call; see `elpaish-build-package'."
-  (interactive)
+OUTPUT-DIRECTORY-PATH defaults to `elpaish-output-dir'."
   (clrhash elpaish--resolved-repo-path-cache)
   (clrhash elpaish--preflight-cache)
   (setq elpaish--texinfo-warned nil)
@@ -1553,12 +1576,14 @@ on every call; see `elpaish-build-package'."
                                   (if (stringp tgt) tgt (format "%s" tgt)))
                                 "unknown")))
                   (push pkg elpaish--quarantined-packages)
-                  (elpaish--log "Package %s failed to build: %s" pkg (error-message-string err))))
+                  (logx 'error :msg (format "Package %s failed to build: %s" pkg (error-message-string err))
+                        :pkg pkg :error (error-message-string err))))
                ((and (consp res) (elpaish-async-error-p (cdr res)))
                 (let ((pkg (car res))
                       (err (plist-get (cdr res) :error)))
                   (push pkg elpaish--quarantined-packages)
-                  (elpaish--log "Package %s failed to build: %s" pkg (error-message-string err)))))))
+                  (logx 'error :msg (format "Package %s failed to build: %s" pkg (error-message-string err))
+                        :pkg pkg :error (error-message-string err)))))))
           (elpaish-generate-archive-contents stream stream-dir)
           (elpaish-generate-stream-index stream stream-dir)))
 
@@ -1571,8 +1596,14 @@ on every call; see `elpaish-build-package'."
         (unless (elpaish-server-running-p)
           (elpaish-serve-local preview-port target-root)))
 
-      (elpaish--log "ELPAish repository successfully generated at %s" target-root)
-      (when (eq major-mode 'elpaish-status-mode)
+      (logx 'info :msg (format "ELPAish repository successfully generated at %s" target-root)
+            :target-root target-root)
+      (when-let* ((status-buf (get-buffer "*elpaish-status*")))
+        (when (buffer-live-p status-buf)
+          (with-current-buffer status-buf
+            (elpaish-status-refresh))))
+      (when (and (eq major-mode 'elpaish-status-mode)
+                 (not (get-buffer "*elpaish-status*")))
         (elpaish-status-refresh))
       ;; Preflight quarantines are otherwise silent: the archive still builds
       ;; and this function still returns normally, so a caller that only
@@ -1580,10 +1611,22 @@ on every call; see `elpaish-build-package'."
       ;; false success despite missing packages.
       (when elpaish--quarantined-packages
         (let ((names (delete-dups (nreverse elpaish--quarantined-packages))))
-          (elpaish--log "Quarantined %d package(s) during preflight: %s"
-                        (length names) (string-join names ", "))
+          (logx 'warn :msg (format "Quarantined %d package(s) during preflight: %s"
+                                   (length names) (string-join names ", "))
+                :count (length names) :packages names)
           (error "ELPAish build quarantined %d package(s) during preflight: %s"
-                 (length names) (string-join names ", ")))))))
+                 (length names) (string-join names ", "))))
+      target-root)))
+
+;;;###autoload
+(cl-defun elpaish-build-all (&optional mode output-directory-path)
+  "Build registered packages, generate indexes, and sign archives.
+MODE can be `all', `snapshot', `stable', or `staging'.
+Defaults to `elpaish-release-mode'.  OUTPUT-DIRECTORY-PATH defaults to
+`elpaish-output-dir'.  Every registered package is rebuilt unconditionally
+on every call; see `elpaish-build-package'."
+  (interactive)
+  (elpaish--build-all-sync mode output-directory-path))
 
 ;;;###autoload
 (defun elpaish-build-single (recipe-or-name &optional stream output-directory-path)
@@ -1635,10 +1678,12 @@ OUTPUT-DIRECTORY-PATH overrides destination directory."
 
         (when (eq major-mode 'elpaish-status-mode)
           (elpaish-status-refresh))
-        (elpaish--log "Single build complete for %s on %s."
-                      (elpaish-recipe-name recipe) effective-stream)
+        (logx 'info :msg (format "Single build complete for %s on %s."
+                                 (elpaish-recipe-name recipe) effective-stream)
+              :pkg (elpaish-recipe-name recipe) :stream effective-stream)
         (when elpaish--quarantined-packages
-          (elpaish--log "Quarantined during preflight: %s" (elpaish-recipe-name recipe))
+          (logx 'warn :msg (format "Quarantined during preflight: %s" (elpaish-recipe-name recipe))
+                :pkg (elpaish-recipe-name recipe))
           (error "ELPAish build of %s quarantined during preflight" (elpaish-recipe-name recipe)))))))
 
 ;;;###autoload
@@ -1661,8 +1706,10 @@ OUTPUT-DIRECTORY-PATH overrides destination directory."
     (unless recipe
       (user-error "Recipe not found"))
     (if (elpaish-preflight-package recipe)
-        (message "✓ Preflight passed for %s" (elpaish-recipe-name recipe))
-      (message "✗ Preflight failed for %s" (elpaish-recipe-name recipe)))))
+        (logx 'info :msg (format "✓ Preflight passed for %s" (elpaish-recipe-name recipe))
+              :pkg (elpaish-recipe-name recipe) :status :passed)
+      (logx 'warn :msg (format "✗ Preflight failed for %s" (elpaish-recipe-name recipe))
+            :pkg (elpaish-recipe-name recipe) :status :failed))))
 
 ;;;###autoload
 (defun elpaish-view-build-log ()
@@ -1798,7 +1845,8 @@ PORT defaults to `elpaish-preview-server-port'."
            (lambda (req)
              (elpaish--handle-ws-request req doc-root))
            preview-port))
-    (message "ELPAish preview server running at http://127.0.0.1:%d/ (root: %s)" preview-port doc-root)))
+    (logx 'info :msg (format "ELPAish preview server running at http://127.0.0.1:%d/ (root: %s)" preview-port doc-root)
+          :port preview-port :doc-root doc-root)))
 
 ;;;###autoload
 (defun elpaish-stop-server ()
@@ -1814,7 +1862,7 @@ PORT defaults to `elpaish-preview-server-port'."
       (when (process-live-p elpaish-server-process)
         (delete-process elpaish-server-process))))
     (setq elpaish-server-process nil)
-    (message "ELPAish preview server stopped.")))
+    (logx 'info :msg "ELPAish preview server stopped.")))
 
 (defun elpaish--resolve-signing-p (sign)
   "Resolve SIGN policy (`auto', `if-possible', t, or nil) to a boolean.
@@ -1915,21 +1963,24 @@ CALLBACK, if non-nil, is invoked with the result plist once ready."
                           :async t
                           :order 'preserve
                           :error-policy :collect-error)))
-            (message "[elpaish] Rebuilding test server archive in sprite (port %d, signed: %s)..."
-                     actual-port (if resolved-sign "yes" "no"))
+            (logx 'info :msg (format "Rebuilding test server archive in sprite (port %d, signed: %s)..."
+                                     actual-port (if resolved-sign "yes" "no"))
+                  :port actual-port :signed resolved-sign)
             (sprite-future-then
              future
              (lambda (results)
                (let ((res (car results)))
                  (if (elpaish-async-error-p res)
-                     (message "[elpaish] Test server sprite build failed: %s"
-                              (error-message-string (plist-get res :error)))
+                     (logx 'error :msg (format "Test server sprite build failed: %s"
+                                               (error-message-string (plist-get res :error)))
+                           :error (plist-get res :error))
                    (unless (elpaish-server-running-p)
                      (elpaish-serve-local actual-port effective-dir))
-                   (message "[elpaish] Test server ready at %s (packages: %d, signed: %s)"
-                            server-url
-                            (or (plist-get res :packages) 0)
-                            (if resolved-sign "yes" "no")))
+                   (logx 'info :msg (format "Test server ready at %s (packages: %d, signed: %s)"
+                                            server-url
+                                            (or (plist-get res :packages) 0)
+                                            (if resolved-sign "yes" "no"))
+                         :url server-url :packages (or (plist-get res :packages) 0) :signed resolved-sign))
                  (when callback (funcall callback res)))))
             future)
         (let ((elpaish-sign-packages resolved-sign)
@@ -1944,10 +1995,11 @@ CALLBACK, if non-nil, is invoked with the result plist once ready."
                            :mode effective-mode
                            :signed resolved-sign
                            :packages (hash-table-count elpaish-registry))))
-            (message "[elpaish] Test server ready at %s (packages: %d, signed: %s)"
-                     server-url
-                     (plist-get res :packages)
-                     (if resolved-sign "yes" "no"))
+            (logx 'info :msg (format "Test server ready at %s (packages: %d, signed: %s)"
+                                     server-url
+                                     (plist-get res :packages)
+                                     (if resolved-sign "yes" "no"))
+                  :url server-url :packages (plist-get res :packages) :signed resolved-sign)
             (when callback (funcall callback res))
             res))))))
 
@@ -2021,9 +2073,10 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
           (if idle
               (run-with-idle-timer secs t #'elpaish-build-all)
             (run-at-time secs secs #'elpaish-build-all)))
-    (message "ELPA auto-build started (%s, running every %s)."
-             (if idle "when idle" "periodic")
-             interval)))
+    (logx 'info :msg (format "ELPA auto-build started (%s, running every %s)."
+                             (if idle "when idle" "periodic")
+                             interval)
+          :interval interval :idle idle)))
 
 ;;;###autoload
 (defun elpaish-stop-auto-build ()
@@ -2032,7 +2085,7 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
   (when (timerp elpaish-timer)
     (cancel-timer elpaish-timer)
     (setq elpaish-timer nil)
-    (message "ELPA auto-build timer stopped.")))
+    (logx 'info :msg "ELPA auto-build timer stopped.")))
 
 (defvar elpaish-status-mode-map
   (let ((map (make-sparse-keymap)))
@@ -2114,8 +2167,10 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
   (if-let* ((name (tabulated-list-get-id))
             (recipe (gethash name elpaish-registry)))
       (if (elpaish-preflight-package recipe)
-          (message "✓ Preflight checks passed for %s" name)
-        (message "✗ Preflight checks failed for %s" name))
+          (logx 'info :msg (format "✓ Preflight checks passed for %s" name)
+                :pkg name :status :passed)
+        (logx 'warn :msg (format "✗ Preflight checks failed for %s" name)
+              :pkg name :status :failed))
     (user-error "No recipe found at point")))
 
 ;;;###autoload
@@ -2128,7 +2183,8 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
       (if (elpaish-preflight-package recipe)
           (cl-incf passed-count)
         (cl-incf failed-count)))
-    (message "Preflight results: %d passed, %d quarantined." passed-count failed-count)))
+    (logx 'info :msg (format "Preflight results: %d passed, %d quarantined." passed-count failed-count)
+          :passed passed-count :quarantined failed-count)))
 
 ;;;###autoload
 (defun elpaish-status ()
@@ -2160,7 +2216,6 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
     (display-buffer buf)))
 
 (declare-function elpaish-load-packages "elpaish-recipes" (&optional files))
-
 ;;;###autoload (autoload 'elpaish-menu "elpaish" nil t)
 (transient-define-prefix elpaish-menu ()
   "Transient dispatch menu for ELPAish package repository management."
@@ -2184,7 +2239,7 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
     ("wc" "Stop preview server" elpaish-stop-server)
     ("wt" "Build & start local test server" elpaish-test-server)
     ("wu" "Upgrade packages from local server" elpaish-test-server-upgrade)
-    ("rr" "Reload package recipes" (lambda () (interactive) (elpaish-load-packages) (message "Reloaded package recipes.")))]
+    ("rr" "Reload package recipes" (lambda () (interactive) (elpaish-load-packages) (logx 'info :msg "Reloaded package recipes.")))]
    ["Keyring & Operations"
     ("k" "Export GPG keyring" elpaish-export-keyring)
     ("TKO" "Rotate GPG signing keys" elpaish-rotate-keys)]

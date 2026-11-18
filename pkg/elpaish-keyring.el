@@ -12,6 +12,7 @@
 
 ;;; Code:
 
+(require 'logx)
 (require 'package)
 (require 'subr-x)
 
@@ -45,7 +46,8 @@ STREAM defaults to \\='snapshot.  BASE-URL defaults to `elpaish-base-url'."
     (if existing
         (setcdr existing archive-url)
       (add-to-list 'package-archives (cons stream-name archive-url) t))
-    (message "Added %s (%s) to `package-archives'." stream-name archive-url)))
+    (logx 'info :msg (format "Added %s (%s) to `package-archives'." stream-name archive-url)
+          :stream stream-name :url archive-url)))
 
 (provide 'elpaish-keyring)
 

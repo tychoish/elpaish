@@ -14,6 +14,7 @@
 (require 'cl-lib)
 (require 'map)
 (require 'package)
+(require 'logx)
 (require 'gen nil t)
 
 (declare-function elpaish-recipe-p "elpaish" (object))
@@ -62,7 +63,7 @@
   "0.2.0")
 
 (defcustom elpaish-install-packages-list
-  '(compat web-server htmlize annotated-completing-read transient package-lint elpaish-keyring elpaish)
+  '(compat web-server htmlize annotated-completing-read logx transient package-lint elpaish-keyring elpaish)
   "List of package symbols to ensure are installed on the system.
 Used as default target package list for `elpaish-install-packages'
 when no explicit packages are specified."
@@ -131,21 +132,6 @@ PKGS can be package symbols or lists of package symbols.  Updates
             (append elpaish-install-packages-list (nreverse new-pkgs)))))
   elpaish-install-packages-list)
 
-(define-obsolete-function-alias
-  'elpaish-install-register-bootstrap-package
-  #'elpaish-install-register-package
-  "0.3.0")
-
-(define-obsolete-function-alias
-  'elpaish-install-register-bootstrap-packages
-  #'elpaish-install-register-package
-  "0.2.0")
-
-(define-obsolete-function-alias
-  'elpaish-install-add-bootstrap-packages
-  #'elpaish-install-register-package
-  "0.2.0")
-
 ;;;###autoload
 (defun elpaish-install-register-upgrade-package (&rest pkgs)
   "Append unique package symbols from PKGS to upgrade list.
@@ -166,11 +152,6 @@ Returns `elpaish-install-upgrade-packages-list'."
       (setq elpaish-install-upgrade-packages-list
             (append elpaish-install-upgrade-packages-list (nreverse new-pkgs)))))
   elpaish-install-upgrade-packages-list)
-
-(define-obsolete-function-alias
-  'elpaish-install-register-upgrade-packages
-  #'elpaish-install-register-upgrade-package
-  "0.3.0")
 
 (defun elpaish-install--get-upgrade-packages ()
   "Return packages from upgrade list that are in `elpaish-install-packages-list'."
@@ -230,15 +211,18 @@ and invokes `package-install' for any uninstalled dependency."
                              (gethash (symbol-name dep-pkg) elpaish-registry)))
               (push dep-pkg missing))))
         (when missing
-          (message "Refreshing package archive contents to install missing dependencies: %S" missing)
+          (logx 'info :msg (format "Refreshing package archive contents to install missing dependencies: %S" missing)
+                :missing missing)
           (package-refresh-contents)
           (dolist (dep-pkg missing)
-            (message "Installing missing package dependency: %s" dep-pkg)
+            (logx 'info :msg (format "Installing missing package dependency: %s" dep-pkg)
+                  :pkg dep-pkg)
             (condition-case err
                 (package-install dep-pkg)
               (error
-               (message "Warning: Failed to install package dependency %s: %s"
-                        dep-pkg (error-message-string err))))))))))
+               (logx 'warn :msg (format "Warning: Failed to install package dependency %s: %s"
+                                        dep-pkg (error-message-string err))
+                     :pkg dep-pkg :error (error-message-string err))))))))))
 
 (defun elpaish-install--resolve-repository-recipe (pkg)
   "Return `elpaish-recipe' for PKG (symbol or string) from `elpaish-registry'."
@@ -332,8 +316,15 @@ selection across installed, upgrade, or all), see
               desc))
         (delete-directory temp-dir t))))))
 
-;;;###autoload
-(defalias 'elpaish-install-git-repository #'elpaish-install-repository)
+(define-obsolete-function-alias
+  'elpaish-install-git-repository
+  #'elpaish-install-repository
+  "0.3.0")
+
+(define-obsolete-function-alias
+  'elpaish-install-from-repository
+  #'elpaish-install-repository
+  "0.3.0")
 
 ;;;###autoload
 (cl-defun elpaish-install-repository-packages (&optional scope &key stream callback)
@@ -431,7 +422,8 @@ Returns list of installed `package-desc' objects."
          (effective-stream (or stream 'snapshot)))
     (if (null target-pkgs)
         (progn
-          (message "[elpaish] No repository package recipes found matching scope '%s'." scope-sym)
+          (logx 'warn :msg (format "No repository package recipes found matching scope '%s'." scope-sym)
+                :scope scope-sym)
           (when callback (funcall callback nil))
           nil)
       (let* ((temp-dir (make-temp-file "elpaish-install-repo-" t))
@@ -448,14 +440,16 @@ Returns list of installed `package-desc' objects."
                     (pkg-name (if (symbolp pkg) (symbol-name pkg) pkg)))
                 (if (null recipe)
                     (progn
-                      (message "[elpaish] [%d/%d] Skipping %s: no recipe found in repository"
-                               idx total pkg-name)
+                      (logx 'warn :msg (format "[%d/%d] Skipping %s: no recipe found in repository"
+                                               idx total pkg-name)
+                            :index idx :total total :pkg pkg-name)
                       (push (cons pkg "No recipe found in repository") failed))
                   (condition-case err
                       (let ((artifact (elpaish-build-package recipe effective-stream build-dir)))
                         (if (not (and artifact (file-exists-p artifact)))
                             (progn
-                              (message "[elpaish] [%d/%d] Failed to build %s" idx total pkg-name)
+                              (logx 'error :msg (format "[%d/%d] Failed to build %s" idx total pkg-name)
+                                    :index idx :total total :pkg pkg-name)
                               (push (cons pkg "Build produced no artifact") failed))
                           (let* ((built-desc (package-install-file artifact))
                                  (desc (or (seq-find (lambda (candidate)
@@ -465,25 +459,27 @@ Returns list of installed `package-desc' objects."
                                            built-desc)))
                             (when (and desc (fboundp 'package--reload-previously-loaded))
                               (package--reload-previously-loaded desc))
-                            (message "[elpaish] [%d/%d] Installed %s (%s)"
-                                     idx total pkg-name
-                                     (package-version-join (package-desc-version desc)))
+                            (logx 'info :msg (format "[%d/%d] Installed %s (%s)"
+                                                     idx total pkg-name
+                                                     (package-version-join (package-desc-version desc)))
+                                  :index idx :total total :pkg pkg-name
+                                  :version (package-version-join (package-desc-version desc)))
                             (push desc installed-descs))))
                     (error
-                     (message "[elpaish] [%d/%d] Failed %s: %s"
-                              idx total pkg-name (error-message-string err))
+                     (logx 'error :msg (format "[%d/%d] Failed %s: %s"
+                                               idx total pkg-name (error-message-string err))
+                           :index idx :total total :pkg pkg-name :error (error-message-string err))
                      (push (cons pkg (error-message-string err)) failed))))))
           (delete-directory temp-dir t))
         (when installed-descs
           (elpaish-install-schedule-quickstart-refresh))
         (let ((result (nreverse installed-descs)))
-          (message "[elpaish] Repository package installation complete: %d installed, %d failed."
-                   (length result) (length failed))
+          (logx 'info :msg (format "Repository package installation complete: %d installed, %d failed."
+                                   (length result) (length failed))
+                :installed (length result) :failed (length failed))
           (when callback (funcall callback result))
           result)))))
 
-;;;###autoload
-(defalias 'elpaish-install-from-repository #'elpaish-install-repository-packages)
 
 ;;;; Core Single Package Operation
 
@@ -605,13 +601,19 @@ if an update is available.  If REFRESH is non-nil, refresh archive contents."
               parts))
       (cond
        ((and (null upgraded) (null installed) (null failed))
-        (message "[elpaish] %s complete: all %d package(s) up to date."
-                 (if (eq action 'install) "Installation" "Bootstrap")
-                 up-to-date))
+        (logx 'info :msg (format "[elpaish] %s complete: all %d package(s) up to date."
+                                 (if (eq action 'install) "Installation" "Bootstrap")
+                                 up-to-date)
+              :action action :status :all-up-to-date :count up-to-date))
        (t
-        (message "[elpaish] %s complete: %s."
-                 (if (eq action 'install) "Installation" "Bootstrap")
-                 (string-join (nreverse parts) ", ")))))))
+        (let ((msg (format "[elpaish] %s complete: %s."
+                           (if (eq action 'install) "Installation" "Bootstrap")
+                           (string-join (nreverse parts) ", "))))
+          (if failed
+              (logx 'warn :msg msg
+                    :action action :installed installed :upgraded upgraded :failed failed :up-to-date up-to-date)
+            (logx 'info :msg msg
+                  :action action :installed installed :upgraded upgraded :failed failed :up-to-date up-to-date))))))))
 
 (defun elpaish-install--remote-eval-form (pkg action parent-user-dir parent-archives refresh)
   "Generate Lisp form for remote sprite execution of PKG with ACTION.
@@ -646,9 +648,11 @@ and invokes CALLBACK."
           (error nil))
         (pcase (plist-get res :status)
           (:installed
-           (message "[elpaish] Installed and activated %s" pkg))
+           (logx 'info :msg (format "[elpaish] Installed and activated %s" pkg)
+                 :pkg pkg :action 'install))
           (:upgraded
-           (message "[elpaish] Upgraded and reloaded %s" pkg)))
+           (logx 'info :msg (format "[elpaish] Upgraded and reloaded %s" pkg)
+                 :pkg pkg :action 'upgrade)))
         (run-hook-with-args 'elpaish-install-package-updated-functions
                             pkg
                             (if (eq (plist-get res :status) :installed) 'installed 'upgraded)
@@ -672,7 +676,7 @@ If REFRESH is non-nil, call `package-refresh-contents' first."
       (unless (bound-and-true-p package-archive-contents)
         (package-initialize))
       (when (or refresh (eq action 'upgrade) (null package-archive-contents))
-        (message "[elpaish] Refreshing package archive contents...")
+        (logx 'info :msg "[elpaish] Refreshing package archive contents...")
         (package-refresh-contents))
       (let* ((results nil)
              (total (length target-pkgs))
@@ -683,18 +687,23 @@ If REFRESH is non-nil, call `package-refresh-contents' first."
             (push res results)
             (pcase (plist-get res :status)
               (:installed
-               (message "[elpaish] [%d/%d] Installed %s (activated)" idx total pkg))
+               (logx 'info :msg (format "[elpaish] [%d/%d] Installed %s (activated)" idx total pkg)
+                     :index idx :total total :pkg pkg :status :installed))
               (:upgraded
                (if (and (plist-get res :from) (plist-get res :to))
-                   (message "[elpaish] [%d/%d] Upgraded %s from %s to %s (reloaded)"
-                            idx total pkg (plist-get res :from) (plist-get res :to))
-                 (message "[elpaish] [%d/%d] Upgraded %s (reloaded)" idx total pkg)))
+                   (logx 'info :msg (format "[elpaish] [%d/%d] Upgraded %s from %s to %s (reloaded)"
+                                            idx total pkg (plist-get res :from) (plist-get res :to))
+                         :index idx :total total :pkg pkg :from (plist-get res :from) :to (plist-get res :to) :status :upgraded)
+                 (logx 'info :msg (format "[elpaish] [%d/%d] Upgraded %s (reloaded)" idx total pkg)
+                       :index idx :total total :pkg pkg :status :upgraded)))
               (:failed
-               (message "[elpaish] [%d/%d] Failed %s: %s"
-                        idx total pkg (plist-get res :error)))
+               (logx 'error :msg (format "[elpaish] [%d/%d] Failed %s: %s"
+                                        idx total pkg (plist-get res :error))
+                     :index idx :total total :pkg pkg :error (plist-get res :error) :status :failed))
               (_
                (when elpaish-install-verbose
-                 (message "[elpaish] [%d/%d] %s is up to date" idx total pkg))))))
+                 (logx 'info :msg (format "[elpaish] [%d/%d] %s is up to date" idx total pkg)
+                       :index idx :total total :pkg pkg :status :up-to-date))))))
         (let ((final-res (nreverse results)))
           (elpaish-install--report-summary final-res action)
           (run-hook-with-args 'elpaish-install-bootstrap-finished-functions
@@ -729,9 +738,10 @@ Calls CALLBACK when complete and returns a cancellation handle function."
            (fboundp 'sprite-pool-mapcar))
       (let ((parent-user-dir package-user-dir)
             (parent-archives package-archives))
-        (message "[elpaish] %s %d package(s) asynchronously using sprite pool..."
-                 (if (eq action 'install) "Installing" "Bootstrapping")
-                 (length target-pkgs))
+        (logx 'info :msg (format "[elpaish] %s %d package(s) asynchronously using sprite pool..."
+                                 (if (eq action 'install) "Installing" "Bootstrapping")
+                                 (length target-pkgs))
+              :action action :count (length target-pkgs) :backend 'sprite-pool)
         (let ((future (sprite-pool-mapcar
                        (lambda (pkg)
                          (elpaish-install--remote-eval-form pkg action parent-user-dir parent-archives refresh))
@@ -747,14 +757,15 @@ Calls CALLBACK when complete and returns a cancellation handle function."
       (unless (bound-and-true-p package-archive-contents)
         (package-initialize))
       (when (or refresh (eq action 'upgrade) (null package-archive-contents))
-        (message "[elpaish] Refreshing package archive contents...")
+        (logx 'info :msg "[elpaish] Refreshing package archive contents...")
         (package-refresh-contents))
       (let* ((results nil)
              (total (length target-pkgs))
              (idx 0))
-        (message "[elpaish] %s %d package(s) asynchronously..."
-                 (if (eq action 'install) "Installing" "Bootstrapping")
-                 total)
+        (logx 'info :msg (format "[elpaish] %s %d package(s) asynchronously..."
+                                 (if (eq action 'install) "Installing" "Bootstrapping")
+                                 total)
+              :action action :total total)
         (let ((runner
                (gen-run-async
                 (lambda (pkg done-cb)
@@ -763,18 +774,23 @@ Calls CALLBACK when complete and returns a cancellation handle function."
                     (push res results)
                     (pcase (plist-get res :status)
                       (:installed
-                       (message "[elpaish] [%d/%d] Installed %s (activated)" idx total pkg))
+                       (logx 'info :msg (format "[elpaish] [%d/%d] Installed %s (activated)" idx total pkg)
+                             :index idx :total total :pkg pkg :status :installed))
                       (:upgraded
                        (if (and (plist-get res :from) (plist-get res :to))
-                           (message "[elpaish] [%d/%d] Upgraded %s from %s to %s (reloaded)"
-                                    idx total pkg (plist-get res :from) (plist-get res :to))
-                         (message "[elpaish] [%d/%d] Upgraded %s (reloaded)" idx total pkg)))
+                           (logx 'info :msg (format "[elpaish] [%d/%d] Upgraded %s from %s to %s (reloaded)"
+                                                    idx total pkg (plist-get res :from) (plist-get res :to))
+                                 :index idx :total total :pkg pkg :from (plist-get res :from) :to (plist-get res :to) :status :upgraded)
+                         (logx 'info :msg (format "[elpaish] [%d/%d] Upgraded %s (reloaded)" idx total pkg)
+                               :index idx :total total :pkg pkg :status :upgraded)))
                       (:failed
-                       (message "[elpaish] [%d/%d] Failed %s: %s"
-                                idx total pkg (plist-get res :error)))
+                       (logx 'error :msg (format "[elpaish] [%d/%d] Failed %s: %s"
+                                                idx total pkg (plist-get res :error))
+                             :index idx :total total :pkg pkg :error (plist-get res :error) :status :failed))
                       (_
                        (when elpaish-install-verbose
-                         (message "[elpaish] [%d/%d] %s is up to date" idx total pkg))))
+                         (logx 'info :msg (format "[elpaish] [%d/%d] %s is up to date" idx total pkg)
+                               :index idx :total total :pkg pkg :status :up-to-date))))
                     (funcall done-cb)))
                 target-pkgs
                 :concurrency (or concurrency elpaish-install-concurrency 1)
@@ -790,7 +806,8 @@ Calls CALLBACK when complete and returns a cancellation handle function."
                       (funcall callback final-res))))
                 :on-error
                 (lambda (err)
-                  (message "[elpaish] Error during package bootstrapping: %S" err)))))
+                  (logx 'error :msg (format "[elpaish] Error during package bootstrapping: %S" err)
+                        :error err)))))
           (setq elpaish-install--active-cancel-handle runner)
           runner)))
      (t
@@ -875,8 +892,9 @@ ARGS can contain package symbols, lists of package symbols, or keyword options:
         (cond
          ((and (null missing) (not force-refresh))
           (when interactive-p
-            (message "[elpaish] All %d package(s) are already installed."
-                     (length target-pkgs)))
+            (logx 'info :msg (format "[elpaish] All %d package(s) are already installed."
+                                     (length target-pkgs))
+                  :count (length target-pkgs)))
           (when callback (funcall callback nil))
           nil)
          (is-async
@@ -895,7 +913,7 @@ ARGS can contain package symbols, lists of package symbols, or keyword options:
           (unless (bound-and-true-p package-archive-contents)
             (package-initialize))
           (when (or force-refresh missing (null package-archive-contents))
-            (message "[elpaish] Refreshing package archive contents...")
+            (logx 'info :msg "[elpaish] Refreshing package archive contents...")
             (package-refresh-contents))
           (let* ((to-install (if force-refresh target-pkgs missing))
                  (results nil)
@@ -907,13 +925,16 @@ ARGS can contain package symbols, lists of package symbols, or keyword options:
                 (push res results)
                 (pcase (plist-get res :status)
                   (:installed
-                   (message "[elpaish] [%d/%d] Installed %s (activated)" idx total pkg))
+                   (logx 'info :msg (format "[elpaish] [%d/%d] Installed %s (activated)" idx total pkg)
+                         :index idx :total total :pkg pkg :status :installed))
                   (:failed
-                   (message "[elpaish] [%d/%d] Failed %s: %s"
-                            idx total pkg (plist-get res :error)))
+                   (logx 'error :msg (format "[elpaish] [%d/%d] Failed %s: %s"
+                                            idx total pkg (plist-get res :error))
+                         :index idx :total total :pkg pkg :error (plist-get res :error) :status :failed))
                   (_
                    (when elpaish-install-verbose
-                     (message "[elpaish] [%d/%d] %s is up to date" idx total pkg))))))
+                     (logx 'info :msg (format "[elpaish] [%d/%d] %s is up to date" idx total pkg)
+                           :index idx :total total :pkg pkg :status :up-to-date))))))
             (let ((final-res (nreverse results)))
               (elpaish-install--report-summary final-res 'install)
               (run-hook-with-args 'elpaish-install-bootstrap-finished-functions
@@ -1032,8 +1053,8 @@ Preserves underlying string text so ERT string matching remains intact."
            (plist-get elpaish-install--progress-context :running))
       (when (yes-or-no-p "Cancel current ELPAish package operation? ")
         (elpaish-install-cancel)
-        (message "[elpaish] Operation canceled."))
-    (message "[elpaish] No active package operation to cancel.")))
+        (logx 'info :msg "[elpaish] Operation canceled."))
+    (logx 'warn :msg "[elpaish] No active package operation to cancel.")))
 
 (defun elpaish-install-progress-restart (&optional _ignore-auto _noconfirm)
   "Restart package operation using stored context."
@@ -1057,9 +1078,9 @@ Preserves underlying string text so ERT string matching remains intact."
   (if (and elpaish-install--progress-step-fn
            (plist-get elpaish-install--progress-context :running))
       (progn
-        (message "[elpaish] Continuing package operation...")
+        (logx 'info :msg "[elpaish] Continuing package operation...")
         (funcall elpaish-install--progress-step-fn))
-    (message "[elpaish] Operation is not paused or already finished.")))
+    (logx 'warn :msg "[elpaish] Operation is not paused or already finished.")))
 
 (defun elpaish-install-progress-menu ()
   "Action menu for ELPAish package progress buffer."
@@ -1235,7 +1256,8 @@ ACTION is \='upgrade (default) or \='install."
                    (with-current-buffer buffer
                      (setf (plist-get elpaish-install--progress-context :running) nil)))
                  (setq stage 'done global-state "Failed")
-                 (message "[elpaish] %s failed: %s" act (error-message-string err))
+                 (logx 'error :msg (format "[elpaish] %s failed: %s" act (error-message-string err))
+                       :action act :error (error-message-string err))
                  (funcall render)
                  (when sync (signal (car err) (cdr err)))))
               (funcall render)
@@ -1257,7 +1279,7 @@ ACTION is \='upgrade (default) or \='install."
                       (with-current-buffer buffer
                         (setf (plist-get elpaish-install--progress-context :running) nil))
                       (funcall render)
-                      (message "[elpaish] Package operation canceled."))))
+                      (logx 'info :msg "[elpaish] Package operation canceled."))))
         (setq elpaish-install--active-cancel-handle cancel)
         cancel))))
 
@@ -1323,7 +1345,7 @@ When no packages are specified in ARGS, defaults to
            (is-sync (or sync (eq async nil))))
       (cond
        ((null target-pkgs)
-        (message "[elpaish] No packages configured in `elpaish-install-upgrade-packages-list' to upgrade.")
+        (logx 'warn :msg "[elpaish] No packages configured in `elpaish-install-upgrade-packages-list' to upgrade.")
         (when callback (funcall callback nil))
         nil)
        (t
@@ -1331,19 +1353,16 @@ When no packages are specified in ARGS, defaults to
         (elpaish-install--upgrade-run target-pkgs refresh is-sync delay callback))))))
 
 ;;;###autoload
-(defalias 'elpaish-upgrade-packages #'elpaish-install-upgrade-packages)
-
-;;;###autoload
 (cl-defun elpaish-install-bootstrap-packages (&rest args)
   "Install or upgrade bootstrap packages (legacy dispatcher).
-When :action is \='install, delegates to `elpaish-install-packages'.
+When :action is \\='install, delegates to `elpaish-install-packages'.
 Otherwise, installs missing packages and upgrades existing ones.
 
 ARGS can contain package symbols, lists of package symbols, or keyword options:
   :sync BOOL        - When non-nil, execute synchronously.
   :async BOOL       - When non-nil (default t), execute asynchronously.
   :refresh BOOL     - When non-nil (default t), refresh package archives.
-  :action ACTION    - Operation action: \='upgrade (default) or \='install.
+  :action ACTION    - Operation action: \\='upgrade (default) or \\='install.
   :concurrency N    - Concurrent jobs for `gen-run-async' (default 1).
   :delay SECS       - Yield delay in seconds
                       (default `elpaish-install-yield-delay').
@@ -1417,9 +1436,16 @@ concurrency.  Calls CALLBACK when complete."
   (elpaish-install-bootstrap-packages pkgs :action 'install :refresh refresh :pool-size (or pool-size 2) :callback callback :async t))
 
 (define-obsolete-function-alias
+  'elpaish-upgrade-packages
+  #'elpaish-install-upgrade-packages
+  "0.3.0")
+
+(define-obsolete-function-alias
   'elpaish-install-upgrade-packages-async
-  #'elpaish-install-packages-async
-  "0.2.0")
+  #'elpaish-install-upgrade-packages
+  "0.3.0")
+
+
 
 ;;;; Package Maintenance Tools
 
@@ -1504,7 +1530,8 @@ artifacts from `package-user-dir' before installing."
       ;; Install the built package
       (package-install-file dest-file)
       (elpaish-install-schedule-quickstart-refresh)
-      (message "[elpaish] Successfully rebuilt and reinstalled %s from %s" pkg-name repo-dir)
+      (logx 'info :msg (format "[elpaish] Successfully rebuilt and reinstalled %s from %s" pkg-name repo-dir)
+            :pkg pkg-name :dir repo-dir)
       dest-file)))
 
 ;;;###autoload
@@ -1553,7 +1580,8 @@ When NONINTERACTIVE is non-nil, automatically deletes all stale versions without
      groups)
     (if (null stale-entries)
         (progn
-          (message "[elpaish] No stale package versions found in %s" package-user-dir)
+          (logx 'info :msg (format "[elpaish] No stale package versions found in %s" package-user-dir)
+                :dir package-user-dir)
           0)
       (catch 'cancel
         (seq-do
@@ -1584,11 +1612,13 @@ When NONINTERACTIVE is non-nil, automatically deletes all stale versions without
                (delete-directory full-dir t)
                (seq-do #'delete-file associated)
                (cl-incf deleted-count)
-               (message "[elpaish] Deleted stale package %s" dir-name))))
+               (logx 'info :msg (format "[elpaish] Deleted stale package %s" dir-name)
+                     :dir dir-name))))
          (nreverse stale-entries)))
       (when (> deleted-count 0)
         (elpaish-install-schedule-quickstart-refresh))
-      (message "[elpaish] Finished cleaning: deleted %d stale package version(s)" deleted-count)
+      (logx 'info :msg (format "[elpaish] Finished cleaning: deleted %d stale package version(s)" deleted-count)
+            :count deleted-count)
       deleted-count)))
 
 ;;;; Quickstart management and optimization
@@ -1757,9 +1787,11 @@ When FORCE is nil, do nothing unless quickstart file is stale."
   (interactive "P")
   (setq elpaish-install--quickstart-refresh-timer nil)
   (when (or force (elpaish-install-package-quickstart-stale-p))
-    (message "[elpaish] %s; refreshing package quickstart"
-             (if force "Package changes detected or refresh requested"
-               "Package quickstart is stale"))
+    (logx 'info :msg (format "[elpaish] %s; refreshing package quickstart"
+                             (if force "Package changes detected or refresh requested"
+                               "Package quickstart is stale"))
+          :reason (if force "Package changes detected or refresh requested"
+                    "Package quickstart is stale"))
     (require 'package)
     (elpaish-install-sync-package-load-paths)
     (package-quickstart-refresh)

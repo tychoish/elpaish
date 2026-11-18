@@ -14,6 +14,7 @@
 
 (require 'cl-lib)
 (require 'dom)
+(require 'logx)
 (require 'seq)
 (require 'subr-x)
 (require 'elpaish)
@@ -442,7 +443,8 @@ OUTPUT-DIRECTORY-PATH defaults to `elpaish-output-dir'."
         (make-directory stream-dir t)
         (elpaish-generate-stream-index stream stream-dir)))
     (elpaish-generate-top-index target-root)
-    (message "ELPAish website successfully generated at %s" target-root)))
+    (logx 'info :msg (format "ELPAish website successfully generated at %s" target-root)
+          :target target-root)))
 
 (provide 'elpaish-website)
 

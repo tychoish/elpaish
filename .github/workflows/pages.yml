@@ -54,6 +54,7 @@ jobs:
             annotated-completing-read
             modus-themes
             gen
+            logx
           cache: "true"
           cache-dir: elpa-ci
 
@@ -113,5 +114,7 @@ jobs:
             transient
             annotated-completing-read
             modus-themes
+            gen
+            logx
           cache: "true"
           cache-dir: elpa-ci

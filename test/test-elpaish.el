@@ -47,14 +47,18 @@
 (let* ((this-dir (file-name-directory (or load-file-name buffer-file-name (expand-file-name "test/dummy" default-directory))))
        (root-dir (file-name-directory (directory-file-name this-dir)))
        (gen-dir (expand-file-name "../gen.el" root-dir))
+       (logx-dir (expand-file-name "../logx" root-dir))
        (pkg-dir (expand-file-name "../pkg" this-dir)))
   (when (file-directory-p gen-dir)
     (setq load-path (cons (file-name-as-directory gen-dir) load-path)))
+  (when (file-directory-p logx-dir)
+    (setq load-path (cons (file-name-as-directory logx-dir) load-path)))
   (when (file-directory-p pkg-dir)
     (setq load-path (cons (file-name-as-directory pkg-dir) load-path))))
 (require 'ert)
 (require 'compat)
 (require 'gen nil t)
+(require 'logx)
 (require 'elpaish)
 (require 'elpaish-recipes)
 (require 'elpaish-check)
@@ -1487,14 +1491,14 @@ source's last commit time rather than the time of the build."
     (should (elpaish-verify-signing-key--subkey-expired-p past-key))))
 
 (ert-deftest elpaish-test-install-packages-fallback-and-list ()
-  "Test `elpaish-install-bootstrap-packages' fallback and argument parsing."
+  "Test `elpaish-install-packages' fallback and argument parsing."
   (elpaish-test-with-temp-env
-   (let ((elpaish-install-bootstrap-packages-list '(boot-a boot-b))
+   (let ((elpaish-install-packages-list '(boot-a boot-b))
          (installed-log nil))
      (cl-letf (((symbol-function 'package-installed-p) (lambda (_) nil))
                ((symbol-function 'package-install) (lambda (pkg) (push pkg installed-log))))
        ;; Default fallback (synchronous)
-       (elpaish-install-bootstrap-packages :sync t)
+       (elpaish-install-packages :sync t)
        (should (equal installed-log '(boot-b boot-a)))
        (setq installed-log nil)
 
@@ -1807,24 +1811,23 @@ source's last commit time rather than the time of the build."
            (should (eq (package-desc-name (car descs)) 'pkg-one))))))))
 
 (ert-deftest elpaish-test-upgrade-packages-alias-and-execution ()
-  "Test `elpaish-upgrade-packages' alias calls upgrade sequence properly."
+  "Test `elpaish-install-upgrade-packages' calls upgrade sequence properly."
   (elpaish-test-with-temp-env
    (let ((upgraded nil)
          (refresh-called nil))
      (cl-letf (((symbol-function 'package-refresh-contents) (lambda () (setq refresh-called t)))
                ((symbol-function 'package-installed-p) (lambda (_) t))
                ((symbol-function 'package-upgrade) (lambda (p) (push p upgraded))))
-       (elpaish-upgrade-packages 'pkg-a 'pkg-b :sync t)
+       (elpaish-install-upgrade-packages 'pkg-a 'pkg-b :sync t)
        (should refresh-called)
        (should (equal upgraded '(pkg-b pkg-a)))))))
 
 (ert-deftest elpaish-test-add-bootstrap-packages-nested-and-dedup ()
-  "Test `elpaish-install-register-bootstrap-package' flattens arbitrary nesting and dedups."
+  "Test `elpaish-install-register-package' flattens arbitrary nesting and dedups."
   (elpaish-test-with-temp-env
-   (let ((elpaish-install-bootstrap-packages-list '(pkg-a pkg-b)))
-     (elpaish-install-register-bootstrap-package '((pkg-c (pkg-d pkg-a)) "non-symbol" nil (pkg-e (pkg-b pkg-f))))
-     (should (equal elpaish-install-bootstrap-packages-list '(pkg-a pkg-b pkg-c pkg-d pkg-e pkg-f)))
-     (should (equal elpaish-install-bootstrap-packages '(pkg-a pkg-b pkg-c pkg-d pkg-e pkg-f))))))
+   (let ((elpaish-install-packages-list '(pkg-a pkg-b)))
+     (elpaish-install-register-package '((pkg-c (pkg-d pkg-a)) "non-symbol" nil (pkg-e (pkg-b pkg-f))))
+     (should (equal elpaish-install-packages-list '(pkg-a pkg-b pkg-c pkg-d pkg-e pkg-f))))))
 
 (ert-deftest elpaish-test-bootstrap-packages-async-yielding-by-default ()
   "Test `elpaish-install-bootstrap-packages' is async and yielding by default via `gen-run-async'."
@@ -2048,28 +2051,30 @@ source's last commit time rather than the time of the build."
 
 (ert-deftest elpaish-test-report-summary-formatting ()
   "Test `elpaish-install--report-summary' formats named package progress and results."
-  (let ((last-msg nil))
-    (cl-letf (((symbol-function 'message)
-               (lambda (fmt &rest args)
-                 (setq last-msg (apply #'format fmt args)))))
-      ;; Case 1: all up to date
-      (elpaish-install--report-summary
-       '((:status :up-to-date :pkg pkg-1) (:status :up-to-date :pkg pkg-2)) 'upgrade)
-      (should (string-match-p "Bootstrap complete: all 2 package(s) up to date" last-msg))
+  (let* ((last-msg nil)
+         (hook-fn (lambda (ev) (setq last-msg (plist-get ev :msg)))))
+    (add-hook 'logx-event-hook hook-fn)
+    (unwind-protect
+        (progn
+          ;; Case 1: all up to date
+          (elpaish-install--report-summary
+           '((:status :up-to-date :pkg pkg-1) (:status :up-to-date :pkg pkg-2)) 'upgrade)
+          (should (string-match-p "Bootstrap complete: all 2 package(s) up to date" last-msg))
 
-      ;; Case 2: upgraded and installed
-      (elpaish-install--report-summary
-       '((:status :upgraded :pkg trans)
-         (:status :installed :pkg gen)
-         (:status :up-to-date :pkg compat)) 'upgrade)
-      (should (string-match-p "1 upgraded (trans)" last-msg))
-      (should (string-match-p "1 installed (gen)" last-msg))
-      (should (string-match-p "1 up to date" last-msg))
+          ;; Case 2: upgraded and installed
+          (elpaish-install--report-summary
+           '((:status :upgraded :pkg trans)
+             (:status :installed :pkg gen)
+             (:status :up-to-date :pkg compat)) 'upgrade)
+          (should (string-match-p "1 upgraded (trans)" last-msg))
+          (should (string-match-p "1 installed (gen)" last-msg))
+          (should (string-match-p "1 up to date" last-msg))
 
-      ;; Case 3: failed package
-      (elpaish-install--report-summary
-       '((:status :failed :pkg broken :error "not found")) 'upgrade)
-      (should (string-match-p "1 failed (broken)" last-msg)))))
+          ;; Case 3: failed package
+          (elpaish-install--report-summary
+           '((:status :failed :pkg broken :error "not found")) 'upgrade)
+          (should (string-match-p "1 failed (broken)" last-msg)))
+      (remove-hook 'logx-event-hook hook-fn))))
 (ert-deftest elpaish-test-recipe-exclude-files ()
   "Test `:exclude-files' filters matching files in `elpaish--collect-files'."
   (elpaish-test-with-temp-env

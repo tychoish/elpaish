@@ -79,9 +79,10 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'epg)
+(require 'logx)
 (require 'seq)
 (require 'subr-x)
-(require 'epg)
 
 (declare-function pinentry-start "pinentry")
 (defgroup elpaish-signing-keys nil
@@ -117,8 +118,11 @@ signing subkey (see `elpaish-add-signing-subkey')."
 
 (defun elpaish-verify-signing-key--report (label ok detail)
   "Print a PASS/FAIL line for LABEL/OK/DETAIL and return OK unchanged."
-  (message "[%s] %s%s" (if ok "PASS" "FAIL") label
-           (if detail (format " — %s" detail) ""))
+  (let ((msg (format "[%s] %s%s" (if ok "PASS" "FAIL") label
+                     (if detail (format " — %s" detail) ""))))
+    (if ok
+        (logx 'info :msg msg :label label :status "PASS" :detail detail)
+      (logx 'error :msg msg :label label :status "FAIL" :detail detail)))
   ok)
 
 (defun elpaish-verify-signing-key--find-key (key-id)
@@ -291,8 +295,9 @@ an unprotected master."
                   effective-passphrase))
          (fpr (elpaish-generate--extract-created-fpr (cdr result) "P")))
     (if fpr
-        (message "Generated master key %s for %s" fpr identity)
-      (message "Master key generation did not report a fingerprint — check *Messages* / gpg output"))
+        (logx 'info :msg (format "Generated master key %s for %s" fpr identity)
+              :fingerprint fpr :identity identity)
+      (logx 'error :msg "Master key generation did not report a fingerprint — check *Messages* / gpg output"))
     fpr))
 
 ;;;###autoload
@@ -314,9 +319,9 @@ Emacs's minibuffer via `elpaish-generate--ensure-emacs-pinentry'."
          (fpr (elpaish-generate--extract-created-fpr (cdr result) "S")))
     (or fpr
         (progn
-          (message "Master key is passphrase-protected — falling back to interactive prompts.")
+          (logx 'info :msg "Master key is passphrase-protected — falling back to interactive prompts.")
           (elpaish-generate--ensure-emacs-pinentry)
-          (message "You will be asked for the MASTER key's passphrase once, then for the NEW subkey's passphrase — leave that second one EMPTY and confirm.")
+          (logx 'info :msg "You will be asked for the MASTER key's passphrase once, then for the NEW subkey's passphrase — leave that second one EMPTY and confirm.")
           (let* ((output (with-temp-buffer
                             (call-process "gpg" nil t nil "--batch" "--status-fd" "1"
                                           "--quick-add-key" master-fpr "ed25519" "sign"
@@ -324,8 +329,9 @@ Emacs's minibuffer via `elpaish-generate--ensure-emacs-pinentry'."
                             (buffer-string)))
                  (new-fpr (elpaish-generate--extract-created-fpr output "S")))
             (if new-fpr
-                (message "Added signing subkey %s to %s" new-fpr master-fpr)
-              (message "Subkey generation did not report a fingerprint — check *Messages* / gpg output"))
+                (logx 'info :msg (format "Added signing subkey %s to %s" new-fpr master-fpr)
+                      :subkey new-fpr :master master-fpr)
+              (logx 'error :msg "Subkey generation did not report a fingerprint — check *Messages* / gpg output"))
             new-fpr)))))
 
 ;;;###autoload
@@ -347,17 +353,18 @@ minibuffer via `elpaish-generate--ensure-emacs-pinentry'."
   (let* ((effective-new (or new-passphrase ""))
          (result (elpaish-generate--gpg-with-passphrase (list "--passwd" key-id) effective-new)))
     (if (zerop (car result))
-        (message "Passphrase %s for %s"
-                 (if (string-empty-p effective-new) "removed" "set") key-id)
-      (message "Key already has a different passphrase — falling back to interactive prompts.")
+        (logx 'info :msg (format "Passphrase %s for %s"
+                                 (if (string-empty-p effective-new) "removed" "set") key-id)
+              :key-id key-id :action (if (string-empty-p effective-new) "removed" "set"))
+      (logx 'info :msg "Key already has a different passphrase — falling back to interactive prompts.")
       (elpaish-generate--ensure-emacs-pinentry)
-      (message "You will be asked for the CURRENT passphrase, then the NEW one (twice, to confirm) — %s."
-                (if (string-empty-p effective-new)
-                    "leave the new one EMPTY to remove protection"
-                  "enter the new passphrase you just chose"))
+      (logx 'info :msg (format "You will be asked for the CURRENT passphrase, then the NEW one (twice, to confirm) — %s."
+                               (if (string-empty-p effective-new)
+                                   "leave the new one EMPTY to remove protection"
+                                 "enter the new passphrase you just chose")))
       (if (zerop (call-process "gpg" nil nil nil "--batch" "--passwd" key-id))
-          (message "Passphrase updated for %s" key-id)
-        (message "Passphrase change failed — check *Messages* / gpg output")))))
+          (logx 'info :msg (format "Passphrase updated for %s" key-id) :key-id key-id)
+        (logx 'error :msg "Passphrase change failed — check *Messages* / gpg output")))))
 
 ;;;###autoload
 (defun elpaish-copy-revocation-cert (master-fpr &optional output-dir)
@@ -377,9 +384,9 @@ file instead of trying to script the interactive command."
     (if (file-exists-p source-file)
         (progn
           (copy-file source-file dest-file t)
-          (message "Copied revocation cert to %s" dest-file)
+          (logx 'info :msg (format "Copied revocation cert to %s" dest-file) :dest dest-file)
           dest-file)
-      (message "No auto-generated revocation cert found at %s" source-file))))
+      (logx 'warn :msg (format "No auto-generated revocation cert found at %s" source-file) :source source-file))))
 
 ;;;###autoload
 (defun elpaish-export-key-material (master-fpr &optional output-dir)
@@ -408,7 +415,8 @@ public key)."
                   "--export" master-fpr)
     (seq-do (lambda (f) (set-file-modes f #o600))
             (list (expand-file-name "master.key.asc" target-dir) signing-file))
-    (message "Exported key material for %s to %s" master-fpr target-dir)
+    (logx 'info :msg (format "Exported key material for %s to %s" master-fpr target-dir)
+          :fingerprint master-fpr :target-dir target-dir)
     target-dir))
 
 ;;;###autoload
@@ -422,13 +430,14 @@ the auto-generated revocation cert, exports all artifacts to OUTPUT-DIR
 This mints real key material — confirm you mean to run it."
   (interactive "sPrimary key identity (Name <email>): ")
   (if (not (y-or-n-p (format "Generate a new ELPAish master key for %S? " identity)))
-      (message "Aborted.")
+      (logx 'info :msg "Aborted.")
     (when-let* ((master-fpr (elpaish-generate-master-key identity)))
       (when-let* ((subkey-fpr (elpaish-add-signing-subkey master-fpr expiry)))
         (elpaish-copy-revocation-cert master-fpr output-dir)
         (elpaish-export-key-material master-fpr output-dir)
-        (message "Ceremony complete for %s (master %s, subkey %s). Verifying..."
-                 identity master-fpr subkey-fpr)
+        (logx 'info :msg (format "Ceremony complete for %s (master %s, subkey %s). Verifying..."
+                                 identity master-fpr subkey-fpr)
+              :identity identity :master master-fpr :subkey subkey-fpr)
         (elpaish-verify-signing-key master-fpr)))))
 
 (provide 'elpaish-signing-keys)

@@ -46,5 +46,6 @@ jobs:
             annotated-completing-read
             modus-themes
             gen
+            logx
           cache: "true"
           cache-key: "20261016"

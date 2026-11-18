@@ -16,6 +16,7 @@
 (require 'cl-lib)
 (require 'compile)
 (require 'ert)
+(require 'logx)
 (require 'seq)
 (require 'subr-x)
 
@@ -123,7 +124,7 @@ DIR is the target directory, defaulting to `default-directory'."
 
 (defun elpaish-check--log (verbose format-string &rest args)
   "Log formatted message using FORMAT-STRING and ARGS.
-Writes to check buffer if active, and to `message' if VERBOSE."
+Writes to check buffer if active, and to `logx' if VERBOSE."
   (let ((msg (apply #'format format-string args))
         (buf-name (elpaish-check--get-buffer-name)))
     (when-let* ((buf (get-buffer buf-name)))
@@ -134,7 +135,7 @@ Writes to check buffer if active, and to `message' if VERBOSE."
           (dolist (win (get-buffer-window-list buf nil t))
             (set-window-point win (point-max))))))
     (when verbose
-      (message "%s" msg))))
+      (logx 'info :msg msg))))
 
 (defun elpaish-check--find-package-files (dir)
   "Find main package .el files in DIR."
@@ -488,11 +489,13 @@ Pipes all output into `function:elpaish-check-buffer-name' compilation buffer."
              (errs (plist-get res :errors))
              (warns (plist-get res :warnings)))
         (if passed
-            (message "Preflight check PASSED for %s (%d warnings)" pkg (length warns))
-          (message "Preflight check FAILED for %s (%d errors):\n%s"
-                   pkg
-                   (length errs)
-                   (mapconcat (lambda (e) (format "  * %s" e)) errs "\n")))
+            (logx 'info :msg (format "Preflight check PASSED for %s (%d warnings)" pkg (length warns))
+                  :package pkg :warnings (length warns))
+          (logx 'error :msg (format "Preflight check FAILED for %s (%d errors):\n%s"
+                                   pkg
+                                   (length errs)
+                                   (mapconcat (lambda (e) (format "  * %s" e)) errs "\n"))
+                :package pkg :errors (length errs)))
         passed))))
 
 ;;; Project Builder Integration
@@ -547,7 +550,7 @@ Only applies when the current buffer or DIR belongs to a project with .el files.
   (interactive)
   (add-hook 'emacs-lisp-mode-hook #'elpaish-check-setup-compile-command)
   (add-hook 'find-file-hook #'elpaish-check-maybe-setup-builder)
-  (message "ELPAish builder command enabled for Emacs Lisp files."))
+  (logx 'info :msg "ELPAish builder command enabled for Emacs Lisp files."))
 
 
 ;;;###autoload

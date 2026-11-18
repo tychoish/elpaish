@@ -13,6 +13,7 @@
 
 (require 'cl-lib)
 (require 'elpaish)
+(require 'logx)
 
 (defcustom elpaish-recipe-local-search-dirs '("~/src/")
   "Local checkout root directories searched by `elpaish-recipe-path'.
@@ -127,11 +128,12 @@ Returns the number of registered recipes."
           (dolist (f resolved)
             (load f nil t))
           (let ((count (hash-table-count elpaish-registry)))
-            (message "Loaded %d ELPAish package definition(s) from %s"
-                     count (mapconcat #'identity resolved ", "))
+            (logx 'info :msg (format "Loaded %d ELPAish package definition(s) from %s"
+                                     count (mapconcat #'identity resolved ", "))
+                  :count count :files resolved)
             count))
-      (message "No package definitions file found matching %s"
-               (or files (and (boundp 'elpaish-packages-files) elpaish-packages-files) elpaish-packages-file))
+      (logx 'warn :msg (format "No package definitions file found matching %s"
+                               (or files (and (boundp 'elpaish-packages-files) elpaish-packages-files) elpaish-packages-file)))
       (hash-table-count elpaish-registry))))
 
 
@@ -181,8 +183,9 @@ enumerating every file here."
           :source-dir source-dir-rel
           :files (or files '("*.el")))))
      candidates)
-    (message "Discovered and registered %d monorepo package(s) under %s."
-             (length candidates) expanded-root)
+    (logx 'info :msg (format "Discovered and registered %d monorepo package(s) under %s."
+                             (length candidates) expanded-root)
+          :count (length candidates) :root expanded-root)
     candidates))
 
 (provide 'elpaish-recipes)
