@@ -32,6 +32,7 @@ jobs:
           ELPAISH_SIGNING_KEY: "__testing_value"
           ELPAISH_GPG_PASSPHRASE: ""
         with:
+          elpaish: "true"
           load-paths: |
             pkg
             scripts
