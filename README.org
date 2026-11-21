@@ -28,6 +28,7 @@ dispatch commands via ~elpaish-menu~.
 - [[#configuration][Configuration]]
   - [[#key-options--customization][Key Options & Customization]]
 - [[#core-workflows][Core Workflows]]
+- [[#mcp-tools][MCP Tools]]
 - [[#example-configurations][Example Configurations]]
   - [[#developer-machine-with-local-checkouts][Developer Machine with Local Checkouts]]
   - [[#github-actions-workflow][GitHub Actions Workflow]]
@@ -165,6 +166,32 @@ Below is a complete ~use-package~ configuration setting standard options, defaul
    =package-lint=, byte compilation, ERT) using [[file:docs/api.org::#elpaish-run-checks][~elpaish-run-checks~]], track
    commit deltas via [[file:docs/api.org::#elpaish-status][~elpaish-status~]], and automatically derive release versions
    across snapshot, stable, and staging streams.
+4. *Driving ELPAish from Agents*: Query deltas, rebuild, and upgrade installed
+   packages through the =elpaish= MCP service (see [[#mcp-tools][MCP Tools]]).
+
+* MCP Tools
+:PROPERTIES:
+:CUSTOM_ID: mcp-tools
+:END:
+
+=pkg/elpaish-mcp.el= registers the =elpaish= service when =mcpkit= is
+installed; start it with =mcpkit-start-service= or =elpaish-mcp-start=.  The
+tools return structured results from the functions in =pkg/elpaish-ops.el=
+(=elpaish-ops-status=, =elpaish-ops-rebuild=, =elpaish-ops-upgrade=,
+=elpaish-ops-workflow-run=, =elpaish-ops-recipe-snippet=):
+
+| Tool | Purpose |
+|------+---------|
+| =elpaish_status= | Commits each recipe's git HEAD is ahead of its last build. Local only: it reads HEAD from the repository files, counts commits with concurrent =git rev-list= calls, and never clones or fetches (a recipe without a checkout is reported as uncloned). =behind_only= lists just the packages needing a rebuild. |
+| =elpaish_rebuild= | Rebuild one package, only the packages behind HEAD, or everything, for a release stream. |
+| =elpaish_upgrade= | Upgrade installed packages: named ones, or everything with a newer archive version. Archives refresh at most once and up-to-date packages are never touched; =async= hands the work to a background pool. |
+| =elpaish_workflow_dispatch= | Dispatch the repository's GitHub workflow (=pages.yml= by default) with magit-dash or the =gh= CLI. |
+| =elpaish_recipe= | Format the =elpaish-register-package= form for a package. |
+
+Building, linting and testing a package checkout are =builder= tools
+(=elisp_preflight=, =builder_run_tests=, =builder_package_build=), not part of
+this service.  Run =elpaish-ops-after-upgrade-hook= functions (for example a
+package quickstart refresh) after packages change.
 
 * Example Configurations
 :PROPERTIES:

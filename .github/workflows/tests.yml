@@ -37,7 +37,7 @@ jobs:
             pkg
             scripts
             test
-          test-files: "test/test-elpaish.el"
+          test-files: "test/test-elpaish.el test/test-elpaish-ops.el"
           dependencies: |
             compat
             package-build
@@ -48,5 +48,6 @@ jobs:
             modus-themes
             gen
             logx
+            mcpkit
           cache: "true"
           cache-key: "20261118"

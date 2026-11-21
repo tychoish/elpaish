@@ -4,7 +4,7 @@
 ;; Version: 0.1.0
 ;; URL: https://github.com/tychoish/elpaish
 ;; Keywords: maint, tools, local, package, elpa
-;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (compat "30.0.0.0") (gen "0.1.0") (htmlize "1.34") (logx "0.2.0") (map "3.0") (modus-themes "4.0.0") (package-build "0.1") (seq "2.0") (web-server "0.1.2") (transient "0.3.0"))
+;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (compat "30.0.0.0") (gen "0.1.0") (htmlize "1.34") (logx "0.2.0") (mcpkit "0.1.0") (map "3.0") (modus-themes "4.0.0") (package-build "0.1") (seq "2.0") (web-server "0.1.2") (transient "0.3.0"))
 
 ;;; Commentary:
 ;; ELPAish is a toolkit for building (and a prototype application of) an
@@ -2185,29 +2185,21 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
 (defun elpaish-status-refresh ()
   "Refresh the package registry status table."
   (interactive)
+  (require 'elpaish-ops)
   (setq tabulated-list-entries
-        (thread-last (hash-table-values elpaish-registry)
-          (seq-map (lambda (recipe)
-                     (let* ((name (elpaish-recipe-name recipe))
-                            (repo-dir (elpaish--resolve-repo-path recipe))
-                            (exists (file-exists-p repo-dir))
-                            (curr-hash (if exists (substring (elpaish--current-hash repo-dir) 0 7) "N/A"))
-                            (delta (if exists
-                                       (elpaish--commit-delta repo-dir (elpaish-recipe-built-hash recipe)
-                                                               (elpaish--recipe-source-dir-relative recipe))
-                                     "Uncloned"))
-                            (snap-ver (or (elpaish-recipe-built-version-snapshot recipe)
-                                          "—"))
-                            (stab-ver (or (elpaish-recipe-built-version-stable recipe) "—"))
-                            (stage-ver (or (elpaish-recipe-built-version-staging recipe) "—")))
-                       (list name
-                             (vector name
-                                     (elpaish-recipe-repository-path recipe)
-                                     snap-ver
-                                     stab-ver
-                                     stage-ver
-                                     curr-hash
-                                     (format "+%s" delta))))))))
+        (mapcar
+         (lambda (entry)
+           (pcase-let* ((`(,recipe ,_repo ,hash ,delta) entry)
+                        (name (elpaish-recipe-name recipe)))
+             (list name
+                   (vector name
+                           (elpaish-recipe-repository-path recipe)
+                           (or (elpaish-recipe-built-version-snapshot recipe) "—")
+                           (or (elpaish-recipe-built-version-stable recipe) "—")
+                           (or (elpaish-recipe-built-version-staging recipe) "—")
+                           (if hash (substring hash 0 (min 7 (length hash))) "N/A")
+                           (format "+%s" delta)))))
+         (elpaish-ops-status-entries #'elpaish--resolve-repo-path)))
   (tabulated-list-print t))
 ;;;###autoload
 (defun elpaish-status-build-at-point ()
@@ -2280,6 +2272,7 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
     (display-buffer buf)))
 
 (declare-function elpaish-load-packages "elpaish-recipes" (&optional files))
+(declare-function elpaish-ops-status-entries "elpaish-ops" (&optional resolver))
 (declare-function elpaish-install-repository-package "elpaish-install" (&optional package &key stream callback))
 
 ;;;###autoload (autoload 'elpaish-menu "elpaish" nil t)
