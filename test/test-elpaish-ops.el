@@ -1,4 +1,4 @@
-;;; test-elpaish-ops.el --- Tests for elpaish-ops and elpaish-mcp -*- lexical-binding: t; no-byte-compile: t; -*-
+;;; test-elpaish-ops.el --- Tests for elpaish-ops -*- lexical-binding: t; no-byte-compile: t; -*-
 
 ;;; Commentary:
 
@@ -350,56 +350,6 @@ packed refs and linked worktrees."
                             (elpaish-ops-recipe-snippet "demo" :url "https://elsewhere.example/demo")))
     (should (string-match-p "github.com/me/demo"
                             (elpaish-ops-recipe-snippet "demo" :owner "me")))))
-
-;;;; MCP tools
-
-(declare-function mcpkit-get-service "mcpkit")
-(declare-function mcpkit-service-tools "mcpkit")
-(declare-function mcpkit-tool-handler "mcpkit")
-
-(defun elpaish-ops-test--call (tool args)
-  "Call MCP TOOL on the `elpaish' service with ARGS and return its result."
-  (let* ((service (mcpkit-get-service 'elpaish))
-         (handler (mcpkit-tool-handler (map-elt (mcpkit-service-tools service) (symbol-name tool))))
-         result)
-    (funcall handler args (lambda (err res) (if err (error "%s" err) (setq result res))))
-    result))
-
-(ert-deftest elpaish-ops-test-mcp-tools-registered ()
-  "The elpaish service exposes exactly the ELPAish-specific tools."
-  (skip-unless (require 'elpaish-mcp nil t))
-  (let ((names (sort (map-keys (mcpkit-service-tools (mcpkit-get-service 'elpaish))) #'string<)))
-    (should (equal names '("elpaish_rebuild" "elpaish_recipe" "elpaish_status"
-                           "elpaish_upgrade" "elpaish_workflow_dispatch")))))
-
-(ert-deftest elpaish-ops-test-mcp-status-and-recipe ()
-  "`elpaish_status' and `elpaish_recipe' return structured results."
-  (skip-unless (require 'elpaish-mcp nil t))
-  (elpaish-ops-test--with-registry tmp
-    (let ((a (elpaish-ops-test--repo tmp "a")))
-      (elpaish-ops-test--register 'a a)
-      (let ((res (elpaish-ops-test--call 'elpaish_status '(:behind_only t))))
-        (should (= (plist-get res :behind_count) 1))
-        (should (= (length (plist-get res :packages)) 1)))
-      (let ((res (elpaish-ops-test--call 'elpaish_status (list :packages ["zzz"]))))
-        (should (= (plist-get res :total_packages) 0)))
-      (should (string-match-p "elpaish-register-package"
-                              (plist-get (elpaish-ops-test--call 'elpaish_recipe '(:package "demo"))
-                                         :snippet)))
-      (should-error (elpaish-ops-test--call 'elpaish_recipe nil)))))
-
-(ert-deftest elpaish-ops-test-mcp-upgrade-defaults-to-all ()
-  "`elpaish_upgrade' without packages upgrades everything upgradable."
-  (skip-unless (require 'elpaish-mcp nil t))
-  (let (seen)
-    (cl-letf (((symbol-function 'elpaish-ops-upgrade)
-               (lambda (&rest args) (setq seen args) (list :status "ok"))))
-      (elpaish-ops-test--call 'elpaish_upgrade nil)
-      (should (eq (plist-get seen :all) t))
-      (elpaish-ops-test--call 'elpaish_upgrade '(:packages ["a"] :reinstall t))
-      (should (equal (plist-get seen :packages) '("a")))
-      (should-not (plist-get seen :all))
-      (should (eq (plist-get seen :reinstall) t)))))
 
 (provide 'test-elpaish-ops)
 ;;; test-elpaish-ops.el ends here

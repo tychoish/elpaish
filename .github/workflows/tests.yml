@@ -48,6 +48,5 @@ jobs:
             modus-themes
             gen
             logx
-            mcpkit
           cache: "true"
           cache-key: "20261118"

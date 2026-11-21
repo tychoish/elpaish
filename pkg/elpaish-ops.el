@@ -10,7 +10,7 @@
 ;; Programmatic, structured operations over the ELPAish registry and the
 ;; locally installed packages.  Each returns a plist whose collections are
 ;; vectors, so results serialize directly with `json-serialize'; they back
-;; the MCP tools in `elpaish-mcp'.
+;; the MCP tools, which `builder' hosts in `builder-elpaish'.
 ;;
 ;; - `elpaish-ops-status': per-recipe commit delta against the last build.
 ;; - `elpaish-ops-rebuild': rebuild one package, all of them, or only those

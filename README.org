@@ -174,8 +174,9 @@ Below is a complete ~use-package~ configuration setting standard options, defaul
 :CUSTOM_ID: mcp-tools
 :END:
 
-=pkg/elpaish-mcp.el= registers the =elpaish= service when =mcpkit= is
-installed; start it with =mcpkit-start-service= or =elpaish-mcp-start=.  The
+The =builder= package hosts the =elpaish= MCP service (=builder-elpaish.el=),
+registered when ELPAish is installed; start it with =mcpkit-start-service= or
+=builder-elpaish-start=.  ELPAish itself does not depend on =mcpkit=.  The
 tools return structured results from the functions in =pkg/elpaish-ops.el=
 (=elpaish-ops-status=, =elpaish-ops-rebuild=, =elpaish-ops-upgrade=,
 =elpaish-ops-workflow-run=, =elpaish-ops-recipe-snippet=):
