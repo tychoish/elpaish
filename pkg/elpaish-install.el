@@ -1216,6 +1216,9 @@ Inspects `package-alist' and `package-user-dir' using VERSION-STR if given."
      entries)
     (append (nreverse up-to-date) (nreverse work-items))))
 
+(defvar-local elpaish-install--progress-last-active nil
+  "Most recently displayed active stage or package.")
+
 (defvar-local elpaish-install--progress-context nil
   "Context plist for restarting or continuing the current progress operation.")
 
@@ -1300,6 +1303,7 @@ Preserves underlying string text so ERT string matching remains intact."
     (define-key map (kbd "d") #'elpaish-install-progress-set-delay)
     (define-key map (kbd "i") #'elpaish-install-progress-toggle-confirm)
     (define-key map (kbd "C") #'elpaish-install-progress-toggle-confirm)
+    (define-key map (kbd "C-g") #'elpaish-install-progress-soft-quit)
     (define-key map (kbd "q") #'elpaish-install-progress-quit)
     (define-key map (kbd "x") #'elpaish-install-progress-cancel)
     (define-key map (kbd "k") #'elpaish-install-progress-cancel)
@@ -1310,7 +1314,13 @@ Preserves underlying string text so ERT string matching remains intact."
 
 (define-derived-mode elpaish-install-progress-mode special-mode "ELPAish-Progress"
   "Major mode for ELPAish package installation and upgrade progress."
-  (setq-local revert-buffer-function (lambda (_ignore-auto _noconfirm) (elpaish-install-progress-restart))))
+  (setq-local revert-buffer-function (lambda (_ignore-auto _noconfirm) (elpaish-install-progress-restart)))
+  (visual-line-mode 1))
+
+(defun elpaish-install-progress-soft-quit ()
+  "Dismiss transient input without canceling the package operation."
+  (interactive)
+  (message "Operation continues; use x to cancel."))
 
 (defun elpaish-install--progress-query-kill ()
   "Buffer query function to prevent accidental exit during active upgrade."
@@ -1481,14 +1491,16 @@ and options plist."
     (with-current-buffer buffer
       (let* ((inhibit-read-only t)
              (active-pos nil)
+             (win (get-buffer-window buffer t))
+             (old-point (and win (window-point win)))
+             (active-key (or (plist-get elpaish-install--progress-context :active-archive)
+                             active-pkg
+                             (and (string= refresh-state "[...]") 'refresh)
+                             (and (string= quickstart-state "[...]") 'quickstart)))
              (op-title (pcase action
                          ('install "installation")
                          ('repo-install "repository installation")
                          (_ "upgrade")))
-             (short-title (pcase action
-                            ('install "Install")
-                            ('repo-install "Repo-Install")
-                            (_ "Upgrade")))
              (status-lbl (or global-state "Working"))
              (ctx elpaish-install--progress-context)
              (total-count (length entries))
@@ -1516,19 +1528,10 @@ and options plist."
              (cur-confirm (if (plist-member stats :confirm)
                               (plist-get stats :confirm)
                             (plist-get ctx :confirm))))
-        (setq-local
-         header-line-format
-         (format " ELPAish %s [%s] | Work: %d/%d (Up-to-date: %d) | Time: %s wall (%s actual, %s wait) | Delay: %ss | Confirm: %s"
-                 short-title
-                 status-lbl
-                 work-done work-total utd-count
-                 (elpaish-install--format-duration wall-time)
-                 (elpaish-install--format-duration actual-time)
-                 (elpaish-install--format-duration wait-time)
-                 cur-delay
-                 (if cur-confirm "on" "off")))
+        (setq-local header-line-format nil)
         (erase-buffer)
-        (insert (format "ELPAish package %s [%s]\n" op-title status-lbl))
+        (insert (propertize (format "ELPAish package %s [%s]\n" op-title status-lbl)
+                            'face '(:inherit header-line :weight bold)))
         (insert (format "Duration: %s wall (%s actual, %s waiting)\n"
                         (elpaish-install--format-duration wall-time)
                         (elpaish-install--format-duration actual-time)
@@ -1536,16 +1539,22 @@ and options plist."
         (insert (format "Packages: %d total (%d up to date, %d work item%s: %d done, %d pending)\n"
                         total-count utd-count work-total (if (= work-total 1) "" "s")
                         work-done (max 0 (- work-total work-done))))
-        (insert (format "Controls: delay %ss | confirm %s  ([p/SPC] pause/resume, [c] continue, [+/-/d] delay, [i] confirm, [g] restart, [x] cancel, [?] menu)\n\n"
-                        cur-delay (if cur-confirm "on" "off")))
+        (insert (propertize (format "Controls: delay %ss | confirm %s  ([p/SPC] pause/resume, [c] continue, [+/-/d] delay, [i] confirm, [g] restart, [x] cancel, [?] menu)\n\n"
+                                    cur-delay (if cur-confirm "on" "off"))
+                            'face 'shadow))
         (let ((arch-summary (elpaish-install--archives-summary)))
           (when (not (string-empty-p arch-summary))
             (insert arch-summary "\n")))
+        (when-let* ((archive (plist-get ctx :active-archive)))
+          (let ((beg (point)))
+            (insert (format "  Downloading archive: %s\n" archive))
+            (setq active-pos beg)
+            (add-face-text-property beg (point) 'highlight)))
         (let ((r-beg (point)))
           (insert (format "%s Refresh package archives\n"
                           (elpaish-install--icon-string refresh-state)))
           (when (string= refresh-state "[...]")
-            (setq active-pos r-beg)
+            (unless active-pos (setq active-pos r-beg))
             (put-text-property r-beg (point) 'face 'highlight)))
         (seq-do
          (lambda (entry)
@@ -1599,9 +1608,14 @@ and options plist."
             (setq active-pos q-beg)
             (put-text-property q-beg (point) 'face 'highlight)))
         ;; Auto-scroll window to follow current activity
-        (when-let* ((win (get-buffer-window buffer t)))
-          (when active-pos
-            (set-window-point win active-pos)))))
+        (when win
+          (if (and active-pos (not (equal active-key elpaish-install--progress-last-active)))
+              (progn
+                (set-window-point win active-pos)
+                (unless (pos-visible-in-window-p active-pos win)
+                  (set-window-start win active-pos)))
+            (when old-point (set-window-point win (min old-point (point-max))))))
+        (setq elpaish-install--progress-last-active active-key)))
     (redisplay)))
 
 (cl-defun elpaish-install--upgrade-run (pkgs refresh sync delay callback &optional action &key stream confirm paused)
@@ -1631,28 +1645,32 @@ PAUSED starts the operation in paused state when non-nil."
          (stage 'refresh)
          (results nil)
          (timer nil)
+         (heartbeat nil)
          (step nil)
          (start-time (float-time))
          (end-time nil)
          (actual-time 0.0)
+         (work-start nil)
          (confirm-wait-time 0.0)
          (captured-archives (copy-alist package-archives))
          (captured-priorities (and (boundp 'package-archive-priorities)
                                    (copy-alist package-archive-priorities)))
          (compute-stats
           (lambda ()
-            (let* ((wall (max 0.0 (- (or end-time (float-time)) start-time)))
-                   (wait (max confirm-wait-time (- wall actual-time))))
+            (let* ((now (or end-time (float-time)))
+                   (wall (max 0.0 (- now start-time)))
+                   (live-actual (+ actual-time (if work-start (- now work-start) 0.0)))
+                   (wait (max confirm-wait-time (- wall live-actual))))
               (when (buffer-live-p buffer)
                 (with-current-buffer buffer
                   (setf (plist-get elpaish-install--progress-context :wall-time) wall)
-                  (setf (plist-get elpaish-install--progress-context :actual-time) actual-time)
+                  (setf (plist-get elpaish-install--progress-context :actual-time) live-actual)
                   (setf (plist-get elpaish-install--progress-context :wait-time) wait)
                   (setf (plist-get elpaish-install--progress-context :delay) cur-delay)
                   (setf (plist-get elpaish-install--progress-context :confirm) cur-confirm)
                   (setf (plist-get elpaish-install--progress-context :paused) cur-paused)))
               (list :wall-time wall
-                    :actual-time actual-time
+                    :actual-time live-actual
                     :wait-time wait
                     :delay cur-delay
                     :confirm cur-confirm
@@ -1672,6 +1690,13 @@ PAUSED starts the operation in paused state when non-nil."
       (add-hook 'kill-buffer-query-functions #'elpaish-install--progress-query-kill nil t))
     (funcall render)
     (display-buffer buffer)
+    (setq heartbeat
+          (run-at-time 1 1 (lambda ()
+                             (if (and (buffer-live-p buffer)
+                                      (buffer-local-value 'elpaish-install--progress-context buffer)
+                                      (plist-get (buffer-local-value 'elpaish-install--progress-context buffer) :running))
+                                 (funcall render)
+                               (when (timerp heartbeat) (cancel-timer heartbeat))))))
     (setq step
           (lambda ()
             (let ((package-archives captured-archives)
@@ -1683,11 +1708,28 @@ PAUSED starts the operation in paused state when non-nil."
                      (setq refresh-state (if refresh "[...]" "[-]"))
                      (funcall render)
                      (let ((t0 (float-time)))
+                       (setq work-start t0)
                        (unless (or (eq act 'repo-install)
                                    (bound-and-true-p package-archive-contents))
                          (package-initialize))
                        (when refresh
-                         (package-refresh-contents))
+                         (let ((advice
+                                (lambda (original archive file &rest args)
+                                  (when (equal file "archive-contents")
+                                    (with-current-buffer buffer
+                                      (setf (plist-get elpaish-install--progress-context
+                                                       :active-archive) (car archive)))
+                                    (funcall render))
+                                  (unwind-protect
+                                      (apply original archive file args)
+                                    (with-current-buffer buffer
+                                      (setf (plist-get elpaish-install--progress-context
+                                                       :active-archive) nil))
+                                    (funcall render)))))
+                           (advice-add 'package--download-one-archive :around advice)
+                           (unwind-protect (let ((inhibit-quit t) (quit-flag nil))
+                                             (package-refresh-contents))
+                             (advice-remove 'package--download-one-archive advice))))
                        ;; First iterate over packages, strike through up-to-date ones,
                        ;; and move everything needing upgrade to the end of the list.
                        (seq-do
@@ -1714,7 +1756,8 @@ PAUSED starts the operation in paused state when non-nil."
                              (thread-last entries
                                (seq-filter (lambda (e) (plist-get (nth 4 e) :work-item)))
                                (seq-map #'car)))
-                       (setq actual-time (+ actual-time (- (float-time) t0))))
+                       (setq actual-time (+ actual-time (- (float-time) t0)))
+                       (setq work-start nil))
                      (setq refresh-state (if refresh "[x]" "[-]"))
                      (setq stage 'packages)
                      (setq global-state (if cur-delay "Yielding" "Working")))
@@ -1749,9 +1792,11 @@ PAUSED starts the operation in paused state when non-nil."
                                (setf (nth 1 entry) "[...]")
                                (funcall render pkg)
                                (let* ((t0 (float-time))
-                                      (raw-res (if (eq act 'repo-install)
+                                      (_start (setq work-start t0))
+                                      (raw-res (let ((inhibit-quit t) (quit-flag nil))
+                                                 (if (eq act 'repo-install)
                                                    (elpaish-install--process-repository-package pkg stream)
-                                                 (elpaish-install--process-package pkg act nil)))
+                                                 (elpaish-install--process-package pkg act nil))))
                                       (pkg-dur (- (float-time) t0))
                                       (meta (nth 4 entry))
                                       (status (plist-get raw-res :status))
@@ -1763,7 +1808,8 @@ PAUSED starts the operation in paused state when non-nil."
                                                          :prev-version (plist-get meta :prev-version)
                                                          :prev-generated (plist-get meta :prev-generated)
                                                          :prev-local-update (plist-get meta :prev-local-update)))))
-                                 (setq actual-time (+ actual-time pkg-dur))
+                                 (setq actual-time (+ actual-time pkg-dur)
+                                       work-start nil)
                                  (push res results)
                                  (setf (plist-get meta :duration) pkg-dur)
                                  (when utd-status
@@ -1799,6 +1845,7 @@ PAUSED starts the operation in paused state when non-nil."
                          (elpaish-install-flush-package-quickstart t))
                        (setq actual-time (+ actual-time (- (float-time) t0)))
                        (setq end-time (float-time))
+                       (when (timerp heartbeat) (cancel-timer heartbeat))
                        (setq quickstart-state (if (and changed quickstart-enabled) "[x]" "[-]"))
                        (setq results final-results)
                        (setq stage 'done)
@@ -1811,7 +1858,11 @@ PAUSED starts the operation in paused state when non-nil."
                          (elpaish-install--report-summary results act final-stats)
                          (run-hook-with-args 'elpaish-install-bootstrap-finished-functions results act)
                          (when callback (funcall callback results))))))
+                (quit
+                 (setq cur-paused t global-state "Paused" work-start nil)
+                 (message "Operation paused; press c to continue."))
                 (error
+                 (when (timerp heartbeat) (cancel-timer heartbeat))
                  (setq end-time (float-time))
                  (pcase stage
                    ('refresh (setq refresh-state (format "[!] %s" (error-message-string err))))
@@ -1870,6 +1921,7 @@ PAUSED starts the operation in paused state when non-nil."
         (setq timer (run-at-time 0 nil step)))
       (let ((cancel (lambda (&optional _)
                       (when (timerp timer) (cancel-timer timer))
+                      (when (timerp heartbeat) (cancel-timer heartbeat))
                       (setq end-time (float-time))
                       (setq remaining nil)
                       (setq stage 'done)

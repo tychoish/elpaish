@@ -3238,3 +3238,30 @@ source's last commit time rather than the time of the build."
 
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here
+
+(ert-deftest elpaish-test-progress-archive-and-new-version ()
+  "Show the active archive and link the newly installed version."
+  (elpaish-test-with-temp-env
+   (let ((package-user-dir (expand-file-name "elpa" temp-dir))
+         (package-archive-contents '((dummy)))
+         (package-archives '(("example" . "https://example.invalid/")))
+         (seen nil))
+     (make-directory (expand-file-name "good-3.0" package-user-dir) t)
+     (cl-letf (((symbol-function 'display-buffer) #'ignore)
+               ((symbol-function 'package-refresh-contents)
+                (lambda (&optional _)
+                  (package--download-one-archive (car package-archives) "archive-contents")))
+               ((symbol-function 'package--download-one-archive)
+                (lambda (&rest _)
+                  (with-current-buffer "*ELPAish Upgrade Progress*"
+                    (setq seen (string-match-p "Downloading archive: example" (buffer-string))))))
+               ((symbol-function 'elpaish-install--process-package)
+                (lambda (&rest _) '(:pkg good :status :upgraded :to "3.0"))))
+       (elpaish-install--upgrade-run '(good) t t 0 nil 'upgrade)
+       (should seen)
+       (with-current-buffer "*ELPAish Upgrade Progress*"
+         (goto-char (point-min))
+         (should (search-forward "good: 3.0" nil t))
+         (should (button-at (1- (point))))
+         (should (eq (lookup-key elpaish-install-progress-mode-map (kbd "C-g"))
+                     'elpaish-install-progress-soft-quit)))))))
