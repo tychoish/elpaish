@@ -422,5 +422,15 @@
  :url "https://github.com/tychoish/logx"
  :keywords '("tools" "convenience" "logging"))
 
+(elpaish-register-package
+ 'mailx
+ (elpaish-recipe-path "https://github.com/tychoish/mailx.git")
+ :branch "main"
+ :test-dir "test"
+ :requires '(hitl mcpkit annotated-completing-read)
+ :summary "Declarative mail routing, classification, attention views, and bulk triage"
+ :url "https://github.com/tychoish/mailx"
+ :keywords '("mail" "convenience" "tools"))
+
 (provide 'packages)
 ;;; packages.el ends here
