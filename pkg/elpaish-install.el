@@ -1314,6 +1314,7 @@ Preserves underlying string text so ERT string matching remains intact."
 
 (define-derived-mode elpaish-install-progress-mode special-mode "ELPAish-Progress"
   "Major mode for ELPAish package installation and upgrade progress."
+  (setq buffer-undo-list t)
   (setq-local revert-buffer-function (lambda (_ignore-auto _noconfirm) (elpaish-install-progress-restart)))
   (visual-line-mode 1))
 
@@ -1690,13 +1691,6 @@ PAUSED starts the operation in paused state when non-nil."
       (add-hook 'kill-buffer-query-functions #'elpaish-install--progress-query-kill nil t))
     (funcall render)
     (display-buffer buffer)
-    (setq heartbeat
-          (run-at-time 1 1 (lambda ()
-                             (if (and (buffer-live-p buffer)
-                                      (buffer-local-value 'elpaish-install--progress-context buffer)
-                                      (plist-get (buffer-local-value 'elpaish-install--progress-context buffer) :running))
-                                 (funcall render)
-                               (when (timerp heartbeat) (cancel-timer heartbeat))))))
     (setq step
           (lambda ()
             (let ((package-archives captured-archives)
@@ -1919,6 +1913,14 @@ PAUSED starts the operation in paused state when non-nil."
           results)
       (unless cur-paused
         (setq timer (run-at-time 0 nil step)))
+      (unless (or sync noninteractive)
+        (setq heartbeat
+              (run-at-time 1 1 (lambda ()
+                                 (if (and (buffer-live-p buffer)
+                                          (buffer-local-value 'elpaish-install--progress-context buffer)
+                                          (plist-get (buffer-local-value 'elpaish-install--progress-context buffer) :running))
+                                     (funcall render)
+                                   (when (timerp heartbeat) (cancel-timer heartbeat)))))))
       (let ((cancel (lambda (&optional _)
                       (when (timerp timer) (cancel-timer timer))
                       (when (timerp heartbeat) (cancel-timer heartbeat))
