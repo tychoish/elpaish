@@ -17,6 +17,17 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'map)
+
+(declare-function sprite-fleet-mapcar "sprite-fleet" (fn-or-form items &rest args))
+(declare-function sprite-future-then "sprite-future" (future on-resolve &optional on-reject))
+(declare-function sprite-future--make "sprite-future" (&rest args))
+(declare-function sprite-future--settle "sprite-future" (future state value &optional before-callbacks))
+(declare-function elpaish-recipe-p "elpaish" (object))
+(declare-function elpaish-recipe-name "elpaish" (recipe))
+(declare-function elpaish-build-package "elpaish" (recipe &optional stream output-directory-path))
+(declare-function elpaish-preflight-package "elpaish" (recipe))
+(declare-function elpaish-install--resolve-repository-recipe "elpaish-install" (pkg))
 
 (defgroup elpaish-async nil
   "Concurrency and parallel execution options for ELPAish."
@@ -70,6 +81,137 @@ to preserve uniform error collection semantics."
                   (funcall fn item)
                 (error (list :error err :target 'local))))
             items))))
+
+(defun elpaish-async--build-package-form (recipe-spec stream staging-dir load-path-dirs elpaish-dir)
+  "Construct Lisp form to preflight and build RECIPE-SPEC in a sprite."
+  `(progn
+     (dolist (p ',load-path-dirs)
+       (add-to-list 'load-path p))
+     (when ,elpaish-dir
+       (add-to-list 'load-path ,elpaish-dir))
+     (require 'map)
+     (require 'elpaish)
+     (require 'elpaish-recipes)
+     (require 'elpaish-check nil t)
+     (let* ((recipe-or-name ',recipe-spec)
+            (effective-stream ',stream)
+            (output-dir ,staging-dir)
+            (elpaish-sign-packages nil))
+       (unless (and (boundp 'elpaish-registry)
+                    (hash-table-p elpaish-registry)
+                    (> (hash-table-count elpaish-registry) 0))
+         (elpaish-load-packages))
+       (let* ((rec (cond
+                    ((elpaish-recipe-p recipe-or-name) recipe-or-name)
+                    ((fboundp 'elpaish-install--resolve-repository-recipe)
+                     (elpaish-install--resolve-repository-recipe recipe-or-name))
+                    ((and (boundp 'elpaish-registry) (hash-table-p elpaish-registry))
+                     (or (map-elt elpaish-registry (format "%s" recipe-or-name))
+                         (map-elt elpaish-registry (if (symbolp recipe-or-name)
+                                                       recipe-or-name
+                                                     (intern recipe-or-name)))))))
+              (pkg-name (if rec (elpaish-recipe-name rec) (format "%s" recipe-or-name))))
+         (if (null rec)
+             (list :status :failed
+                   :pkg (if (symbolp recipe-or-name) recipe-or-name (intern (format "%s" recipe-or-name)))
+                   :stage :recipe-resolution
+                   :error (format "No recipe found in repository for %s" pkg-name)
+                   :log (format "Recipe resolution failed for %s" pkg-name))
+           (condition-case err
+               (let ((artifact (elpaish-build-package rec effective-stream output-dir)))
+                 (if (and artifact (file-exists-p artifact))
+                     (list :status :ok
+                           :pkg (intern pkg-name)
+                           :artifact artifact
+                           :diagnostics (and (boundp 'elpaish--preflight-diagnostics)
+                                             (map-elt elpaish--preflight-diagnostics pkg-name)))
+                   (let* ((diag (and (boundp 'elpaish--preflight-diagnostics)
+                                     (map-elt elpaish--preflight-diagnostics pkg-name)))
+                          (last-err (or (and (boundp 'elpaish--last-build-error) elpaish--last-build-error)
+                                        "Build produced no artifact"))
+                          (stage (cond
+                                  ((and diag (listp diag)) (car diag))
+                                  ((and (boundp 'elpaish--last-build-error) elpaish--last-build-error) :build)
+                                  (t :preflight))))
+                     (list :status :failed
+                           :pkg (intern pkg-name)
+                           :stage stage
+                           :error last-err
+                           :log (format "Build failed for %s: %s" pkg-name last-err)))))
+             (error
+              (list :status :failed
+                    :pkg (intern pkg-name)
+                    :stage :build
+                    :error (error-message-string err)
+                    :log (format "Exception during build of %s: %s" pkg-name (error-message-string err))))))))))
+
+;;;###autoload
+(cl-defun elpaish-async-build-package-in-sprite (recipe &key stream staging-dir timeout)
+  "Build RECIPE asynchronously inside an isolated worker sprite daemon.
+Returns a `sprite-future' resolving to a structured result plist:
+  (:status :ok :artifact PATH :diagnostics DIAG :pkg PKG)
+or on failure:
+  (:status :failed :stage STAGE :error ERR :log LOG :pkg PKG).
+
+STREAM specifies the release stream (defaults to \\='snapshot).
+STAGING-DIR specifies the target directory for the built package artifact.
+TIMEOUT overrides `elpaish-build-timeout'."
+  (let* ((effective-stream (or stream 'snapshot))
+         (effective-timeout (or timeout elpaish-build-timeout))
+         (target-dir (or staging-dir (make-temp-file "elpaish-sprite-build-" t)))
+         (elpaish-lib (locate-library "elpaish"))
+         (elpaish-dir (if elpaish-lib
+                          (file-name-directory elpaish-lib)
+                        (expand-file-name "pkg/" default-directory)))
+         (form (elpaish-async--build-package-form recipe effective-stream target-dir load-path elpaish-dir)))
+    (cond
+     ((and (require 'sprite nil t)
+           (require 'sprite-fleet nil t)
+           (require 'sprite-future nil t)
+           (fboundp 'sprite-fleet-mapcar)
+           (fboundp 'sprite-future-then))
+      (let ((fleet-future
+             (sprite-fleet-mapcar
+              form
+              (list t)
+              :fleet-size 1
+              :timeout effective-timeout
+              :async t
+              :order 'preserve
+              :error-policy :collect-error)))
+        (sprite-future-then
+         fleet-future
+         (lambda (results)
+           (let ((res (car results)))
+             (cond
+              ((elpaish-async-error-p res)
+               (let ((err-msg (error-message-string (plist-get res :error))))
+                 (list :status :failed
+                       :pkg (cond
+                             ((elpaish-recipe-p recipe) (intern (elpaish-recipe-name recipe)))
+                             ((symbolp recipe) recipe)
+                             (t (intern (format "%s" recipe))))
+                       :stage :sprite-dispatch
+                       :error err-msg
+                       :log (format "Sprite dispatch failure: %s" err-msg))))
+              ((listp res) res)
+              (t
+               (list :status :failed
+                     :pkg (cond
+                           ((elpaish-recipe-p recipe) (intern (elpaish-recipe-name recipe)))
+                           ((symbolp recipe) recipe)
+                           (t (intern (format "%s" recipe))))
+                     :stage :unknown
+                     :error "Invalid response from sprite worker"
+                     :log (format "%S" res)))))))))
+     ((and (fboundp 'sprite-future--make)
+           (fboundp 'sprite-future--settle))
+      (let* ((res (eval form t))
+             (fut (sprite-future--make :state :pending)))
+        (sprite-future--settle fut :resolved res)
+        fut))
+     (t
+      (eval form t)))))
 
 (provide 'elpaish-async)
 ;;; elpaish-async.el ends here
