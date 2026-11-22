@@ -3721,5 +3721,29 @@ source's last commit time rather than the time of the build."
            (should (equal mode-name "ELPAish"))
            (should (member 'mode-line-buffer-identification mode-line-format))))))))
 
+(ert-deftest elpaish-test-install-progress-menu ()
+  "Test `elpaish-install-progress-menu' dispatches chosen action command."
+  (let ((invoked nil))
+    (cl-letf (((symbol-function 'elpaish-install-progress-pause)
+               (lambda () (interactive) (setq invoked 'paused)))
+              ((symbol-function 'annotated-completing-read)
+               (lambda (actions &rest _)
+                 (should (consp actions))
+                 ;; Target is elpaish-install-progress-pause
+                 'elpaish-install-progress-pause)))
+      (elpaish-install-progress-menu)
+      (should (eq invoked 'paused)))
+    ;; Test fallback when completing-read returns candidate label string
+    (setq invoked nil)
+    (cl-letf (((symbol-function 'elpaish-install-progress-pause)
+               (lambda () (interactive) (setq invoked 'paused-fallback)))
+              ((symbol-function 'annotated-completing-read) nil)
+              ((symbol-function 'completing-read)
+               (lambda (_prompt actions &rest _)
+                 (should (consp actions))
+                 "Pause operation")))
+      (elpaish-install-progress-menu)
+      (should (eq invoked 'paused-fallback)))))
+
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here
