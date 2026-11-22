@@ -63,6 +63,7 @@
 (require 'elpaish-recipes)
 (require 'elpaish-check)
 (require 'elpaish-website)
+(require 'elpaish-async)
 (require 'elpaish-install)
 (require 'elpaish-keyring)
 (require 'elpaish-signing-keys)
@@ -95,7 +96,8 @@
                    elpaish-install-bootstrap-finished-functions))
           (package-archives (copy-sequence package-archives))
           (package-quickstart-file (expand-file-name "package-quickstart.el" temp-dir))
-          (package-check-signature nil))
+          (package-check-signature nil)
+          (logx-async-mode nil))
      (unwind-protect
          (progn ,@body)
       (when (elpaish-server-running-p)
@@ -3345,9 +3347,6 @@ source's last commit time rather than the time of the build."
                (should (string-match-p "\\[x\\] pkg-ui-one: " text))
                (should (string-match-p "Duration: [0-9.]+s wall" text))))))))))
 
-(provide 'test-elpaish)
-;;; test-elpaish.el ends here
-
 (ert-deftest elpaish-test-progress-archive-and-new-version ()
   "Show the active archive and link the newly installed version."
   (elpaish-test-with-temp-env
@@ -3374,3 +3373,205 @@ source's last commit time rather than the time of the build."
          (should (button-at (1- (point))))
          (should (eq (lookup-key elpaish-install-progress-mode-map (kbd "C-g"))
                      'elpaish-install-progress-soft-quit)))))))
+
+(ert-deftest elpaish-test-upgrade-run-async-sprite-building ()
+  "Test async repository building in progress runner with sprite future transitions."
+  (elpaish-test-with-temp-env
+   (let* ((repo (expand-file-name "repo-async" temp-dir))
+          (package-user-dir (expand-file-name "installed" temp-dir))
+          (package-alist nil)
+          (package-selected-packages nil)
+          (package-quickstart nil)
+          (queue nil)
+          (captured-states nil)
+          (fake-future (list :state :pending))
+          (callback-results nil)
+          (elpaish-install--active-cancel-handle nil)
+          (orig-render (symbol-function 'elpaish-install--upgrade-progress))
+          (dummy-artifact (expand-file-name "pkg-async-1.0.tar" temp-dir)))
+     (elpaish-test-create-dummy-pkg repo "pkg-async" "1.0" "Async Package")
+     (elpaish-register-package 'pkg-async repo)
+     (with-temp-file dummy-artifact (insert "dummy artifact"))
+     (cl-letf (((symbol-function 'display-buffer) #'ignore)
+               ((symbol-function 'run-at-time)
+                (lambda (_delay repeat fn &rest _)
+                  (unless repeat (setq queue (append queue (list fn))))
+                  'fake-timer))
+               ((symbol-function 'cancel-timer) #'ignore)
+               ((symbol-function 'sprite-future-p) (lambda (f) (and (consp f) (plist-get f :state))))
+               ((symbol-function 'elpaish-async-build-package-in-sprite)
+                (lambda (&rest _) fake-future))
+               ((symbol-function 'sprite-future-then)
+                (lambda (future on-resolve &optional on-reject)
+                  (setf (plist-get (cdr future) :on-resolve) on-resolve)
+                  (setf (plist-get (cdr future) :on-reject) on-reject)
+                  future))
+               ((symbol-function 'package-install-file)
+                (lambda (_file)
+                  (package-desc-create :name 'pkg-async
+                                       :version '(1 0)
+                                       :dir temp-dir
+                                       :summary "Async Package"
+                                       :kind 'single
+                                       :archive "elpaish")))
+               ((symbol-function 'elpaish-install--upgrade-progress)
+                (lambda (buf entries ref qs global cur act stats)
+                  (push global captured-states)
+                  (funcall orig-render buf entries ref qs global cur act stats))))
+       (elpaish-install--upgrade-run
+        '(pkg-async) nil nil 0
+        (lambda (res) (setq callback-results res))
+        'repo-install)
+       ;; 1. Initial queue has the first step scheduled
+       (should queue)
+       (funcall (pop queue)) ;; Run first step (refresh stage transitions to packages stage)
+       (should queue)
+       (funcall (pop queue)) ;; Run package step: starts building pkg-async in sprite
+       ;; Global state was "Compiling in sprite"
+       (should (member "Compiling in sprite" captured-states))
+       ;; Future is still pending, so queue should be empty (waiting for future)
+       (should-not queue)
+       ;; 2. Settle the future with :ok status
+       (let ((resolve-fn (plist-get (cdr fake-future) :on-resolve)))
+         (should (functionp resolve-fn))
+         (funcall resolve-fn (list :status :ok :artifact dummy-artifact :pkg 'pkg-async)))
+       ;; Settle triggered "Installing in host" and scheduled next step
+       (should (member "Installing in host" captured-states))
+       (should queue)
+       ;; 3. Run remaining steps (quickstart / done)
+       (while queue (funcall (pop queue)))
+       (should callback-results)
+       (should (eq (plist-get (car callback-results) :status) :installed))
+       (should (eq (plist-get (car callback-results) :pkg) 'pkg-async))
+       (with-current-buffer "*ELPAish Upgrade Progress*"
+         (let ((text (buffer-string)))
+           (should (string-match-p "\\[x\\] pkg-async: 1.0" text))
+           (should (string-match-p "\\[Completed\\]" text))))))))
+
+(ert-deftest elpaish-test-upgrade-run-async-sprite-failure-isolation ()
+  "Test sprite build failures report [!] with diagnostic and continue without halting."
+  (elpaish-test-with-temp-env
+   (let* ((repo1 (expand-file-name "repo-fail" temp-dir))
+          (repo2 (expand-file-name "repo-succ" temp-dir))
+          (package-user-dir (expand-file-name "installed" temp-dir))
+          (package-alist nil)
+          (package-selected-packages nil)
+          (package-quickstart nil)
+          (queue nil)
+          (callback-results nil)
+          (elpaish-install--active-cancel-handle nil)
+          (active-future nil)
+          (dummy-artifact (expand-file-name "pkg-succ-1.0.tar" temp-dir)))
+     (elpaish-test-create-dummy-pkg repo1 "pkg-fail" "1.0" "Failing Package")
+     (elpaish-test-create-dummy-pkg repo2 "pkg-succ" "1.0" "Succeeding Package")
+     (elpaish-register-package 'pkg-fail repo1)
+     (elpaish-register-package 'pkg-succ repo2)
+     (with-temp-file dummy-artifact (insert "dummy artifact"))
+     (cl-letf (((symbol-function 'display-buffer) #'ignore)
+               ((symbol-function 'run-at-time)
+                (lambda (_delay repeat fn &rest _)
+                  (unless repeat (setq queue (append queue (list fn))))
+                  'fake-timer))
+               ((symbol-function 'cancel-timer) #'ignore)
+               ((symbol-function 'sprite-future-p) (lambda (f) (and (consp f) (plist-get f :state))))
+               ((symbol-function 'elpaish-async-build-package-in-sprite)
+                (lambda (recipe &rest _)
+                  (setq active-future (list :state :pending :pkg (if (symbolp recipe) recipe (elpaish-recipe-name recipe))))
+                  active-future))
+               ((symbol-function 'sprite-future-then)
+                (lambda (future on-resolve &optional on-reject)
+                  (setf (plist-get (cdr future) :on-resolve) on-resolve)
+                  (setf (plist-get (cdr future) :on-reject) on-reject)
+                  future))
+               ((symbol-function 'package-install-file)
+                (lambda (_file)
+                  (package-desc-create :name 'pkg-succ
+                                       :version '(1 0)
+                                       :dir temp-dir
+                                       :summary "Succeeding Package"
+                                       :kind 'single
+                                       :archive "elpaish"))))
+       (elpaish-install--upgrade-run
+        '(pkg-fail pkg-succ) nil nil 0
+        (lambda (res) (setq callback-results res))
+        'repo-install)
+       ;; Advance past refresh
+       (funcall (pop queue))
+       ;; Advance into pkg-fail
+       (funcall (pop queue))
+       (should (equal (format "%s" (plist-get active-future :pkg)) "pkg-fail"))
+       ;; Fail pkg-fail build with diagnostic
+       (let ((resolve-fn (plist-get (cdr active-future) :on-resolve)))
+         (funcall resolve-fn (list :status :failed :stage :build :error "Syntax error in pkg-fail.el" :pkg 'pkg-fail)))
+       ;; Next step scheduled for pkg-succ
+       (should queue)
+       (funcall (pop queue))
+       (should (equal (format "%s" (plist-get active-future :pkg)) "pkg-succ"))
+       ;; Resolve pkg-succ build
+       (let ((resolve-fn (plist-get (cdr active-future) :on-resolve)))
+         (funcall resolve-fn (list :status :ok :artifact dummy-artifact :pkg 'pkg-succ)))
+       ;; Finish remaining steps
+       (while queue (funcall (pop queue)))
+       (should (= (length callback-results) 2))
+       (let ((fail-res (seq-find (lambda (r) (eq (plist-get r :pkg) 'pkg-fail)) callback-results))
+             (succ-res (seq-find (lambda (r) (eq (plist-get r :pkg) 'pkg-succ)) callback-results)))
+         (should (eq (plist-get fail-res :status) :failed))
+         (should (string-search "Syntax error" (plist-get fail-res :error)))
+         (should (eq (plist-get fail-res :stage) :build))
+         (should (eq (plist-get succ-res :status) :installed)))
+       (with-current-buffer "*ELPAish Upgrade Progress*"
+         (let ((text (buffer-string)))
+           (should (string-match-p "\\[!\\] pkg-fail" text))
+           (should (string-match-p "\\[x\\] pkg-succ: 1.0" text))))))))
+
+(ert-deftest elpaish-test-upgrade-run-async-sprite-cancel-and-rejection ()
+  "Test cancelling in-flight sprite future and handling sprite future rejection."
+  (elpaish-test-with-temp-env
+   (let* ((repo (expand-file-name "repo-cancel" temp-dir))
+          (package-user-dir (expand-file-name "installed" temp-dir))
+          (package-alist nil)
+          (package-selected-packages nil)
+          (package-quickstart nil)
+          (queue nil)
+          (cancelled-future nil)
+          (fake-future (list :state :pending))
+          (elpaish-install--active-cancel-handle nil)
+          (handle nil))
+     (elpaish-test-create-dummy-pkg repo "pkg-cancel" "1.0" "Cancel Package")
+     (elpaish-register-package 'pkg-cancel repo)
+     (cl-letf (((symbol-function 'display-buffer) #'ignore)
+               ((symbol-function 'run-at-time)
+                (lambda (_delay repeat fn &rest _)
+                  (unless repeat (setq queue (append queue (list fn))))
+                  'fake-timer))
+               ((symbol-function 'cancel-timer) #'ignore)
+               ((symbol-function 'sprite-future-p) (lambda (f) (and (consp f) (plist-get f :state))))
+               ((symbol-function 'sprite-future-cancel)
+                (lambda (f &optional _reason) (setq cancelled-future f)))
+               ((symbol-function 'elpaish-async-build-package-in-sprite)
+                (lambda (&rest _) fake-future))
+               ((symbol-function 'sprite-future-then)
+                (lambda (future on-resolve &optional on-reject)
+                  (setf (plist-get (cdr future) :on-resolve) on-resolve)
+                  (setf (plist-get (cdr future) :on-reject) on-reject)
+                  future)))
+       (setq handle
+             (elpaish-install--upgrade-run
+              '(pkg-cancel) nil nil 0 nil 'repo-install))
+       ;; Advance refresh
+       (funcall (pop queue))
+       ;; Start package build
+       (funcall (pop queue))
+       ;; Invoke cancel while future is in-flight
+       (funcall handle)
+       (should (eq cancelled-future fake-future))
+       (with-current-buffer "*ELPAish Upgrade Progress*"
+         (should (string-match-p "\\[Canceled\\]" (buffer-string))))
+       ;; Settle future after cancellation; should be ignored without altering canceled state
+       (let ((resolve-fn (plist-get (cdr fake-future) :on-resolve)))
+         (funcall resolve-fn (list :status :ok :artifact "/tmp/none" :pkg 'pkg-cancel)))
+       (with-current-buffer "*ELPAish Upgrade Progress*"
+         (should (string-match-p "\\[Canceled\\]" (buffer-string))))))))
+
+(provide 'test-elpaish)
+;;; test-elpaish.el ends here

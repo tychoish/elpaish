@@ -14,6 +14,7 @@
 (require 'cl-lib)
 (require 'map)
 (require 'package)
+(require 'elpaish-async)
 (require 'logx nil t)
 (require 'gen nil t)
 
@@ -1852,11 +1853,11 @@ PAUSED starts the operation in paused state when non-nil."
                                                         (elpaish-async-build-package-in-sprite (or recipe pkg) :stream stream)
                                                       (error
                                                        (list :status :failed :pkg pkg :error (error-message-string dispatch-err))))))
-                                           (if (and (fboundp 'sprite-future-p) (sprite-future-p fut))
+                                           (if (and (fboundp 'sprite-future-p) (funcall 'sprite-future-p fut))
                                                (progn
                                                  (setq is-async-item t)
                                                  (setq current-future fut)
-                                                 (sprite-future-then
+                                                 (funcall 'sprite-future-then
                                                   fut
                                                   (lambda (build-res)
                                                     (setq current-future nil)
@@ -2041,7 +2042,7 @@ PAUSED starts the operation in paused state when non-nil."
                       (when (timerp timer) (cancel-timer timer))
                       (when (timerp heartbeat) (cancel-timer heartbeat))
                       (when (and current-future (fboundp 'sprite-future-cancel))
-                        (sprite-future-cancel current-future :user-cancel))
+                        (funcall 'sprite-future-cancel current-future :user-cancel))
                       (setq current-future nil)
                       (setq end-time (float-time))
                       (setq remaining nil)
