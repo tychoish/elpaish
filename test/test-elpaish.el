@@ -97,9 +97,14 @@
           (package-archives (copy-sequence package-archives))
           (package-quickstart-file (expand-file-name "package-quickstart.el" temp-dir))
           (package-check-signature nil)
-          (logx-async-mode nil))
+          (logx-async-mode nil)
+          (noninteractive t)
+          (elpaish-install--active-cancel-handle nil))
      (unwind-protect
          (progn ,@body)
+       (when (functionp elpaish-install--active-cancel-handle)
+         (funcall elpaish-install--active-cancel-handle))
+       (setq elpaish-install--active-cancel-handle nil)
       (when (elpaish-server-running-p)
         (elpaish-stop-server))
        (when (timerp elpaish-timer)
@@ -3087,7 +3092,9 @@ source's last commit time rather than the time of the build."
 
 (ert-deftest elpaish-test-install-repository-package-non-interactive ()
   "Test `elpaish-install-repository-package' installs single and multiple packages."
-  (let ((installed nil))
+  (let ((installed nil)
+        (noninteractive t)
+        (elpaish-install--active-cancel-handle nil))
     (cl-letf (((symbol-function 'elpaish-install-repository-packages)
                (lambda (targets &rest _args)
                  (setq installed (append installed targets))
@@ -3153,7 +3160,7 @@ source's last commit time rather than the time of the build."
        (should (stringp res))))))
 
 (ert-deftest elpaish-test-upgrade-triage-strikes-through-and-moves-to-end ()
-  "Test upgrade first strikes through up-to-date packages and moves upgrades to end."
+  "Test upgrade first marks up-to-date packages as current and moves upgrades to end."
   (elpaish-test-with-temp-env
    (let* ((desc-w1-inst (package-desc-create :name 'pkg-work-1 :version '(1 0)))
           (desc-w1-arch (package-desc-create :name 'pkg-work-1 :version '(2 0)))
@@ -3198,7 +3205,7 @@ source's last commit time rather than the time of the build."
                (pos-u2 nil)
                (pos-w1 nil)
                (pos-w2 nil))
-           (should (string-match-p "2 up to date, 2 work items: 0 done, 2 pending" text))
+           (should (string-match-p "2 current, 2 work items: 0 done, 2 pending" text))
            (save-excursion
              (goto-char (point-min))
              (setq pos-u1 (search-forward "pkg-utd-1: 1.5" nil t))
@@ -3213,10 +3220,11 @@ source's last commit time rather than the time of the build."
            (should (< pos-u1 pos-w1))
            (should (< pos-u2 pos-w1))
            (should (< pos-w1 pos-w2))
-           ;; Up-to-date package rows are struck through
+           ;; Up-to-date package rows are grayed out without strike-through
            (should (get-text-property (1- pos-u1) 'elpaish-up-to-date))
            (should (get-text-property (1- pos-u2) 'elpaish-up-to-date))
-           (should-not (get-text-property (1- pos-w1) 'elpaish-up-to-date))))
+           (should-not (get-text-property (1- pos-w1) 'elpaish-up-to-date))
+           (should (memq (face-attribute 'elpaish-install-up-to-date-face :strike-through nil t) '(nil unspecified)))))
        ;; Drain remaining steps: only the 2 upgrade work items are processed
        (while queue (funcall (pop queue)))
        (should (equal (nreverse processed) '(pkg-work-1 pkg-work-2)))))))
@@ -3225,10 +3233,10 @@ source's last commit time rather than the time of the build."
   "Test timing statistics track wall clock, actual work, and wait durations."
   (elpaish-test-with-temp-env
    (let ((elpaish-install-packages-list '(pkg-time-1))
-         (elpaish-install-upgrade-packages-list '(pkg-time-1))
-         (elpaish-install--active-cancel-handle nil)
-         (package-archive-contents '((dummy)))
-         (summary-msg nil))
+          (elpaish-install-upgrade-packages-list '(pkg-time-1))
+          (elpaish-install--active-cancel-handle nil)
+          (package-archive-contents '((dummy)))
+          (summary-msg nil))
      (let ((hook-fn (lambda (ev) (setq summary-msg (plist-get ev :msg)))))
        (add-hook 'logx-event-hook hook-fn)
        (unwind-protect
@@ -3291,8 +3299,8 @@ source's last commit time rather than the time of the build."
          (should (stringp (plist-get item :prev-local-update)))
          (with-current-buffer "*ELPAish Upgrade Progress*"
            (let ((text (buffer-string)))
-             (should (string-match-p "prev gen: 2026-11-15 14:20" text))
-             (should (string-match-p "local update: [0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}" text)))))))))
+             (should (string-match-p "prev: 20261115\\.142000" text))
+             (should (string-match-p "to: 20261120\\.100000" text)))))))))
 
 (ert-deftest elpaish-test-upgrade-controls-pause-resume-slow-down ()
   "Test pause, resume, slow-down, speed-up, and set-delay controls in progress mode."
@@ -3460,9 +3468,9 @@ source's last commit time rather than the time of the build."
                                        :kind 'single
                                        :archive "elpaish")))
                ((symbol-function 'elpaish-install--upgrade-progress)
-                (lambda (buf entries ref qs global cur act stats)
+                (lambda (buf entries ref qs global cur act stats &rest rest)
                   (push global captured-states)
-                  (funcall orig-render buf entries ref qs global cur act stats))))
+                  (apply orig-render buf entries ref qs global cur act stats rest))))
        (elpaish-install--upgrade-run
         '(pkg-async) nil nil 0
         (lambda (res) (setq callback-results res))
@@ -3617,6 +3625,97 @@ source's last commit time rather than the time of the build."
          (funcall resolve-fn (list :status :ok :artifact "/tmp/none" :pkg 'pkg-cancel)))
        (with-current-buffer "*ELPAish Upgrade Progress*"
          (should (string-match-p "\\[Canceled\\]" (buffer-string))))))))
+
+(ert-deftest elpaish-test-install-repository-package-async-and-yielding ()
+  "Test `elpaish-install-repository-package' runs asynchronously with yielding."
+  (elpaish-test-with-temp-env
+   (let* ((captured-args nil)
+          (fake-handle (lambda (&rest _) :cancelled)))
+     (cl-letf (((symbol-function 'elpaish-install-repository-packages)
+                (lambda (targets &rest args)
+                  (setq captured-args (cons targets args))
+                  (if (plist-get args :sync)
+                      (list (package-desc-create :name (car targets)))
+                    fake-handle))))
+       ;; Programmatic with :async t returns handle and passes :sync nil :async t
+       (let ((handle (elpaish-install-repository-package 'test-pkg :async t :delay 0.01)))
+         (should (eq handle fake-handle))
+         (should (equal (car captured-args) '(test-pkg)))
+         (should (null (plist-get (cdr captured-args) :sync)))
+         (should (eq (plist-get (cdr captured-args) :async) t))
+         (should (= (plist-get (cdr captured-args) :delay) 0.01)))
+       ;; Programmatic with :sync t passes :sync t :async nil
+       (setq captured-args nil)
+       (let ((res (elpaish-install-repository-package 'test-pkg :sync t)))
+         (should (eq (package-desc-name res) 'test-pkg))
+         (should (null (plist-get (cdr captured-args) :async)))
+         (should (eq (plist-get (cdr captured-args) :sync) t)))))))
+
+(ert-deftest elpaish-test-upgrade-cleanup-legacy-packages-option-and-toggle ()
+  "Test legacy package cleanup option and interactive toggle in progress buffer."
+  (elpaish-test-with-temp-env
+   (let* ((clean-called 0)
+          (package-user-dir (expand-file-name "elpa" temp-dir))
+          (package-alist nil)
+          (queue nil))
+     (cl-letf (((symbol-function 'display-buffer) #'ignore)
+               ((symbol-function 'run-at-time)
+                (lambda (_delay repeat fn &rest _)
+                  (unless repeat (setq queue (append queue (list fn))))
+                  'fake-timer))
+               ((symbol-function 'cancel-timer) #'ignore)
+               ((symbol-function 'elpaish-install--process-package)
+                (lambda (pkg &rest _) (list :pkg pkg :status :upgraded :from "1.0" :to "2.0")))
+               ((symbol-function 'elpaish-install-clean-stale-packages)
+                (lambda (&optional _no-prompt)
+                  (cl-incf clean-called)
+                  3)))
+       ;; Run with :cleanup t
+       (elpaish-install--upgrade-run
+        '(pkg-cl1) nil nil 0 nil 'upgrade :cleanup t)
+       ;; Drain queue to complete all stages
+       (while queue (funcall (pop queue)))
+       (should (= clean-called 1))
+       (with-current-buffer "*ELPAish Upgrade Progress*"
+         (let ((text (buffer-string)))
+           (should (string-match-p "Clean up legacy packages (3 legacy packages cleaned)" text))
+           (should (string-match-p "Controls:.*cleanup on" text))))
+       ;; Test interactive toggle command
+       (with-current-buffer "*ELPAish Upgrade Progress*"
+         (elpaish-install-progress-toggle-cleanup)
+         (should (null (plist-get elpaish-install--progress-context :cleanup)))
+         (should (string-match-p "Controls:.*cleanup off" (buffer-string)))
+         (elpaish-install-progress-toggle-cleanup)
+         (should (plist-get elpaish-install--progress-context :cleanup))
+         (should (string-match-p "Controls:.*cleanup on" (buffer-string))))))))
+
+(ert-deftest elpaish-test-upgrade-progress-mode-line-and-archives-summary ()
+  "Test shortened mode-line and archive old -> new summary formatting."
+  (elpaish-test-with-temp-env
+   (let* ((package-user-dir (expand-file-name "elpa" temp-dir))
+          (arch-dir (expand-file-name "archives/gnu" package-user-dir))
+          (arch-file (expand-file-name "archive-contents" arch-dir))
+          (package-archives '(("gnu" . "https://elpa.gnu.org/packages/"))))
+     (make-directory arch-dir t)
+     (with-temp-file arch-file (insert "dummy"))
+     (set-file-times arch-file (encode-time 0 0 12 1 1 2026))
+     ;; Test elpaish-install--archives-summary old -> new
+     (let ((summary (elpaish-install--archives-summary
+                     '(("gnu" . "2026-01-01 10:00"))
+                     "[x]" nil)))
+       (should (string-match-p "gnu +2026-01-01 10:00 ->" summary)))
+     ;; Test repo-install omits archives summary entirely
+     (cl-letf (((symbol-function 'display-buffer) #'ignore)
+               ((symbol-function 'elpaish-install--process-package)
+                (lambda (pkg &rest _) (list :pkg pkg :status :installed :to "1.0"))))
+       (elpaish-install--upgrade-run '(pkg-no-arch) nil t 0 nil 'repo-install)
+       (with-current-buffer "*ELPAish Upgrade Progress*"
+         (let ((text (buffer-string)))
+           (should-not (string-match-p "Package Archives:" text))
+           (should-not (string-match-p "gnu:" text))
+           ;; Check mode name and mode line
+           (should (equal mode-name "ELPAish"))
+           (should (member 'mode-line-buffer-identification mode-line-format))))))))
 
 (provide 'test-elpaish)
 ;;; test-elpaish.el ends here
