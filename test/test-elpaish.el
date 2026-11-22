@@ -1806,10 +1806,53 @@ source's last commit time rather than the time of the build."
                     "upgrade"))
                  ((symbol-function 'package--save-selected-packages) #'ignore)
                  ((symbol-function 'native-compile-async) #'ignore))
-         ;; Interactive call exercises the interactive ACR spec
-         (let ((descs (call-interactively #'elpaish-install-repository-packages)))
+         ;; Interactive call with prefix arg exercises synchronous ACR execution
+         (let* ((current-prefix-arg '(4))
+                (descs (call-interactively #'elpaish-install-repository-packages)))
            (should (= (length descs) 1))
-           (should (eq (package-desc-name (car descs)) 'pkg-one))))))))
+           (should (eq (package-desc-name (car descs)) 'pkg-one)))
+         ;; Interactive call without prefix arg runs asynchronously and returns cancel handle
+         (let* ((current-prefix-arg nil)
+                (handle (call-interactively #'elpaish-install-repository-packages)))
+           (should (functionp handle))))))))
+
+(ert-deftest elpaish-test-install-repository-packages-async-toggle ()
+  "Test prefix argument and async default resolution for `elpaish-install-repository-packages'."
+  (let ((captured-sync nil)
+        (elpaish-install--active-cancel-handle nil))
+    (cl-letf (((symbol-function 'elpaish-install--upgrade-run)
+               (lambda (_pkgs _refresh sync &rest _args)
+                 (setq captured-sync sync)
+                 (if sync '(:sync-res) (lambda (&optional _) :cancel-handle))))
+              ((symbol-function 'annotated-completing-read) (lambda (&rest _) "installed")))
+      ;; Programmatic call with no sync/async: in interactive session (noninteractive=nil) defaults to async
+      (let ((noninteractive nil))
+        (setq elpaish-install--active-cancel-handle nil)
+        (let ((res (elpaish-install-repository-packages 'installed)))
+          (should (null captured-sync))
+          (should (functionp res))))
+      ;; Programmatic call with noninteractive=t: defaults to sync
+      (let ((noninteractive t))
+        (setq elpaish-install--active-cancel-handle nil)
+        (let ((res (elpaish-install-repository-packages 'installed)))
+          (should (eq captured-sync t))))
+      ;; Programmatic call with :sync t: forces sync even if noninteractive is nil
+      (let ((noninteractive nil))
+        (setq elpaish-install--active-cancel-handle nil)
+        (let ((res (elpaish-install-repository-packages 'installed :sync t)))
+          (should (eq captured-sync t))))
+      ;; Interactive call with prefix arg: forces sync
+      (let ((noninteractive nil)
+            (current-prefix-arg '(4)))
+        (setq elpaish-install--active-cancel-handle nil)
+        (call-interactively #'elpaish-install-repository-packages)
+        (should (eq captured-sync t)))
+      ;; Interactive call without prefix arg: defaults to async
+      (let ((noninteractive nil)
+            (current-prefix-arg nil))
+        (setq elpaish-install--active-cancel-handle nil)
+        (call-interactively #'elpaish-install-repository-packages)
+        (should (null captured-sync))))))
 
 (ert-deftest elpaish-test-upgrade-packages-alias-and-execution ()
   "Test `elpaish-install-upgrade-packages' calls upgrade sequence properly."
@@ -2855,6 +2898,69 @@ source's last commit time rather than the time of the build."
       (elpaish-stop-server)
       (when (file-directory-p tmp)
         (delete-directory tmp t)))))
+
+(ert-deftest elpaish-test-async-build-package-in-sprite-delegation ()
+  "Test `elpaish-async-build-package-in-sprite' delegates to `sprite-fleet-mapcar'."
+  (let* ((captured-form nil)
+         (captured-args nil)
+         (fake-future (list :fake-fleet-future t))
+         (settled-res nil)
+         (dummy-result (list :status :ok :pkg 'pkg-one :artifact "/tmp/pkg-one-1.0.tar")))
+    (cl-letf (((symbol-function 'require)
+               (lambda (feature &optional _filename _noerror)
+                 (memq feature '(sprite sprite-fleet sprite-future map elpaish elpaish-recipes elpaish-async))))
+              ((symbol-function 'sprite-fleet-mapcar)
+               (lambda (form items &rest args)
+                 (setq captured-form form
+                       captured-args (list :items items :args args))
+                 fake-future))
+              ((symbol-function 'sprite-future-then)
+               (lambda (future on-resolve &optional _on-reject)
+                 (should (eq future fake-future))
+                 (setq settled-res (funcall on-resolve (list dummy-result)))
+                 (list :chained-future settled-res))))
+      (let ((res (elpaish-async-build-package-in-sprite 'pkg-one :stream 'snapshot :staging-dir "/tmp/staging")))
+        (should (consp res))
+        (should (consp captured-form))
+        (should (equal (plist-get captured-args :items) '(t)))
+        (should (eq (plist-get (plist-get captured-args :args) :async) t))
+        (should (= (plist-get (plist-get captured-args :args) :fleet-size) 1))
+        (should (equal settled-res dummy-result))))))
+
+(ert-deftest elpaish-test-async-build-package-in-sprite-error-handling ()
+  "Test `elpaish-async-build-package-in-sprite' handles preflight and sprite errors."
+  (let* ((fake-future (list :fake-fleet-future t))
+         (settled-res nil)
+         (worker-error (list :error '(error "Worker timeout") :target 'fleet)))
+    ;; Test worker sprite crash/timeout translation
+    (cl-letf (((symbol-function 'require)
+               (lambda (feature &optional _filename _noerror)
+                 (memq feature '(sprite sprite-fleet sprite-future map elpaish elpaish-recipes elpaish-async))))
+              ((symbol-function 'sprite-fleet-mapcar)
+               (lambda (&rest _) fake-future))
+              ((symbol-function 'sprite-future-then)
+               (lambda (future on-resolve &optional _on-reject)
+                 (setq settled-res (funcall on-resolve (list worker-error)))
+                 (list :chained-future settled-res))))
+      (elpaish-async-build-package-in-sprite 'pkg-err)
+      (should (eq (plist-get settled-res :status) :failed))
+      (should (eq (plist-get settled-res :stage) :sprite-dispatch))
+      (should (equal (plist-get settled-res :pkg) 'pkg-err))
+      (should (string-search "Worker timeout" (plist-get settled-res :error))))))
+
+(ert-deftest elpaish-test-async-build-package-form-execution ()
+  "Test execution of the form generated by `elpaish-async--build-package-form'."
+  (elpaish-test-with-temp-env
+   (let* ((repo (expand-file-name "repo" temp-dir))
+          (staging-dir (expand-file-name "staging" temp-dir))
+          (elpaish-registry (make-hash-table :test 'equal)))
+     (elpaish-test-create-dummy-pkg repo "pkg-form" "1.0" "Form Test Package")
+     (elpaish-register-package 'pkg-form repo :preflight-skip t)
+     (let* ((form (elpaish-async--build-package-form 'pkg-form 'snapshot staging-dir load-path nil))
+            (res (eval form t)))
+       (should (eq (plist-get res :status) :ok))
+       (should (eq (plist-get res :pkg) 'pkg-form))
+       (should (file-exists-p (plist-get res :artifact)))))))
 
 (ert-deftest elpaish-test-server-upgrade-overrides-archives ()
   "Test `elpaish-test-server-upgrade' prepends local test server archive."

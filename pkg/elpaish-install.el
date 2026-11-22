@@ -36,8 +36,11 @@
 (declare-function elpaish-recipe-name-from-url "elpaish-recipes" (url))
 (declare-function elpaish-register-package "elpaish" (name repository-path &rest options))
 (declare-function elpaish-build-package "elpaish" (recipe &optional stream output-directory-path))
+(declare-function elpaish-async-build-package-in-sprite "elpaish-async" (recipe &rest args))
 (declare-function elpaish--recipe-source-path "elpaish" (recipe))
-(declare-function sprite-future-then "sprite" (future callback))
+(declare-function sprite-future-p "sprite" (object))
+(declare-function sprite-future-then "sprite" (future callback &optional on-reject))
+(declare-function sprite-future-cancel "sprite" (future &optional reason))
 (declare-function gen-run-async "gen" (fn sequence &rest args))
 (declare-function package--reload-previously-loaded "package" (pkg-desc &optional warn))
 (declare-function package--description-file "package" (dir))
@@ -467,7 +470,9 @@ cancellation handle function when asynchronous."
                                                     :default "installed"
                                                     :require-match t)
                        (completing-read prompt table nil t nil nil "installed"))))
-        (intern (downcase (string-trim choice)))))))
+        (intern (downcase (string-trim choice)))))
+    :sync (not (null current-prefix-arg))
+    :async (null current-prefix-arg)))
   (require 'elpaish)
   (require 'elpaish-recipes)
   (require 'package)
@@ -502,7 +507,10 @@ cancellation handle function when asynchronous."
          (target-pkgs (seq-map (lambda (p) (if (symbolp p) p (intern (format "%s" p))))
                                raw-targets))
          (effective-stream (or stream 'snapshot))
-         (is-sync (or sync (not async))))
+         (is-sync (cond
+                   (sync t)
+                   (async nil)
+                   (t (and noninteractive t)))))
     (if (null target-pkgs)
         (progn
           (logx 'warn :msg (format "No repository package recipes found matching scope '%s'." scope-sym)
@@ -1649,6 +1657,7 @@ PAUSED starts the operation in paused state when non-nil."
          (timer nil)
          (heartbeat nil)
          (step nil)
+         (current-future nil)
          (start-time (float-time))
          (end-time nil)
          (actual-time 0.0)
@@ -1695,7 +1704,8 @@ PAUSED starts the operation in paused state when non-nil."
     (setq step
           (lambda ()
             (let ((package-archives captured-archives)
-                  (package-archive-priorities captured-priorities))
+                  (package-archive-priorities captured-priorities)
+                  (is-async-item nil))
               (condition-case err
                   (pcase stage
                     ('refresh
@@ -1782,43 +1792,148 @@ PAUSED starts the operation in paused state when non-nil."
                                  (logx 'info :msg (format "[elpaish] Paused before %s." next-pkg)
                                        :pkg next-pkg))
                              (let* ((pkg (pop remaining))
-                                    (entry (assq pkg entries)))
-                               (setq global-state "Working")
-                               (setf (nth 1 entry) "[...]")
-                               (funcall render pkg)
-                               (let* ((t0 (float-time))
-                                      (_start (setq work-start t0))
-                                      (raw-res (let ((inhibit-quit t) (quit-flag nil))
-                                                 (if (eq act 'repo-install)
-                                                   (elpaish-install--process-repository-package pkg stream)
-                                                 (elpaish-install--process-package pkg act nil))))
-                                      (pkg-dur (- (float-time) t0))
-                                      (meta (nth 4 entry))
-                                      (status (plist-get raw-res :status))
-                                      (utd-status (memq status '(:up-to-date :already-installed)))
-                                      (version (or (plist-get raw-res :to)
-                                                   (elpaish-install--installed-version pkg)))
-                                      (res (append raw-res
-                                                   (list :duration pkg-dur
-                                                         :prev-version (plist-get meta :prev-version)
-                                                         :prev-generated (plist-get meta :prev-generated)
-                                                         :prev-local-update (plist-get meta :prev-local-update)))))
-                                 (setq actual-time (+ actual-time pkg-dur)
-                                       work-start nil)
-                                 (push res results)
-                                 (setf (plist-get meta :duration) pkg-dur)
-                                 (when utd-status
-                                   (setf (plist-get meta :up-to-date) t)
-                                   (setf (plist-get meta :work-item) nil))
-                                 (setf (nth 1 entry) (if (eq status :failed) "[!]" "[x]"))
-                                 (setf (nth 2 entry) version)
-                                 (setf (nth 3 entry) (if (eq status :failed)
-                                                         (plist-get res :error)
-                                                       (substring (symbol-name status) 1)))
-                                 (setf (nth 4 entry) meta)
-                                 (when utd-status
-                                   (setq entries (elpaish-install--reorder-entries entries)))
-                                 (setq global-state (if (and remaining cur-delay) "Yielding" "Working"))))))
+                                    (entry (assq pkg entries))
+                                    (pkg-sym (if (symbolp pkg) pkg (intern (format "%s" pkg))))
+                                    (pkg-name (symbol-name pkg-sym))
+                                    (t0 (float-time))
+                                    (_start (setq work-start t0))
+                                    (finish-item
+                                     (lambda (raw-res &optional schedule-next)
+                                       (let* ((pkg-dur (- (float-time) t0))
+                                              (meta (nth 4 entry))
+                                              (status (plist-get raw-res :status))
+                                              (utd-status (memq status '(:up-to-date :already-installed)))
+                                              (version (or (plist-get raw-res :to)
+                                                           (elpaish-install--installed-version pkg)))
+                                              (res (append raw-res
+                                                           (list :duration pkg-dur
+                                                                 :prev-version (plist-get meta :prev-version)
+                                                                 :prev-generated (plist-get meta :prev-generated)
+                                                                 :prev-local-update (plist-get meta :prev-local-update)))))
+                                         (setq actual-time (+ actual-time pkg-dur)
+                                               work-start nil)
+                                         (push res results)
+                                         (setf (plist-get meta :duration) pkg-dur)
+                                         (when utd-status
+                                           (setf (plist-get meta :up-to-date) t)
+                                           (setf (plist-get meta :work-item) nil))
+                                         (setf (nth 1 entry) (if (eq status :failed) "[!]" "[x]"))
+                                         (setf (nth 2 entry) version)
+                                         (setf (nth 3 entry) (if (eq status :failed)
+                                                                 (plist-get res :error)
+                                                               (substring (symbol-name status) 1)))
+                                         (setf (nth 4 entry) meta)
+                                         (when utd-status
+                                           (setq entries (elpaish-install--reorder-entries entries)))
+                                         (setq global-state (if cur-paused
+                                                                "Paused"
+                                                              (if (and remaining cur-delay) "Yielding" "Working")))
+                                         (funcall render pkg)
+                                         (when (and schedule-next (not (eq stage 'done)) (not cur-paused))
+                                           (setq timer (run-at-time (or cur-delay elpaish-install-yield-delay) nil step)))))))
+                               (if (and (not sync)
+                                        (eq act 'repo-install)
+                                        (fboundp 'elpaish-async-build-package-in-sprite))
+                                   (progn
+                                     (setq global-state "Compiling in sprite")
+                                     (setf (nth 1 entry) "[...]")
+                                     (funcall render pkg)
+                                     (unless (and (boundp 'elpaish-registry)
+                                                  (hash-table-p elpaish-registry)
+                                                  (> (hash-table-count elpaish-registry) 0))
+                                       (elpaish-load-packages))
+                                     (let ((recipe (elpaish-install--resolve-repository-recipe pkg)))
+                                       (if (null recipe)
+                                           (progn
+                                             (logx 'warn :msg (format "[elpaish] Skipping %s: no recipe found in repository" pkg-name)
+                                                   :pkg pkg-name)
+                                             (funcall finish-item (list :status :failed :pkg pkg :error "No recipe found in repository")))
+                                         (let ((fut (condition-case dispatch-err
+                                                        (elpaish-async-build-package-in-sprite (or recipe pkg) :stream stream)
+                                                      (error
+                                                       (list :status :failed :pkg pkg :error (error-message-string dispatch-err))))))
+                                           (if (and (fboundp 'sprite-future-p) (sprite-future-p fut))
+                                               (progn
+                                                 (setq is-async-item t)
+                                                 (setq current-future fut)
+                                                 (sprite-future-then
+                                                  fut
+                                                  (lambda (build-res)
+                                                    (setq current-future nil)
+                                                    (unless (eq stage 'done)
+                                                      (let ((raw-res
+                                                             (condition-case install-err
+                                                                 (if (eq (plist-get build-res :status) :ok)
+                                                                     (progn
+                                                                       (setq global-state "Installing in host")
+                                                                       (funcall render pkg)
+                                                                       (let* ((artifact (plist-get build-res :artifact))
+                                                                              (prev-desc (and (boundp 'package-alist)
+                                                                                              (cadr (assq pkg-sym package-alist))))
+                                                                              (prev-ver (and prev-desc
+                                                                                             (package-version-join (package-desc-version prev-desc)))))
+                                                                         (unwind-protect
+                                                                             (let* ((built-desc (package-install-file artifact))
+                                                                                    (desc (or (seq-find
+                                                                                               (lambda (candidate)
+                                                                                                 (equal (package-desc-version candidate)
+                                                                                                        (package-desc-version built-desc)))
+                                                                                               (cdr (assq (package-desc-name built-desc) package-alist)))
+                                                                                              built-desc))
+                                                                                    (new-ver (and desc (package-version-join (package-desc-version desc))))
+                                                                                    (status (if prev-ver :upgraded :installed))
+                                                                                    (res (list :status status
+                                                                                               :pkg pkg
+                                                                                               :from prev-ver
+                                                                                               :to new-ver
+                                                                                               :desc desc)))
+                                                                               (when (and desc (fboundp 'package--reload-previously-loaded))
+                                                                                 (condition-case nil
+                                                                                     (package--reload-previously-loaded desc)
+                                                                                   (error nil)))
+                                                                               (logx 'info :msg (format "[elpaish] Installed %s (%s)"
+                                                                                                        pkg-name (or new-ver ""))
+                                                                                     :pkg pkg-name :version new-ver)
+                                                                               (run-hook-with-args 'elpaish-install-package-updated-functions
+                                                                                                   pkg-sym
+                                                                                                   (if prev-ver 'upgraded 'installed)
+                                                                                                   res)
+                                                                               res)
+                                                                           (when (and artifact (file-exists-p artifact))
+                                                                             (let ((parent-dir (file-name-directory artifact)))
+                                                                               (if (and parent-dir (file-directory-p parent-dir)
+                                                                                        (string-match-p "elpaish-sprite-build-" parent-dir))
+                                                                                   (delete-directory parent-dir t)
+                                                                                 (delete-file artifact)))))))
+                                                                   (let ((err-msg (or (plist-get build-res :error) "Build failed in sprite worker")))
+                                                                     (logx 'error :msg (format "[elpaish] Failed to build %s: %s" pkg err-msg)
+                                                                           :pkg pkg :error err-msg)
+                                                                     (list :status :failed :pkg pkg :error err-msg :stage (plist-get build-res :stage))))
+                                                               (error
+                                                                (logx 'error :msg (format "[elpaish] Failed to install %s: %s"
+                                                                                          pkg (error-message-string install-err))
+                                                                      :pkg pkg :error (error-message-string install-err))
+                                                                (list :status :failed :pkg pkg :error (error-message-string install-err))))))
+                                                        (funcall finish-item raw-res t))))
+                                                  (lambda (reject-val)
+                                                    (setq current-future nil)
+                                                    (unless (eq stage 'done)
+                                                      (let* ((err-msg (if (consp reject-val)
+                                                                          (format "%s" (cdr reject-val))
+                                                                        (error-message-string reject-val)))
+                                                             (raw-res (list :status :failed :pkg pkg :error err-msg :stage :sprite-dispatch)))
+                                                        (logx 'error :msg (format "[elpaish] Sprite build rejected for %s: %s" pkg err-msg)
+                                                              :pkg pkg :error err-msg)
+                                                        (funcall finish-item raw-res t))))))
+                                             (funcall finish-item fut))))))
+                                 (setq global-state "Working")
+                                 (setf (nth 1 entry) "[...]")
+                                 (funcall render pkg)
+                                 (let ((raw-res (let ((inhibit-quit t) (quit-flag nil))
+                                                  (if (eq act 'repo-install)
+                                                      (elpaish-install--process-repository-package pkg stream)
+                                                    (elpaish-install--process-package pkg act nil)))))
+                                   (funcall finish-item raw-res))))))
                        (setq stage 'quickstart)
                        (setq global-state "Working")))
                     ('quickstart
@@ -1873,7 +1988,7 @@ PAUSED starts the operation in paused state when non-nil."
                  (funcall render)
                  (when sync (signal (car err) (cdr err)))))
               (funcall render)
-              (if (or (eq stage 'done) cur-paused)
+              (if (or (eq stage 'done) cur-paused is-async-item)
                   nil
                 (unless sync
                   (setq timer (run-at-time (or cur-delay elpaish-install-yield-delay) nil step)))))))
@@ -1925,6 +2040,9 @@ PAUSED starts the operation in paused state when non-nil."
       (let ((cancel (lambda (&optional _)
                       (when (timerp timer) (cancel-timer timer))
                       (when (timerp heartbeat) (cancel-timer heartbeat))
+                      (when (and current-future (fboundp 'sprite-future-cancel))
+                        (sprite-future-cancel current-future :user-cancel))
+                      (setq current-future nil)
                       (setq end-time (float-time))
                       (setq remaining nil)
                       (setq stage 'done)
