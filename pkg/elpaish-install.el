@@ -174,12 +174,19 @@ Returns `elpaish-install-upgrade-packages-list'."
             (append elpaish-install-upgrade-packages-list (nreverse new-pkgs)))))
   elpaish-install-upgrade-packages-list)
 
+(defun elpaish-install--install-group-p (group)
+  "Return non-nil if GROUP represents an install-only group.
+Matches `install', `install-only', or any symbol starting with \"install-\"."
+  (or (memq group '(install install-only))
+      (and (symbolp group)
+           (string-prefix-p "install-" (symbol-name group)))))
+
 (defun elpaish-install--group-policy (group-entry)
   "Return policy (`upgrade' or `install') for GROUP-ENTRY."
   (cond
    ((and (cdr group-entry) (keywordp (cadr group-entry)))
     (or (plist-get (cdr group-entry) :policy) 'upgrade))
-   ((memq (car group-entry) '(install install-only))
+   ((elpaish-install--install-group-p (car group-entry))
     'install)
    (t 'upgrade)))
 
@@ -201,14 +208,14 @@ Returns `elpaish-install-upgrade-packages-list'."
 (defun elpaish-install-register-group (group pkgs &optional policy)
   "Register package symbols PKGS under group symbol GROUP with POLICY.
 POLICY can be `upgrade' (default) or `install' (install-only).
-If GROUP is `install' or `install-only' and POLICY is nil, POLICY defaults
-to `install'.
+If GROUP matches `install', `install-only', or starts with \"install-\",
+and POLICY is nil, POLICY defaults to `install'.
 Packages are registered into `elpaish-install-packages-list' and, if POLICY
 is `upgrade', into `elpaish-install-upgrade-packages-list'.
 Returns the updated `elpaish-install-package-groups'."
   (unless (symbolp group)
     (user-error "GROUP must be a symbol, got %S" group))
-  (let* ((actual-policy (or policy (if (memq group '(install install-only)) 'install 'upgrade)))
+  (let* ((actual-policy (or policy (if (elpaish-install--install-group-p group) 'install 'upgrade)))
          (clean-pkgs (seq-filter (lambda (p) (and (symbolp p) p))
                                  (delete-dups (flatten-tree pkgs))))
          (existing (assq group elpaish-install-package-groups))
@@ -240,7 +247,7 @@ Returns `elpaish-install-package-groups'."
       (elpaish-install-register-group
        (car entry)
        (cdr entry)
-       (if (memq (car entry) '(install install-only)) 'install 'upgrade)))))
+       (if (elpaish-install--install-group-p (car entry)) 'install 'upgrade)))))
   elpaish-install-package-groups)
 
 (defun elpaish-install--get-upgrade-packages ()

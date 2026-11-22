@@ -2542,12 +2542,16 @@ source's last commit time rather than the time of the build."
          (elpaish-install-upgrade-packages-list nil)
          (elpaish-install-package-groups nil)
          (groups '((core . (core-a core-b))
-                   (install . (aux-1 aux-2)))))
+                   (install . (aux-1 aux-2))
+                   (install-extra . (aux-3 aux-4))
+                   (install-special :packages (aux-5)))))
      (elpaish-install-register-groups groups)
      (should (equal (elpaish-install-get-group-packages 'core) '(core-a core-b)))
      (should (equal (elpaish-install-get-group-packages 'install) '(aux-1 aux-2)))
+     (should (equal (elpaish-install-get-group-packages 'install-extra) '(aux-3 aux-4)))
+     (should (equal (elpaish-install-get-group-packages 'install-special) '(aux-5)))
      (should (equal elpaish-install-upgrade-packages-list '(core-a core-b)))
-     (should (equal elpaish-install-packages-list '(core-a core-b aux-1 aux-2))))))
+     (should (equal elpaish-install-packages-list '(core-a core-b aux-1 aux-2 aux-3 aux-4 aux-5))))))
 
 (ert-deftest elpaish-test-upgrade-packages-by-group ()
   "Test upgrading targeted group only upgrades packages in that group."
