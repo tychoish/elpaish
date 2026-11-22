@@ -46,28 +46,6 @@
 (require 'elpaish-async)
 
 (require 'cl-lib)
-(unless (macrop 'incf)
-  (defmacro incf (place &optional delta)
-    "Increment PLACE by DELTA (default 1)."
-    (declare (debug (gv-place &optional form)))
-    (if (and (symbolp place) (null delta))
-        (list 'setq place (list '1+ place))
-      (list 'cl-incf place delta))))
-
-(unless (macrop 'decf)
-  (defmacro decf (place &optional delta)
-    "Decrement PLACE by DELTA (default 1)."
-    (declare (debug (gv-place &optional form)))
-    (if (and (symbolp place) (null delta))
-        (list 'setq place (list '1- place))
-      (list 'cl-decf place delta))))
-
-(unless (macrop 'static-when)
-  (defmacro static-when (condition &rest body)
-    "A conditional compilation macro."
-    (declare (indent 1) (debug t))
-    (when (eval condition lexical-binding)
-      (cons 'progn body))))
 
 (require 'annotated-completing-read)
 (require 'gen nil t)

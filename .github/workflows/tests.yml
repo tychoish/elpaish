@@ -26,6 +26,16 @@ jobs:
       - name: Ensure Texinfo Tools
         uses: tychoish/elisp-ci/texinfo@main
 
+      - name: Lint Source Code
+        uses: tychoish/elisp-ci/lint@main
+        with:
+          elpaish: "true"
+          load-paths: |
+            pkg
+            scripts
+          linters: "byte-compile checkdoc package-lint"
+          required-linters: "byte-compile checkdoc package-lint"
+
       - name: Run ERT Self-Tests
         uses: tychoish/elisp-ci@main
         env:
