@@ -57,7 +57,7 @@
     (elpaish . "snapshot")
     (elpaish-stable . "stable")
     (elpaish-staging . "staging"))
-  "Human-readable label for each package archive release stream, used in page titles.")
+  "Human-readable label for each package release stream.")
 
 (defun elpaish-website--stream-label (stream)
   "Return the human-readable catalog page label for STREAM."
@@ -92,7 +92,7 @@ RELATIVE-PREFIX is prepended to relative links (e.g. \"../\" for stream pages)."
 ;;; Per-track package catalog
 
 (defun elpaish-website--icon-cell (recipe artifact target-dir)
-  "Return dom nodes for RECIPE's repository link, doc link, signature, and checksum badge."
+  "Return dom nodes for RECIPE's repo link, doc link, sig, and sha badge."
   (let ((repo-url (elpaish-recipe-url recipe))
         (doc-url (elpaish-recipe-doc recipe))
         (sig-file (expand-file-name (concat artifact ".sig") target-dir))
@@ -140,7 +140,7 @@ RELATIVE-PREFIX is prepended to relative links (e.g. \"../\" for stream pages)."
      reqs ", ")))
 
 (defun elpaish-website--package-rows (recipe stream target-dir)
-  "Return list of HTML `tr' dom nodes (main row and full-width detail row) for RECIPE on STREAM."
+  "Return list of `tr' dom nodes (main and detail rows) for RECIPE on STREAM."
   (unless (elpaish-recipe-disabled-for-stream-p recipe stream)
     (when-let* ((ver-str (elpaish-recipe-version-for-stream recipe stream)))
       (let* ((name (elpaish-recipe-name recipe))
@@ -373,7 +373,7 @@ for `package-check-signature' to actually verify anything."
 
 ;;;###autoload
 (defun elpaish-generate-top-index (&optional output-dir)
-  "Generate top-level static `index.html' landing page and about page in OUTPUT-DIR."
+  "Generate static `index.html' landing page and about page in OUTPUT-DIR."
   (let ((target-dir (or output-dir elpaish-output-dir)))
     (make-directory target-dir t)
     (elpaish-generate-about-page target-dir)
@@ -432,7 +432,7 @@ for `package-check-signature' to actually verify anything."
 
 ;;;###autoload
 (defun elpaish-build-website (&optional output-directory-path)
-  "Regenerate all static HTML pages (landing page, about page, and stream catalogs).
+  "Regenerate all static HTML pages (landing, about, and stream catalogs).
 Does not rebuild package archives or re-derive git versions.
 OUTPUT-DIRECTORY-PATH defaults to `elpaish-output-dir'."
   (interactive)
@@ -449,6 +449,6 @@ OUTPUT-DIRECTORY-PATH defaults to `elpaish-output-dir'."
 (provide 'elpaish-website)
 
 ;; Local Variables:
-;; package-lint-main-file: "pkg/elpaish.el"
+;; package-lint-main-file: "elpaish.el"
 ;; End:
 ;;; elpaish-website.el ends here

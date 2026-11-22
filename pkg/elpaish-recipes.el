@@ -31,8 +31,8 @@ maintainer's personal directory layout into individual recipes."
 
 (defcustom elpaish-packages-files '("packages.el")
   "List of filenames or wildcard patterns from which to load package recipes.
-Each entry can be an absolute or relative path, or a glob pattern (e.g. \"packages.el\",
-\"recipes/*.el\", \"packages.d/*.el\")."
+Each entry can be an absolute or relative path, or a glob pattern
+(e.g. \"packages.el\", \"recipes/*.el\", \"packages.d/*.el\")."
   :type '(repeat string)
   :group 'elpaish)
 
@@ -43,7 +43,7 @@ Each entry can be an absolute or relative path, or a glob pattern (e.g. \"packag
 
 ;;;###autoload
 (defun elpaish-recipe-name-from-url (url)
-  "Derive bare package name from remote URL (e.g. \"xtdlib\" from \".../xtdlib.el.git\")."
+  "Derive bare package name from remote URL (e.g. \"xtdlib\")."
   (let* ((clean-url (string-trim-right url "/+"))
          (base (file-name-nondirectory clean-url))
          (sans-git (string-remove-suffix ".git" base))
@@ -77,11 +77,11 @@ Searches `elpaish-recipe-local-search-dirs', then \"external/NAME\" under
         url)))
 
 (defun elpaish-find-packages-files (&optional files)
-  "Locate all package definition files matching FILES or `elpaish-packages-files'.
-FILES may be a single file path/glob, a list of paths/globs, or nil (defaulting to
-`elpaish-packages-files' and `elpaish-packages-file').
-Expands wildcards across the current directory hierarchy and returns a deduplicated
-list of resolved existing file paths."
+  "Locate package definition files matching FILES or `elpaish-packages-files'.
+FILES may be a single path/glob, a list of paths/globs, or nil
+(defaulting to `elpaish-packages-files' and `elpaish-packages-file').
+Expands wildcards across the current directory hierarchy and returns a
+deduplicated list of resolved existing file paths."
   (let* ((patterns (cond
                     ((null files) (or elpaish-packages-files (list elpaish-packages-file)))
                     ((listp files) files)
@@ -113,12 +113,13 @@ list of resolved existing file paths."
 
 (defun elpaish-find-packages-file (&optional file)
   "Locate a primary package definitions FILE across current directory hierarchy.
-Defaults to `elpaish-packages-file' or the first file found by `elpaish-find-packages-files'."
+Defaults to `elpaish-packages-file' or the first file found by
+`elpaish-find-packages-files'."
   (car (elpaish-find-packages-files file)))
 
 ;;;###autoload
 (defun elpaish-load-packages (&optional files)
-  "Load package recipe definitions from FILES (defaults to `elpaish-packages-files').
+  "Load package recipe definitions from FILES (`elpaish-packages-files').
 FILES can be a single file/glob or a list of files/globs.
 Returns the number of registered recipes."
   (interactive)
@@ -191,6 +192,6 @@ enumerating every file here."
 (provide 'elpaish-recipes)
 
 ;; Local Variables:
-;; package-lint-main-file: "pkg/elpaish.el"
+;; package-lint-main-file: "elpaish.el"
 ;; End:
 ;;; elpaish-recipes.el ends here

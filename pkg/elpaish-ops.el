@@ -439,4 +439,8 @@ OWNER defaults to `elpaish-ops-github-owner' or the owner of
             (or keywords '("tools" "convenience")))))
 
 (provide 'elpaish-ops)
+
+;; Local Variables:
+;; package-lint-main-file: "elpaish.el"
+;; End:
 ;;; elpaish-ops.el ends here

@@ -15,19 +15,8 @@
 (require 'map)
 (require 'package)
 (require 'elpaish-async)
-(require 'logx nil t)
+(require 'logx)
 (require 'gen nil t)
-
-(unless (fboundp 'logx)
-  (defmacro logx (&rest args)
-    "Fallback logx macro when logx is not loaded."
-    (let* ((tail (if (and args (not (keywordp (car args)))) (cdr args) args))
-           (msg-expr (or (plist-get tail :msg)
-                         (plist-get tail :message)
-                         (car tail))))
-      (if msg-expr
-          `(message "%s" ,msg-expr)
-        '(ignore)))))
 
 (declare-function elpaish-recipe-p "elpaish" (object))
 (declare-function elpaish-recipe-name "elpaish" (recipe))
@@ -2614,7 +2603,7 @@ When FORCE is non-nil, force refresh even if no debounce timer was pending."
 (provide 'elpaish-install)
 
 ;; Local Variables:
-;; package-lint-main-file: "pkg/elpaish.el"
+;; package-lint-main-file: "elpaish.el"
 ;; End:
 
 ;;; elpaish-install.el ends here

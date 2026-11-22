@@ -27,7 +27,7 @@
 ;;; Theme Configuration & Design Tokens
 
 (defcustom elpaish-modus-theme 'modus-operandi
-  "Modus theme symbol to derive CSS colors from (`modus-operandi' or `modus-vivendi')."
+  "Modus theme to derive CSS colors from (e.g. `modus-operandi')."
   :type '(choice (const :tag "Modus Operandi (Light)" modus-operandi)
                  (const :tag "Modus Vivendi (Dark)" modus-vivendi)
                  (symbol :tag "Other Modus Theme"))
@@ -326,6 +326,6 @@ DECLARATIONS is an alist of (PROPERTY . VALUE) strings."
 (provide 'elpaish-css)
 
 ;; Local Variables:
-;; package-lint-main-file: "pkg/elpaish.el"
+;; package-lint-main-file: "elpaish.el"
 ;; End:
 ;;; elpaish-css.el ends here

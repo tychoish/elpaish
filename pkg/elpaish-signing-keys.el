@@ -423,8 +423,8 @@ public key)."
 (defun elpaish-run-key-ceremony (identity &optional output-dir expiry)
   "Run the full ELPAish key ceremony for IDENTITY end to end.
 Generates the master key (prompts for its passphrase interactively — keep
-one), adds a passphrase-less EXPIRY (default `elpaish-signing-key-default-expiry')
-signing subkey, copies
+one), adds a passphrase-less EXPIRY
+\(default `elpaish-signing-key-default-expiry') signing subkey, copies
 the auto-generated revocation cert, exports all artifacts to OUTPUT-DIR
 \(default `elpaish-key-output-dir'), and runs `elpaish-verify-signing-key'.
 This mints real key material — confirm you mean to run it."
@@ -443,6 +443,6 @@ This mints real key material — confirm you mean to run it."
 (provide 'elpaish-signing-keys)
 
 ;; Local Variables:
-;; package-lint-main-file: "pkg/elpaish.el"
+;; package-lint-main-file: "elpaish.el"
 ;; End:
 ;;; elpaish-signing-keys.el ends here

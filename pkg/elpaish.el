@@ -162,7 +162,9 @@ or `elpaish-staging' (pre-release tags and git describe)."
   (doc nil :type (choice null string) :documentation "Documentation URL or path.")
   (keywords nil :type list :documentation "List of keywords.")
   (requires nil :type list :documentation "Declared dependencies ((dep min-ver) ...).")
-  (org-files t :type (choice boolean list) :documentation "Org documentation files to bundle: t (all), nil (none), or list of globs/prefixes.")
+  (org-files t :type (choice boolean list)
+             :documentation
+             "Org documentation files to bundle: t, nil, or list of patterns.")
   (built-version-snapshot nil :type (choice null string) :documentation "Last built version for snapshot stream.")
   (built-version-stable nil :type (choice null string) :documentation "Last built version for stable stream.")
   (built-version-staging nil :type (choice null string) :documentation "Last built version for staging stream.")
@@ -194,7 +196,6 @@ publishing an incomplete archive.")
 (gv-define-setter elpaish-recipe-built-version (val recipe)
   `(setf (elpaish-recipe-built-version-snapshot ,recipe) ,val))
 
-;;;###autoload
 (defun elpaish--remote-url-p (path)
   "Return non-nil if PATH appears to be a remote repository URL or Git spec."
   (and (stringp path)
@@ -252,15 +253,17 @@ INFO-FILES (or INFO-DOC, INFO-DOCS, INFO-MANUAL, INFO-MANUALS) opts into
 Info manual generation; specify a file string, list of file strings, or t.
 INFO-SKIP is a boolean; when non-nil, suppresses Info manual generation
 for this package.
-DISABLED-STREAMS (or SUPPRESS-STREAMS) is a list of suppressed stream symbols.
+DISABLED-STREAMS (or SUPPRESS-STREAMS) is a list of suppressed stream
+symbols.
 HIDDEN omits the package from website catalogs without disabling publication.
 DOC (or DOCS-URL) is an optional URL or path to documentation.
-ORG-FILES (or INCLUDE-ORG) controls org docs inclusion (t, nil, or list of patterns).
+ORG-FILES (or INCLUDE-ORG) controls org docs inclusion
+(t, nil, or list of patterns).
 ORG-EXCLUDE adds patterns to exclude from org documentation.
 MIRROR (or MIRROR-P, EXTERNAL, EXTERNAL-P, THIRD-PARTY) tags the package
 as an upstream mirror.
 FORK (or FORK-P) tags the package as a maintained fork.
-ORIGIN explicitly specifies origin symbol: 'mirror, 'fork, or 'tychoish.
+ORIGIN explicitly specifies origin symbol: \\='mirror, \\='fork, or \\='tychoish.
 SUMMARY, URL, KEYWORDS, and REQUIRES provide package metadata."
   (let* ((raw-name (if (symbolp name) (symbol-name name) (string-trim name)))
          (name-str (string-remove-suffix ".el" raw-name))
@@ -666,7 +669,8 @@ are bundled into package archives unless excluded by recipe configuration."
 (defun elpaish--collect-files (repo-dir patterns &optional pkg-name recipe)
   "Collect relative file paths in REPO-DIR matching PATTERNS.
 Also includes README, LICENSE, and org documentation files.
-Excludes tests and generated descriptor files.  PKG-NAME overrides base name detection.
+Excludes tests and generated descriptor files.
+PKG-NAME overrides base name detection.
 When RECIPE is given, also excludes any sibling recipe's main file that
 shares RECIPE's source directory, other packages' descriptor files,
 and any patterns in RECIPE's `:exclude-files'."
@@ -740,7 +744,7 @@ VERSION, SUMMARY, REQS, URL, and KEYWORDS provide the descriptor metadata."
   "Non-nil if missing texinfo tools warning has already been logged.")
 
 (defun elpaish--texinfo-available-p ()
-  "Return non-nil if both makeinfo and install-info executables exist in `exec-path'."
+  "Return non-nil if makeinfo and install-info exist in `exec-path'."
   (and (executable-find "makeinfo")
        (executable-find "install-info")))
 
@@ -753,7 +757,7 @@ VERSION, SUMMARY, REQS, URL, and KEYWORDS provide the descriptor metadata."
     (logx 'warn :msg "Warning: `texinfo' (makeinfo/install-info) not found in PATH; info manual generation will be skipped.")))
 
 (defun elpaish--files-as-package-build-alist (files)
-  "Convert list of relative file paths FILES into a package-build (SRC . REL) alist."
+  "Convert list of relative paths FILES into a package-build (SRC . REL) alist."
   (mapcar (lambda (f) (cons f f)) files))
 
 (cl-defun elpaish--create-tar-package (repo-dir dest-file pkg-name-ver name files
@@ -843,7 +847,7 @@ RECIPE or INFO-SKIP governs whether Info manual generation runs."
 
 ;;;###autoload
 (defun elpaish-dependency-valid-p (dep)
-  "Return non-nil if package dependency DEP is builtin, in MELPA, or in `elpaish-registry'."
+  "Return non-nil if dependency DEP is builtin, in MELPA, or in `elpaish-registry'."
   (let* ((sym (cond ((symbolp dep) dep)
                     ((stringp dep) (intern dep))
                     ((consp dep) (if (symbolp (car dep)) (car dep) (intern (car dep))))
@@ -884,8 +888,8 @@ RECIPE or INFO-SKIP governs whether Info manual generation runs."
 
 ;;;###autoload
 (defun elpaish-check-recipe-dependencies (recipe)
-  "Check that all dependencies of RECIPE are builtin, in MELPA, in ELPAish, or self-provided.
-Returns a list of invalid dependency symbols if any are invalid, or nil if all are valid."
+  "Check that RECIPE dependencies are builtin, in MELPA, ELPAish, or self-provided.
+Returns a list of invalid dependency symbols, or nil if all are valid."
   (let* ((recipe-obj (cond ((and (fboundp 'elpaish-recipe-p) (elpaish-recipe-p recipe)) recipe)
                            ((stringp recipe) (and (boundp 'elpaish-registry) (gethash recipe elpaish-registry)))
                            ((symbolp recipe) (and (boundp 'elpaish-registry) (gethash (symbol-name recipe) elpaish-registry)))
@@ -912,8 +916,9 @@ Returns a list of invalid dependency symbols if any are invalid, or nil if all a
     (nreverse (delete-dups invalid))))
 ;;;###autoload
 (defun elpaish-validate-all-dependencies ()
-  "Validate that all dependencies of all registered packages are builtin, in MELPA, or in ELPAish.
-Returns an alist of (package . invalid-deps) for any packages with invalid dependencies."
+  "Validate that all dependencies of packages are builtin, MELPA, or ELPAish.
+Returns an alist of (package . invalid-deps) for any packages with invalid
+dependencies."
   (interactive)
   (let ((invalid-map nil))
     (dolist (recipe (hash-table-values elpaish-registry))
@@ -1117,7 +1122,6 @@ OUTPUT-FILE defaults to FILE.sig.  Return the signature path, or nil."
         (when (executable-find "gpg-connect-agent")
           (call-process "gpg-connect-agent" nil nil nil "reloadagent" "/bye"))))))
 
-;;;###autoload
 (defun elpaish--warm-gpg-agent ()
   "Ensure `gpg-agent' is running with loopback pinentry enabled.
 Warms the agent prior to parallel dispatch to eliminate keyring lock

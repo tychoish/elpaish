@@ -1,9 +1,7 @@
 ;;; elpaish-check.el --- Quality validation and preflight checks -*- lexical-binding: t -*-
 
 ;; Author: tychoish
-;; Version: 0.1.0
 ;; Keywords: tools, lisp, test, lint, maintenance
-;; Package-Requires: ((emacs "29.1"))
 ;; URL: https://github.com/tychoish/elpaish
 
 ;;; Commentary:
@@ -30,7 +28,8 @@
 
 (defun elpaish-check-buffer-name (&optional dir)
   "Return check compilation buffer name for DIR.
-Formatted as `*<project-name>-checks*' based on `project-current' and `project-name'."
+Formatted as `*<project-name>-checks*' based on `project-current' and
+`project-name'."
   (let* ((target-dir (expand-file-name (or dir default-directory)))
          (proj (and (fboundp 'project-current) (project-current nil target-dir)))
          (pname (or (and proj (fboundp 'project-name) (project-name proj))
@@ -39,8 +38,9 @@ Formatted as `*<project-name>-checks*' based on `project-current' and `project-n
 
 (defcustom elpaish-check-buffer-name #'elpaish-check-buffer-name
   "Buffer name or function used for ELPAish package quality check output.
-Defaults to `function:elpaish-check-buffer-name', formatting the buffer name as
-`*<project-name>-checks*' based on `project-current' and `project-name'."
+Defaults to `function:elpaish-check-buffer-name', formatting the buffer
+name as `*<project-name>-checks*' based on `project-current' and
+`project-name'."
   :type '(choice (function-item :tag "Default (*<project-name>-checks*)" elpaish-check-buffer-name)
                  (string :tag "Fixed Buffer Name")
                  (function :tag "Custom Function"))
@@ -291,7 +291,7 @@ Return cons (ERRORS . WARNINGS)."
     (cons (nreverse errs) (nreverse warns))))
 
 (defun elpaish-check--installed-package-dirs ()
-  "Return list of load-path directories for installed packages in `package-user-dir'."
+  "Return list of load-path dirs for packages in `package-user-dir'."
   (let ((dirs nil)
         (user-dir (and (boundp 'package-user-dir)
                        (stringp package-user-dir)
@@ -549,7 +549,7 @@ Only applies when the current buffer or DIR belongs to a project with .el files.
 
 ;;;###autoload
 (defun elpaish-check-enable-builder ()
-  "Enable `elpaish-run-checks' as the default build command for projects with .el files."
+  "Enable `elpaish-run-checks' as default build command for .el projects."
   (interactive)
   (add-hook 'emacs-lisp-mode-hook #'elpaish-check-setup-compile-command)
   (add-hook 'find-file-hook #'elpaish-check-maybe-setup-builder)
@@ -574,7 +574,7 @@ headers, and executes ERT test suites, exiting with 0 on success and 1 on error.
 (provide 'elpaish-check)
 
 ;; Local Variables:
-;; package-lint-main-file: "pkg/elpaish.el"
+;; package-lint-main-file: "elpaish.el"
 ;; End:
 ;;; elpaish-check.el ends here
 

@@ -33,6 +33,18 @@ jobs:
           load-paths: |
             pkg
             scripts
+          target-files: |
+            pkg/elpaish.el
+            pkg/elpaish-async.el
+            pkg/elpaish-check.el
+            pkg/elpaish-css.el
+            pkg/elpaish-install.el
+            pkg/elpaish-keyring.el
+            pkg/elpaish-ops.el
+            pkg/elpaish-recipes.el
+            pkg/elpaish-signing-keys.el
+            pkg/elpaish-website.el
+          package-lint-main-file: "pkg/elpaish.el"
           linters: "byte-compile checkdoc package-lint"
           required-linters: "byte-compile checkdoc package-lint"
 

@@ -4,8 +4,6 @@
 
 ;; Author: Tychoish <tycho@tychoish.com>
 ;; Keywords: convenience, tools
-;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
 
 ;;; Commentary:
 
@@ -214,4 +212,8 @@ TIMEOUT overrides `elpaish-build-timeout'."
       (eval form t)))))
 
 (provide 'elpaish-async)
+
+;; Local Variables:
+;; package-lint-main-file: "elpaish.el"
+;; End:
 ;;; elpaish-async.el ends here
