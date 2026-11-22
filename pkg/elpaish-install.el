@@ -73,6 +73,13 @@ for `elpaish-install-upgrade-packages'."
   :type '(repeat symbol)
   :group 'elpaish-install)
 
+(defcustom elpaish-install-package-groups nil
+  "Alist mapping package group symbols to group specifications.
+Each entry has the form `(GROUP-NAME :policy POLICY :packages (PKG ...))'
+or simple alist form `(GROUP-NAME . (PKG1 PKG2 ...))'."
+  :type '(alist :key-type symbol :value-type sexp)
+  :group 'elpaish-install)
+
 (defcustom elpaish-install-concurrency 1
   "Maximum concurrent package operations when running asynchronously.
 Defaults to 1 because in-session package installation modifies global
@@ -159,6 +166,75 @@ Returns `elpaish-install-upgrade-packages-list'."
       (setq elpaish-install-upgrade-packages-list
             (append elpaish-install-upgrade-packages-list (nreverse new-pkgs)))))
   elpaish-install-upgrade-packages-list)
+
+(defun elpaish-install--group-policy (group-entry)
+  "Return policy (`upgrade' or `install') for GROUP-ENTRY."
+  (cond
+   ((and (cdr group-entry) (keywordp (cadr group-entry)))
+    (or (plist-get (cdr group-entry) :policy) 'upgrade))
+   ((memq (car group-entry) '(install install-only))
+    'install)
+   (t 'upgrade)))
+
+(defun elpaish-install--group-packages-list (group-entry)
+  "Return list of package symbols from GROUP-ENTRY."
+  (let ((raw (if (and (cdr group-entry) (keywordp (cadr group-entry)))
+                 (plist-get (cdr group-entry) :packages)
+               (cdr group-entry))))
+    (seq-filter (lambda (p) (and (symbolp p) p))
+                (delete-dups (flatten-tree raw)))))
+
+;;;###autoload
+(defun elpaish-install-get-group-packages (group)
+  "Return list of package symbols registered under GROUP symbol."
+  (when-let* ((entry (assq group elpaish-install-package-groups)))
+    (elpaish-install--group-packages-list entry)))
+
+;;;###autoload
+(defun elpaish-install-register-group (group pkgs &optional policy)
+  "Register package symbols PKGS under group symbol GROUP with POLICY.
+POLICY can be `upgrade' (default) or `install' (install-only).
+If GROUP is `install' or `install-only' and POLICY is nil, POLICY defaults
+to `install'.
+Packages are registered into `elpaish-install-packages-list' and, if POLICY
+is `upgrade', into `elpaish-install-upgrade-packages-list'.
+Returns the updated `elpaish-install-package-groups'."
+  (unless (symbolp group)
+    (user-error "GROUP must be a symbol, got %S" group))
+  (let* ((actual-policy (or policy (if (memq group '(install install-only)) 'install 'upgrade)))
+         (clean-pkgs (seq-filter (lambda (p) (and (symbolp p) p))
+                                 (delete-dups (flatten-tree pkgs))))
+         (existing (assq group elpaish-install-package-groups))
+         (prior-pkgs (when existing (elpaish-install--group-packages-list existing)))
+         (combined (delete-dups (append prior-pkgs clean-pkgs)))
+         (spec (list :policy actual-policy :packages combined)))
+    (if existing
+        (setcdr existing spec)
+      (push (cons group spec) elpaish-install-package-groups))
+    (if (eq actual-policy 'upgrade)
+        (apply #'elpaish-install-register-upgrade-package clean-pkgs)
+      (apply #'elpaish-install-register-package clean-pkgs)))
+  elpaish-install-package-groups)
+
+;;;###autoload
+(defun elpaish-install-register-groups (groups)
+  "Register multiple package GROUPS.
+GROUPS is an alist where each entry is `(GROUP-NAME . (PKG1 PKG2 ...))'
+or `(GROUP-NAME :policy POLICY :packages (PKG1 ...))'.
+Returns `elpaish-install-package-groups'."
+  (dolist (entry groups)
+    (cond
+     ((and (consp entry) (keywordp (cadr entry)))
+      (elpaish-install-register-group
+       (car entry)
+       (plist-get (cdr entry) :packages)
+       (plist-get (cdr entry) :policy)))
+     ((consp entry)
+      (elpaish-install-register-group
+       (car entry)
+       (cdr entry)
+       (if (memq (car entry) '(install install-only)) 'install 'upgrade)))))
+  elpaish-install-package-groups)
 
 (defun elpaish-install--get-upgrade-packages ()
   "Return packages from upgrade list that are in `elpaish-install-packages-list'."
@@ -2077,6 +2153,7 @@ When no packages are specified in ARGS, defaults to
          (prefix-arg-val (when interactive-p (car args)))
          (remaining (if interactive-p nil args))
          (pkgs nil)
+         (group nil)
          (refresh t)
          (sync (not (null prefix-arg-val)))
          (async :default)
@@ -2089,6 +2166,7 @@ When no packages are specified in ARGS, defaults to
     (while remaining
       (let ((arg (pop remaining)))
         (cond
+         ((eq arg :group) (setq group (pop remaining)))
          ((eq arg :sync) (setq sync (pop remaining)))
          ((eq arg :async) (setq async (pop remaining)))
          ((eq arg :refresh) (setq refresh (pop remaining)))
@@ -2108,6 +2186,11 @@ When no packages are specified in ARGS, defaults to
          ((symbolp arg)
           (push arg pkgs)))))
     (setq pkgs (delete-dups (nreverse pkgs)))
+    (when group
+      (let ((group-pkgs (elpaish-install-get-group-packages group)))
+        (unless group-pkgs
+          (user-error "Group `%s' not found or has no registered packages" group))
+        (setq pkgs (delete-dups (append pkgs group-pkgs)))))
     (when elpaish-install--active-cancel-handle
       (user-error "An ELPAish package operation is already running"))
     (when pkgs
@@ -2125,6 +2208,30 @@ When no packages are specified in ARGS, defaults to
         (ignore concurrency pool-size)
         (elpaish-install--upgrade-run target-pkgs refresh is-sync delay callback
                                       'upgrade :confirm confirm :paused paused))))))
+
+;;;###autoload
+(defun elpaish-install-upgrade-group (group &optional sync)
+  "Upgrade all packages belonging to GROUP.
+Interactively, prompt for GROUP among `elpaish-install-package-groups'
+with completion.  With prefix argument SYNC, run synchronously."
+  (interactive
+   (let* ((groups (or elpaish-install-package-groups
+                      (user-error "No package groups registered")))
+          (table (mapcar (lambda (entry)
+                           (let* ((g (car entry))
+                                  (pol (elpaish-install--group-policy entry))
+                                  (pkgs (elpaish-install--group-packages-list entry)))
+                             (cons (symbol-name g)
+                                   (format "%d packages [%s]" (length pkgs) pol))))
+                         groups))
+          (choice (if (fboundp 'annotated-completing-read)
+                      (annotated-completing-read table :prompt "Upgrade package group: " :require-match t)
+                    (completing-read "Upgrade package group: " table nil t))))
+     (list (intern choice) current-prefix-arg)))
+  (let ((pkgs (elpaish-install-get-group-packages group)))
+    (unless pkgs
+      (user-error "Group `%s' has no registered packages" group))
+    (elpaish-install-upgrade-packages pkgs :sync (not (null sync)))))
 
 ;;;###autoload
 (cl-defun elpaish-install-bootstrap-packages (&rest args)

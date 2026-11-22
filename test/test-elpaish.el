@@ -2513,6 +2513,51 @@ source's last commit time rather than the time of the build."
      (setq elpaish-install-upgrade-packages-list '(pkg-base-1 pkg-not-in-list1))
      (should (equal (elpaish-install--get-upgrade-packages) '(pkg-base-1))))))
 
+(ert-deftest elpaish-test-register-group-upgrade-and-install-policies ()
+  "Test group registration maintains policy, group inventory, and flat lists."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-install-packages-list nil)
+         (elpaish-install-upgrade-packages-list nil)
+         (elpaish-install-package-groups nil))
+     (elpaish-install-register-group 'tools '(tool-a tool-b) 'upgrade)
+     (elpaish-install-register-group 'extras '(extra-1 extra-2) 'install)
+     (should (equal (elpaish-install-get-group-packages 'tools) '(tool-a tool-b)))
+     (should (equal (elpaish-install-get-group-packages 'extras) '(extra-1 extra-2)))
+     (should (member 'tool-a elpaish-install-upgrade-packages-list))
+     (should (member 'tool-b elpaish-install-upgrade-packages-list))
+     (should-not (member 'extra-1 elpaish-install-upgrade-packages-list))
+     (should-not (member 'extra-2 elpaish-install-upgrade-packages-list))
+     (should (member 'tool-a elpaish-install-packages-list))
+     (should (member 'extra-1 elpaish-install-packages-list)))))
+
+(ert-deftest elpaish-test-register-groups-alist ()
+  "Test batch registering multiple groups from alist."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-install-packages-list nil)
+         (elpaish-install-upgrade-packages-list nil)
+         (elpaish-install-package-groups nil)
+         (groups '((core . (core-a core-b))
+                   (install . (aux-1 aux-2)))))
+     (elpaish-install-register-groups groups)
+     (should (equal (elpaish-install-get-group-packages 'core) '(core-a core-b)))
+     (should (equal (elpaish-install-get-group-packages 'install) '(aux-1 aux-2)))
+     (should (equal elpaish-install-upgrade-packages-list '(core-a core-b)))
+     (should (equal elpaish-install-packages-list '(core-a core-b aux-1 aux-2))))))
+
+(ert-deftest elpaish-test-upgrade-packages-by-group ()
+  "Test upgrading targeted group only upgrades packages in that group."
+  (elpaish-test-with-temp-env
+   (let ((elpaish-install-packages-list nil)
+         (elpaish-install-upgrade-packages-list nil)
+         (elpaish-install-package-groups nil)
+         (upgraded nil))
+     (elpaish-install-register-groups '((group-1 . (g1-a g1-b))
+                                       (group-2 . (g2-a g2-b))))
+     (cl-letf (((symbol-function 'elpaish-install--upgrade-run)
+                (lambda (pkgs &rest _) (setq upgraded pkgs))))
+       (elpaish-install-upgrade-packages :group 'group-2 :sync t)
+       (should (equal upgraded '(g2-a g2-b)))))))
+
 (ert-deftest elpaish-test-install-packages-blocking-no-refresh-when-installed ()
   "Test `elpaish-install-packages' is blocking and skips refresh when all installed."
   (elpaish-test-with-temp-env
