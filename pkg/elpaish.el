@@ -932,6 +932,12 @@ Returns an alist of (package . invalid-deps) for any packages with invalid depen
   "Cache of recipe name -> preflight result (t or nil) for current build run.
 Avoids re-running preflight test suites redundantly across multiple streams.")
 
+(defvar elpaish--preflight-diagnostics (make-hash-table :test 'equal)
+  "Cache of recipe name -> preflight diagnostic error list.")
+
+(defvar elpaish--last-build-error nil
+  "Last failure diagnostic recorded during `elpaish-build-package'.")
+
 (defun elpaish-preflight-package (recipe)
   "Execute preflight quality gates on RECIPE.
 Returns t if checks pass, nil if quarantined."
@@ -983,6 +989,7 @@ Returns t if checks pass, nil if quarantined."
                    (passed (plist-get res :passed))
                    (errs (plist-get res :errors)))
               (unless passed
+                (setf (map-elt elpaish--preflight-diagnostics name) errs)
                 (logx 'warn :msg (format "PREFLIGHT QUARANTINE for %s: %d error(s)"
                                          name (length errs))
                       :pkg name :error-count (length errs) :errors errs)
@@ -1414,18 +1421,26 @@ Version numbers still track the source's last commit (see
     (unless (and main-file (file-exists-p main-file))
       (error "Main file %s not found in %s" main-file-name repo-dir))
     (unless (elpaish-preflight-package recipe)
-      (logx 'warn :msg (format "Skipping %s due to preflight quarantine." name)
-            :pkg name)
-      (push name elpaish--quarantined-packages)
-      (cl-return-from elpaish-build-package nil))
+      (let* ((diag (map-elt elpaish--preflight-diagnostics name))
+             (reason (if diag
+                         (format "Preflight quarantine (%s)" (if (listp diag) (car diag) diag))
+                       "Preflight quarantine")))
+        (setq elpaish--last-build-error reason)
+        (logx 'warn :msg (format "Skipping %s due to preflight quarantine: %s" name reason)
+              :pkg name)
+        (push name elpaish--quarantined-packages)
+        (cl-return-from elpaish-build-package nil)))
 
     ;; 2. Derive Version
     (let ((version-str (elpaish-derive-version recipe effective-stream)))
       (unless version-str
-        (when (eq effective-stream 'stable)
-          (logx 'info :msg (format "Omitting %s from stable: No clean semver Git tag." name)
-                :pkg name :stream 'stable))
-        (cl-return-from elpaish-build-package nil))
+        (let ((reason (if (eq effective-stream 'stable)
+                          "No clean semver Git tag for stable stream"
+                        "Unable to derive version from repository commits")))
+          (setq elpaish--last-build-error reason)
+          (logx 'info :msg (format "Omitting %s from %s: %s" name effective-stream reason)
+                :pkg name :stream effective-stream)
+          (cl-return-from elpaish-build-package nil)))
       ;; 3. Build artifact
       (make-directory target-dir t)
       (let* ((files (elpaish--collect-files repo-dir (elpaish-recipe-files recipe) name recipe))

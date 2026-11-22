@@ -276,10 +276,11 @@ or `:error' on failure."
             (condition-case err
                 (let ((artifact (elpaish-build-package recipe effective-stream build-dir)))
                   (if (not (and artifact (file-exists-p artifact)))
-                      (progn
-                        (logx 'error :msg (format "[elpaish] Failed to build %s" pkg-name)
-                              :pkg pkg-name)
-                        (list :status :failed :pkg pkg :error "Build produced no artifact"))
+                      (let ((err-msg (or (and (boundp 'elpaish--last-build-error) elpaish--last-build-error)
+                                         "Build produced no artifact")))
+                        (logx 'error :msg (format "[elpaish] Failed to build %s: %s" pkg-name err-msg)
+                              :pkg pkg-name :error err-msg)
+                        (list :status :failed :pkg pkg :error err-msg))
                     (let* ((built-desc (package-install-file artifact))
                            (desc (or (seq-find (lambda (candidate)
                                                  (equal (package-desc-version candidate)

@@ -379,7 +379,10 @@ byte-compilation and tests."
   (let* ((package-dir (expand-file-name (or dir default-directory)))
          (default-directory package-dir)
          (load-prefer-newer t)
-         (dir-pkg-name (file-name-nondirectory (directory-file-name package-dir)))
+         (dir-pkg-name (let ((dname (file-name-nondirectory (directory-file-name package-dir))))
+                         (if (member dname '("lisp" "pkg" "src"))
+                             (file-name-nondirectory (directory-file-name (file-name-directory (directory-file-name package-dir))))
+                           dname)))
          (pkg-files (if main-file
                         (list (expand-file-name main-file package-dir))
                       (elpaish-check--find-package-files package-dir)))
