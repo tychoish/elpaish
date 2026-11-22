@@ -1352,7 +1352,8 @@ Preserves underlying string text so ERT string matching remains intact."
       marker)))
 
 (defun elpaish-install--archives-summary (&optional initial-times refresh-state active-archive)
-  "Format string summarizing package archives with status icons and old -> new timestamps.
+  "Format string summarizing package archives.
+Include status icons and old -> new timestamps.
 INITIAL-TIMES is an alist mapping archive names to timestamps before refresh.
 REFRESH-STATE indicates refresh stage ([ ], [...], [x], [-]).  ACTIVE-ARCHIVE
 indicates which archive is actively downloading."
@@ -1393,7 +1394,8 @@ indicates which archive is actively downloading."
     ""))
 
 (defun elpaish-install--insert-version-link (pkg ver)
-  "Insert VER as a Dired button for PKG if installed directory exists, else plain text."
+  "Insert VER as a Dired button for PKG if installed directory exists.
+Otherwise, insert VER as plain text."
   (if (and ver (stringp ver) (not (string= ver "not installed")))
       (if-let* ((dir (elpaish-install--package-install-dir pkg ver)))
           (insert-button ver
