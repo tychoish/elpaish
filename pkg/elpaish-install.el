@@ -617,7 +617,6 @@ cancellation handle function when asynchronous."
             (funcall extract-descs run-res)
           run-res)))))
 
-;;;###autoload
 (defun elpaish-install--rejection-message (reject-val)
   "Return a message string for a sprite future's REJECT-VAL.
 REJECT-VAL may be a string (for example \"No available sprites\"), an
