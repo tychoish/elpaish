@@ -3004,6 +3004,71 @@ source's last commit time rather than the time of the build."
       (should (equal (plist-get settled-res :pkg) 'pkg-err))
       (should (string-search "Worker timeout" (plist-get settled-res :error))))))
 
+(defun elpaish-test--reject-fleet (form-value fallback &optional choice)
+  "Run a build whose fleet rejects; return (RESULT PROMPTED FALLBACK-AFTER).
+FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
+  (let ((fleet-future (list :fake-fleet-future t))
+        (elpaish-async-local-fallback fallback)
+        (noninteractive (null choice))
+        (prompted nil)
+        (settled nil))
+    (cl-letf (((symbol-function 'require)
+               (lambda (feature &optional _filename _noerror)
+                 (memq feature '(sprite sprite-fleet sprite-future map elpaish elpaish-recipes elpaish-async))))
+              ((symbol-function 'elpaish-async--build-package-form)
+               (lambda (&rest _) form-value))
+              ((symbol-function 'sprite-fleet-mapcar) (lambda (&rest _) fleet-future))
+              ((symbol-function 'sprite-future-then)
+               (lambda (_future _on-resolve &optional on-reject)
+                 (setq settled (funcall on-reject "No available sprites"))
+                 (list :chained settled)))
+              ((symbol-function 'read-multiple-choice)
+               (lambda (&rest _) (setq prompted t) (list choice)))
+              ((symbol-function 'message) #'ignore))
+      (elpaish-async-build-package-in-sprite 'pkg-one)
+      (list settled prompted elpaish-async-local-fallback))))
+
+(ert-deftest elpaish-test-async-fallback-asks-and-builds-on-yes ()
+  (let ((res (elpaish-test--reject-fleet '(quote (:status :ok :pkg pkg-one)) 'ask ?y)))
+    (should (equal (car res) '(:status :ok :pkg pkg-one)))
+    (should (nth 1 res))
+    (should (eq (nth 2 res) 'ask))))
+
+(ert-deftest elpaish-test-async-fallback-declined-fails-without-building ()
+  (let ((res (elpaish-test--reject-fleet '(error "must not run") 'ask ?n)))
+    (should (eq (plist-get (car res) :status) :failed))
+    (should (eq (plist-get (car res) :stage) :sprite-dispatch))
+    (should (string-search "not permitted" (plist-get (car res) :error)))
+    (should (nth 1 res))))
+
+(ert-deftest elpaish-test-async-fallback-always-choice-sticks ()
+  (let ((res (elpaish-test--reject-fleet '(quote (:status :ok :pkg pkg-one)) 'ask ?a)))
+    (should (equal (car res) '(:status :ok :pkg pkg-one)))
+    (should (eq (nth 2 res) 'always))))
+
+(ert-deftest elpaish-test-async-fallback-policy-skips-prompt ()
+  (let ((always (elpaish-test--reject-fleet '(quote (:status :ok :pkg pkg-one)) 'always ?n))
+        (never (elpaish-test--reject-fleet '(error "must not run") 'never ?y)))
+    (should (equal (car always) '(:status :ok :pkg pkg-one)))
+    (should-not (nth 1 always))
+    (should (eq (plist-get (car never) :status) :failed))
+    (should-not (nth 1 never))))
+
+(ert-deftest elpaish-test-async-fallback-noninteractive-ask-fails ()
+  "Without a user to consent, `ask' fails the build instead of building."
+  (let ((res (elpaish-test--reject-fleet '(error "must not run") 'ask nil)))
+    (should (eq (plist-get (car res) :status) :failed))
+    (should (eq (plist-get (car res) :stage) :sprite-dispatch))
+    (should-not (nth 1 res))))
+
+(ert-deftest elpaish-test-async-local-fallback-reports-build-errors ()
+  "A failing local fallback build yields a failed result, not a signal."
+  (let ((res (elpaish-test--reject-fleet '(error "compile exploded") 'always)))
+    (should (eq (plist-get (car res) :status) :failed))
+    (should (eq (plist-get (car res) :stage) :local-fallback))
+    (should (equal (plist-get (car res) :pkg) 'pkg-one))
+    (should (string-search "compile exploded" (plist-get (car res) :error)))))
+
 (ert-deftest elpaish-test-rejection-message-never-signals ()
   "Sprite rejections come as strings, error objects, lists, or other values."
   (should (equal (elpaish-install--rejection-message "No available sprites")
