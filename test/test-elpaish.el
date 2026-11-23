@@ -2100,6 +2100,28 @@ source's last commit time rather than the time of the build."
                           (pkg-installed upgraded :upgraded))))
          (should (equal finished-events '((2 upgrade)))))))))
 
+(ert-deftest elpaish-test-install-after-package-install-hook ()
+  "Run the after-install hook once per installed or upgraded package.
+`elpaish-install-after-package-install-hook' is a normal hook, so functions
+take no arguments, and it runs alongside
+`elpaish-install-package-updated-functions'."
+  (elpaish-test-with-temp-env
+   (let ((runs 0)
+         (updated nil))
+     (let ((elpaish-install-after-package-install-hook
+            (list (lambda () (cl-incf runs))))
+           (elpaish-install-package-updated-functions
+            (list (lambda (pkg status _res) (push (list pkg status) updated)))))
+       (cl-letf (((symbol-function 'package-installed-p)
+                  (lambda (p) (eq p 'pkg-installed)))
+                 ((symbol-function 'package-install) #'ignore)
+                 ((symbol-function 'package-upgrade) #'ignore)
+                 ((symbol-function 'package-refresh-contents) #'ignore))
+         (elpaish-install-bootstrap-packages 'pkg-new 'pkg-installed :sync t)
+         (should (= runs 2))
+         (should (equal (reverse updated)
+                        '((pkg-new installed) (pkg-installed upgraded)))))))))
+
 (ert-deftest elpaish-test-report-summary-formatting ()
   "Test `elpaish-install--report-summary' formats named package progress and results."
   (let* ((last-msg nil)
