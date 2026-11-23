@@ -351,5 +351,25 @@ packed refs and linked worktrees."
     (should (string-match-p "github.com/me/demo"
                             (elpaish-ops-recipe-snippet "demo" :owner "me")))))
 
+(ert-deftest elpaish-ops-test-resolve-repo-path-fetches-late-tags ()
+  "A tag pushed after the initial clone is visible after re-resolving."
+  (let* ((tmp (make-temp-file "elpaish-tags-" t))
+         (origin (elpaish-ops-test--repo tmp "origin"))
+         (elpaish-work-dir (expand-file-name "work" tmp))
+         (recipe (elpaish-recipe-create :name "demo"
+                                        :repository-path origin
+                                        :branch "main")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'elpaish--remote-url-p) (lambda (_) t))
+                  ((symbol-function 'elpaish-recipe-repository-path)
+                   (lambda (_) origin)))
+          (let* ((elpaish--resolved-repo-path-cache (make-hash-table :test 'eq))
+                 (dir (elpaish--resolve-repo-path recipe)))
+            (elpaish-ops-test--git origin "tag" "v0.2.0")
+            (setq elpaish--resolved-repo-path-cache (make-hash-table :test 'eq))
+            (elpaish--resolve-repo-path recipe)
+            (should (equal "v0.2.0" (elpaish-ops-test--git dir "tag" "-l")))))
+      (delete-directory tmp t))))
+
 (provide 'test-elpaish-ops)
 ;;; test-elpaish-ops.el ends here

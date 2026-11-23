@@ -421,7 +421,7 @@ is resolved more than once (its own preflight/build, plus as a sibling
         (make-directory elpaish-work-dir t)
         (if (file-exists-p (expand-file-name ".git" pkg-dir))
             (let ((default-directory pkg-dir))
-              (call-process "git" nil nil nil "fetch" "origin")
+              (call-process "git" nil nil nil "fetch" "--tags" "--force" "origin")
               (call-process "git" nil nil nil "checkout" branch)
               (call-process "git" nil nil nil "reset" "--hard" (concat "origin/" branch)))
           (call-process "git" nil nil nil "clone" "--branch" branch repo-target pkg-dir))
