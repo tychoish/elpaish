@@ -3751,8 +3751,8 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
          (should (null (plist-get (cdr captured-args) :async)))
          (should (eq (plist-get (cdr captured-args) :sync) t)))))))
 
-(ert-deftest elpaish-test-upgrade-cleanup-legacy-packages-option-and-toggle ()
-  "Test legacy package cleanup option and interactive toggle in progress buffer."
+(ert-deftest elpaish-test-upgrade-cleanup-legacy-packages-always-on ()
+  "Stale package cleanup always runs, even when :cleanup is nil."
   (elpaish-test-with-temp-env
    (let* ((clean-called 0)
           (package-user-dir (expand-file-name "elpa" temp-dir))
@@ -3770,24 +3770,17 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
                 (lambda (&optional _no-prompt)
                   (cl-incf clean-called)
                   3)))
-       ;; Run with :cleanup t
+       ;; cleanup runs even when explicitly disabled
        (elpaish-install--upgrade-run
-        '(pkg-cl1) nil nil 0 nil 'upgrade :cleanup t)
+        '(pkg-cl1) nil nil 0 nil 'upgrade :cleanup nil)
        ;; Drain queue to complete all stages
        (while queue (funcall (pop queue)))
        (should (= clean-called 1))
        (with-current-buffer "*ELPAish Upgrade Progress*"
          (let ((text (buffer-string)))
            (should (string-match-p "Clean up legacy packages (3 legacy packages cleaned)" text))
-           (should (string-match-p "Controls:.*cleanup on" text))))
-       ;; Test interactive toggle command
-       (with-current-buffer "*ELPAish Upgrade Progress*"
-         (elpaish-install-progress-toggle-cleanup)
-         (should (null (plist-get elpaish-install--progress-context :cleanup)))
-         (should (string-match-p "Controls:.*cleanup off" (buffer-string)))
-         (elpaish-install-progress-toggle-cleanup)
-         (should (plist-get elpaish-install--progress-context :cleanup))
-         (should (string-match-p "Controls:.*cleanup on" (buffer-string))))))))
+           (should (string-match-p "cleanup always on" text))
+           (should (string-match-p "p/SPC +pause" text))))))))
 
 (ert-deftest elpaish-test-upgrade-progress-mode-line-and-archives-summary ()
   "Test shortened mode-line and archive old -> new summary formatting."

@@ -112,12 +112,9 @@ Defaults to nil (off).  Can also be toggled interactively in
   "Face used in the progress buffer to gray out up-to-date packages."
   :group 'elpaish-install)
 
-(defcustom elpaish-install-cleanup-legacy nil
-  "When non-nil, clean up older, duplicate versions of upgraded packages.
-Defaults to nil (off).  Can also be toggled interactively in
-`elpaish-install-progress-mode' with `elpaish-install-progress-toggle-cleanup'."
-  :type 'boolean
-  :group 'elpaish-install)
+(defvar elpaish-install-cleanup-legacy t
+  "Obsolete: stale package versions are always cleaned up after an operation.")
+(make-obsolete-variable 'elpaish-install-cleanup-legacy nil "0.1.0")
 
 (defcustom elpaish-install-package-updated-functions nil
   "Hook run when a package is installed or upgraded by `elpaish-install'.
@@ -1481,8 +1478,6 @@ Otherwise, insert VER as plain text."
     (define-key map (kbd "d") #'elpaish-install-progress-set-delay)
     (define-key map (kbd "i") #'elpaish-install-progress-toggle-confirm)
     (define-key map (kbd "C") #'elpaish-install-progress-toggle-confirm)
-    (define-key map (kbd "l") #'elpaish-install-progress-toggle-cleanup)
-    (define-key map (kbd "L") #'elpaish-install-progress-toggle-cleanup)
     (define-key map (kbd "C-g") #'elpaish-install-progress-soft-quit)
     (define-key map (kbd "q") #'elpaish-install-progress-quit)
     (define-key map (kbd "x") #'elpaish-install-progress-cancel)
@@ -1647,19 +1642,6 @@ Optional FACTOR divides the current delay (defaults to 2.0)."
           :confirm new-val)
     new-val))
 
-(defun elpaish-install-progress-toggle-cleanup ()
-  "Toggle cleanup of legacy/stale package versions for the current operation."
-  (interactive)
-  (let ((new-val (not (plist-get elpaish-install--progress-context :cleanup))))
-    (when elpaish-install--progress-context
-      (setf (plist-get elpaish-install--progress-context :cleanup) new-val))
-    (when (functionp elpaish-install--progress-control-fn)
-      (funcall elpaish-install--progress-control-fn :set-cleanup new-val))
-    (logx 'info :msg (format "[elpaish] Cleanup legacy packages %s."
-                             (if new-val "enabled" "disabled"))
-          :cleanup new-val)
-    new-val))
-
 (defun elpaish-install-progress-menu ()
   "Action menu for ELPAish package progress buffer."
   (interactive)
@@ -1670,7 +1652,6 @@ Optional FACTOR divides the current delay (defaults to 2.0)."
                     ("Speed up execution" "[-/<] Decrease yield delay" . elpaish-install-progress-speed-up)
                     ("Set yield delay" "[d] Set custom yield delay seconds" . elpaish-install-progress-set-delay)
                     ("Toggle intermediate confirmation" "[i/C] Step-by-step confirmation" . elpaish-install-progress-toggle-confirm)
-                    ("Toggle cleanup legacy packages" "[l/L] Clean up older duplicate versions" . elpaish-install-progress-toggle-cleanup)
                     ("Restart operation" "[g] Restart current package operation" . elpaish-install-progress-restart)
                     ("Cancel operation" "[x/k] Cancel package operation" . elpaish-install-progress-cancel)
                     ("Install local package" "Build and install specific recipe" . elpaish-install-local-package)
@@ -1735,9 +1716,7 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
              (cur-confirm (if (plist-member stats :confirm)
                               (plist-get stats :confirm)
                             (plist-get ctx :confirm)))
-             (cur-cleanup (if (plist-member stats :cleanup)
-                              (plist-get stats :cleanup)
-                            (plist-get ctx :cleanup))))
+             (cur-cleanup t))
         (setq-local header-line-format nil)
         (erase-buffer)
         (insert (propertize (format "ELPAish package %s [%s]\n" op-title status-lbl)
@@ -1749,11 +1728,22 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
         (insert (format "Packages: %d total (%d current, %d work item%s: %d done, %d pending)\n"
                         total-count utd-count work-total (if (= work-total 1) "" "s")
                         work-done (max 0 (- work-total work-done))))
-        (insert (propertize (format "Controls: delay %ss | confirm %s | cleanup %s  ([p/SPC] pause, [c] continue, [+/-/d] delay, [i] confirm, [l] cleanup, [g] restart, [x] cancel, [?] menu)\n\n"
+        (insert (propertize (format "Settings: delay %ss | confirm %s | stale-package cleanup always on\n"
                                     cur-delay
-                                    (if cur-confirm "on" "off")
-                                    (if cur-cleanup "on" "off"))
+                                    (if cur-confirm "on" "off"))
                             'face 'shadow))
+        (seq-do
+         (lambda (row)
+           (insert "  ")
+           (seq-do (lambda (cell)
+                     (insert (propertize (format "%-9s" (car cell)) 'face 'help-key-binding)
+                             (format " %-14s" (cdr cell))))
+                   row)
+           (insert "\n"))
+         '((("p/SPC" . "pause") ("c" . "continue") ("g" . "restart"))
+           (("+/-" . "delay") ("d" . "set delay") ("i" . "confirm"))
+           (("x" . "cancel") ("q" . "quit") ("?" . "menu"))))
+        (insert "\n")
         (unless (eq action 'repo-install)
           (let ((arch-start (point)))
             (insert (elpaish-install--archives-summary
@@ -1836,7 +1826,13 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
               (progn
                 (set-window-point win active-pos)
                 (unless (pos-visible-in-window-p active-pos win)
-                  (set-window-start win active-pos)))
+                  ;; keep the active line in the lower-middle of the window
+                  (set-window-start
+                   win
+                   (save-excursion
+                     (goto-char active-pos)
+                     (forward-line (- (round (* 0.6 (window-body-height win)))))
+                     (point)))))
             (when old-point (set-window-point win (min old-point (point-max))))))
         (setq elpaish-install--progress-last-active active-key)))
     (redisplay)))
@@ -1850,13 +1846,14 @@ STREAM specifies the release stream for \\='repo-install.  CONFIRM enables
 intermediate confirmation prompts (default
 `elpaish-install-confirm-intermediate').
 PAUSED starts the operation in paused state when non-nil.
-CLEANUP enables removing older duplicate package versions after changes."
+CLEANUP is obsolete and ignored: stale package versions are always removed."
+  (ignore cleanup)
   (let* ((buffer (get-buffer-create "*ELPAish Upgrade Progress*"))
          (act (or action 'upgrade))
          (cur-delay (or delay elpaish-install-yield-delay))
          (cur-confirm (if confirm t elpaish-install-confirm-intermediate))
          (cur-paused paused)
-         (cur-cleanup (if (not (null cleanup)) cleanup elpaish-install-cleanup-legacy))
+         (cur-cleanup t)
          (cleanup-state "[ ]")
          (entries (seq-map (lambda (pkg)
                              (let* ((ver (elpaish-install--installed-version pkg))
@@ -2260,9 +2257,6 @@ CLEANUP enables removing older duplicate package versions after changes."
                        (funcall render))
                       (:set-confirm
                        (setq cur-confirm (and arg t))
-                       (funcall render))
-                      (:set-cleanup
-                       (setq cur-cleanup (and arg t))
                        (funcall render))
                       (:render
                        (funcall render))))))
