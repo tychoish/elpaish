@@ -4,7 +4,7 @@
 ;; Version: 0.1.0
 ;; URL: https://github.com/tychoish/elpaish
 ;; Keywords: maint, tools, local, package, elpa
-;; Package-Requires: ((emacs "28.1") (annotated-completing-read "0.1.0") (compat "30.0.0.0") (gen "0.1.0") (htmlize "1.34") (logx "0.1.0") (map "3.0") (modus-themes "4.0.0") (package-build "0.1") (seq "2.0") (web-server "0.1.2") (transient "0.3.0"))
+;; Package-Requires: ((emacs "28.1") (elpaish-keyring "0.1.0") (annotated-completing-read "0.1.0") (compat "30.0.0.0") (gen "0.1.0") (htmlize "1.34") (logx "0.1.0") (map "3.0") (modus-themes "4.0.0") (package-build "0.1") (seq "2.0") (web-server "0.1.2") (transient "0.3.0"))
 
 ;;; Commentary:
 ;; ELPAish is a toolkit for building (and a prototype application of) an
@@ -2280,15 +2280,15 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
     ("b" "Build single package" elpaish-build-single)
     ("a" "Build all packages (all streams)" (lambda () (interactive) (elpaish-build-all 'all)))
     ("rd" "Build snapshot stream" (lambda () (interactive) (elpaish-build-all 'snapshot)))
-    ("rlts" "Build stable stream" (lambda () (interactive) (elpaish-build-all 'stable)))
-    ("rrc" "Build staging stream" (lambda () (interactive) (elpaish-build-all 'staging)))]
+    ("rl" "Build stable stream" (lambda () (interactive) (elpaish-build-all 'stable)))
+    ("rs" "Build staging stream" (lambda () (interactive) (elpaish-build-all 'staging)))]
    ["Quality & Inspection"
     ("po" "Preflight single package" elpaish-preflight-single)
     ("pa" "Preflight all packages" elpaish-status-preflight-all)
     ("v" "Status overview" elpaish-status)
     ("c" "Run quality check suite" elpaish-run-checks)
     ("l" "View build log" elpaish-view-build-log)
-    ("cl" "View check log" elpaish-view-check-log)]
+    ("e" "View check log" elpaish-view-check-log)]
    ["Website & Preview"
     ("g" "Rebuild website only" elpaish-build-website)
     ("wo" "Start local preview server" elpaish-serve-local)
@@ -2300,7 +2300,7 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
     ("k" "Export GPG keyring" elpaish-export-keyring)
     ("TKO" "Rotate GPG signing keys" elpaish-rotate-keys)]
    ["Package Operations"
-    ("i" "Install missing packages" elpaish-install-packages)
+    ("im" "Install missing packages" elpaish-install-packages)
     ("ip" "Install repository package" elpaish-install-repository-package)
     ("ir" "Install repository packages" elpaish-install-repository-packages)
     ("u" "Upgrade packages (background)" elpaish-install-upgrade-packages)]])
