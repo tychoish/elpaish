@@ -1679,7 +1679,7 @@ source's last commit time rather than the time of the build."
        (should timer-called)
        (should callback-called)))))
 
-(ert-deftest elpaish-test-install-repository-local ()
+(ert-deftest elpaish-test-install-local-dir ()
   "Build and install a local repository into the current package session."
   (elpaish-test-with-temp-env
    (let* ((repo (expand-file-name "example-repo" temp-dir))
@@ -1691,14 +1691,14 @@ source's last commit time rather than the time of the build."
           (load-path (copy-sequence load-path)))
      (elpaish-test-create-dummy-pkg repo "example-pkg" "1.0" "Example package")
      (cl-letf (((symbol-function 'package--save-selected-packages) #'ignore))
-       (let ((desc (elpaish-install-repository repo :name 'example-pkg)))
+       (let ((desc (elpaish-install-local repo :name 'example-pkg)))
          (should (eq (package-desc-name desc) 'example-pkg))
          (should (package-installed-p 'example-pkg))
          (should (file-exists-p (expand-file-name "example-pkg.el" (package-desc-dir desc))))
          (should (member (package-desc-dir desc) load-path))
          (should-not (gethash "example-pkg" elpaish-registry)))))))
 
-(ert-deftest elpaish-test-install-repository-recipe-tar ()
+(ert-deftest elpaish-test-install-local-recipe-tar ()
   "Install a multi-file package from a recipe without modifying it."
   (elpaish-test-with-temp-env
    (let* ((repo (expand-file-name "repo" temp-dir))
@@ -1714,22 +1714,22 @@ source's last commit time rather than the time of the build."
        (insert ";;; extra.el --- Extra file -*- lexical-binding: t; -*-\n"))
      (let ((recipe (elpaish-register-package 'recipe-pkg repo :source-dir "src")))
        (cl-letf (((symbol-function 'package--save-selected-packages) #'ignore))
-         (let ((desc (elpaish-install-repository recipe)))
+         (let ((desc (elpaish-install-local recipe)))
            (should (eq (package-desc-name desc) 'recipe-pkg))
            (should (file-exists-p (expand-file-name "extra.el" (package-desc-dir desc))))
            (should-not (elpaish-recipe-built-version-snapshot recipe))))))))
 
-(ert-deftest elpaish-test-install-repository-build-failure ()
+(ert-deftest elpaish-test-install-local-build-failure ()
   "A failed build never invokes package installation."
   (elpaish-test-with-temp-env
    (let ((installed nil))
      (cl-letf (((symbol-function 'elpaish-build-package) (lambda (&rest _) nil))
                ((symbol-function 'package-install-file) (lambda (_) (setq installed t))))
-       (should-error (elpaish-install-repository temp-dir :name 'missing))
+       (should-error (elpaish-install-local temp-dir :name 'missing))
        (should-not installed)))))
 
-(ert-deftest elpaish-test-install-repository-packages-scopes ()
-  "Test `elpaish-install-repository-packages' across installed, upgrade, and all scopes."
+(ert-deftest elpaish-test-install-local-packages-scopes ()
+  "Test `elpaish-install-local-packages' across installed, upgrade, and all scopes."
   (elpaish-test-with-temp-env
    (let* ((repo1 (expand-file-name "repo1" temp-dir))
           (repo2 (expand-file-name "repo2" temp-dir))
@@ -1752,45 +1752,45 @@ source's last commit time rather than the time of the build."
        (cl-letf (((symbol-function 'package--save-selected-packages) #'ignore)
                  ((symbol-function 'native-compile-async) #'ignore))
          ;; 1. Test scope 'upgrade installs only pkg-one
-         (let ((descs (elpaish-install-repository-packages 'upgrade)))
+         (let ((descs (elpaish-install-local-packages 'upgrade)))
            (should (= (length descs) 1))
            (should (eq (package-desc-name (car descs)) 'pkg-one)))
          ;; 2. Test scope 'installed installs pkg-one and pkg-two
-         (let ((descs (elpaish-install-repository-packages 'installed)))
+         (let ((descs (elpaish-install-local-packages 'installed)))
            (should (= (length descs) 2))
            (should (member (package-desc-name (nth 0 descs)) '(pkg-one pkg-two)))
            (should (member (package-desc-name (nth 1 descs)) '(pkg-one pkg-two))))
          ;; 3. Test explicit list installs specified package
-         (let ((descs (elpaish-install-repository-packages '(pkg-three))))
+         (let ((descs (elpaish-install-local-packages '(pkg-three))))
            (should (= (length descs) 1))
            (should (eq (package-desc-name (car descs)) 'pkg-three)))
          ;; 4. Test scope 'all installs all 3 packages
-         (let ((descs (elpaish-install-repository-packages 'all)))
+         (let ((descs (elpaish-install-local-packages 'all)))
            (should (= (length descs) 3))))))))
 
-(ert-deftest elpaish-test-install-repository-delegation ()
-  "Test that `elpaish-install-repository' delegates to `elpaish-install-repository-packages'."
+(ert-deftest elpaish-test-install-local-delegation ()
+  "Test that `elpaish-install-local' delegates to `elpaish-install-local-packages'."
   (elpaish-test-with-temp-env
    (let ((invoked-scope nil))
-     (cl-letf (((symbol-function 'elpaish-install-repository-packages)
+     (cl-letf (((symbol-function 'elpaish-install-local-packages)
                 (lambda (scope &rest _) (setq invoked-scope scope) '(:mock-desc))))
        ;; Nil repository defaults to 'installed
-       (should (equal (elpaish-install-repository nil) '(:mock-desc)))
+       (should (equal (elpaish-install-local nil) '(:mock-desc)))
        (should (eq invoked-scope 'installed))
        ;; Empty string defaults to 'installed
        (setq invoked-scope nil)
-       (should (equal (elpaish-install-repository "   ") '(:mock-desc)))
+       (should (equal (elpaish-install-local "   ") '(:mock-desc)))
        (should (eq invoked-scope 'installed))
        ;; Scope symbols and keywords delegate appropriately
        (setq invoked-scope nil)
-       (should (equal (elpaish-install-repository 'upgrade) '(:mock-desc)))
+       (should (equal (elpaish-install-local 'upgrade) '(:mock-desc)))
        (should (eq invoked-scope 'upgrade))
        (setq invoked-scope nil)
-       (should (equal (elpaish-install-repository :all) '(:mock-desc)))
+       (should (equal (elpaish-install-local :all) '(:mock-desc)))
        (should (eq invoked-scope 'all))))))
 
-(ert-deftest elpaish-test-install-repository-packages-acr-menu ()
-  "Test interactive ACR selection for `elpaish-install-repository-packages'."
+(ert-deftest elpaish-test-install-local-packages-acr-menu ()
+  "Test interactive ACR selection for `elpaish-install-local-packages'."
   (elpaish-test-with-temp-env
    (let* ((repo (expand-file-name "repo" temp-dir))
           (package-user-dir (expand-file-name "installed" temp-dir))
@@ -1809,22 +1809,22 @@ source's last commit time rather than the time of the build."
                     (should (assoc "upgrade" table))
                     (should (assoc "all" table))
                     (should (equal (plist-get args :default) "installed"))
-                    (should (equal (plist-get args :prompt) "Install repository packages: "))
+                    (should (equal (plist-get args :prompt) "Install local packages: "))
                     "upgrade"))
                  ((symbol-function 'package--save-selected-packages) #'ignore)
                  ((symbol-function 'native-compile-async) #'ignore))
          ;; Interactive call with prefix arg exercises synchronous ACR execution
          (let* ((current-prefix-arg '(4))
-                (descs (call-interactively #'elpaish-install-repository-packages)))
+                (descs (call-interactively #'elpaish-install-local-packages)))
            (should (= (length descs) 1))
            (should (eq (package-desc-name (car descs)) 'pkg-one)))
          ;; Interactive call without prefix arg runs asynchronously and returns cancel handle
          (let* ((current-prefix-arg nil)
-                (handle (call-interactively #'elpaish-install-repository-packages)))
+                (handle (call-interactively #'elpaish-install-local-packages)))
            (should (functionp handle))))))))
 
-(ert-deftest elpaish-test-install-repository-packages-async-toggle ()
-  "Test prefix argument and async default resolution for `elpaish-install-repository-packages'."
+(ert-deftest elpaish-test-install-local-packages-async-toggle ()
+  "Test prefix argument and async default resolution for `elpaish-install-local-packages'."
   (let ((captured-sync nil)
         (elpaish-install--active-cancel-handle nil))
     (cl-letf (((symbol-function 'elpaish-install--upgrade-run)
@@ -1835,30 +1835,30 @@ source's last commit time rather than the time of the build."
       ;; Programmatic call with no sync/async: in interactive session (noninteractive=nil) defaults to async
       (let ((noninteractive nil))
         (setq elpaish-install--active-cancel-handle nil)
-        (let ((res (elpaish-install-repository-packages 'installed)))
+        (let ((res (elpaish-install-local-packages 'installed)))
           (should (null captured-sync))
           (should (functionp res))))
       ;; Programmatic call with noninteractive=t: defaults to sync
       (let ((noninteractive t))
         (setq elpaish-install--active-cancel-handle nil)
-        (let ((res (elpaish-install-repository-packages 'installed)))
+        (let ((res (elpaish-install-local-packages 'installed)))
           (should (eq captured-sync t))))
       ;; Programmatic call with :sync t: forces sync even if noninteractive is nil
       (let ((noninteractive nil))
         (setq elpaish-install--active-cancel-handle nil)
-        (let ((res (elpaish-install-repository-packages 'installed :sync t)))
+        (let ((res (elpaish-install-local-packages 'installed :sync t)))
           (should (eq captured-sync t))))
       ;; Interactive call with prefix arg: forces sync
       (let ((noninteractive nil)
             (current-prefix-arg '(4)))
         (setq elpaish-install--active-cancel-handle nil)
-        (call-interactively #'elpaish-install-repository-packages)
+        (call-interactively #'elpaish-install-local-packages)
         (should (eq captured-sync t)))
       ;; Interactive call without prefix arg: defaults to async
       (let ((noninteractive nil)
             (current-prefix-arg nil))
         (setq elpaish-install--active-cancel-handle nil)
-        (call-interactively #'elpaish-install-repository-packages)
+        (call-interactively #'elpaish-install-local-packages)
         (should (null captured-sync))))))
 
 (ert-deftest elpaish-test-upgrade-packages-alias-and-execution ()
@@ -3190,34 +3190,34 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
       (when (file-directory-p tmp)
         (delete-directory tmp t)))))
 
-(ert-deftest elpaish-test-install-repository-package-non-interactive ()
-  "Test `elpaish-install-repository-package' installs single and multiple packages."
+(ert-deftest elpaish-test-install-local-package-non-interactive ()
+  "Test `elpaish-install-local-package' installs single and multiple packages."
   (let ((installed nil)
         (noninteractive t)
         (elpaish-install--active-cancel-handle nil))
-    (cl-letf (((symbol-function 'elpaish-install-repository-packages)
+    (cl-letf (((symbol-function 'elpaish-install-local-packages)
                (lambda (targets &rest _args)
                  (setq installed (append installed targets))
                  (mapcar (lambda (p) (package-desc-create :name (if (symbolp p) p (intern p))))
                          targets))))
       ;; Single symbol
-      (let ((res (elpaish-install-repository-package 'foo)))
+      (let ((res (elpaish-install-local-package 'foo)))
         (should (equal installed '(foo)))
         (should (eq (package-desc-name res) 'foo)))
 
       ;; String or list
       (setq installed nil)
-      (let ((res (elpaish-install-repository-package '("bar" baz))))
+      (let ((res (elpaish-install-local-package '("bar" baz))))
         (should (equal installed '("bar" baz)))
         (should (equal (mapcar #'package-desc-name res) '(bar baz)))))))
 
-(ert-deftest elpaish-test-install-repository-package-interactive ()
-  "Test `elpaish-install-repository-package' interactive ACR selection."
+(ert-deftest elpaish-test-install-local-package-interactive ()
+  "Test `elpaish-install-local-package' interactive ACR selection."
   (elpaish-test-with-temp-env
    (let ((installed nil))
      (puthash "alpha" (elpaish-recipe-create :name 'alpha :summary "Alpha pkg") elpaish-registry)
      (puthash "beta" (elpaish-recipe-create :name 'beta :summary "Beta pkg") elpaish-registry)
-     (cl-letf (((symbol-function 'elpaish-install-repository-packages)
+     (cl-letf (((symbol-function 'elpaish-install-local-packages)
                 (lambda (targets &rest _args)
                   (setq installed (append installed targets))
                   (mapcar (lambda (p) (package-desc-create :name (if (symbolp p) p (intern p))))
@@ -3229,13 +3229,13 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
                     "alpha"))))
        ;; Single interactive selection
        (let ((current-prefix-arg nil))
-         (call-interactively #'elpaish-install-repository-package)
+         (call-interactively #'elpaish-install-local-package)
          (should (equal installed '(alpha))))
 
        ;; Multiple interactive selection with prefix arg
        (setq installed nil)
        (let ((current-prefix-arg '(4)))
-         (call-interactively #'elpaish-install-repository-package)
+         (call-interactively #'elpaish-install-local-package)
          (should (equal installed '(alpha beta))))))))
 
 (ert-deftest elpaish-test-build-all-non-blocking-interactive ()
@@ -3475,8 +3475,8 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
            (elpaish-install-progress-continue)))
        (should (equal (nreverse upgraded) '(pkg-conf-1 pkg-conf-2)))))))
 
-(ert-deftest elpaish-test-install-repository-packages-uses-progress-interface ()
-  "Test `elpaish-install-repository-packages' uses the `*ELPAish Upgrade Progress*' interface."
+(ert-deftest elpaish-test-install-local-packages-uses-progress-interface ()
+  "Test `elpaish-install-local-packages' uses the `*ELPAish Upgrade Progress*' interface."
   (elpaish-test-with-temp-env
    (let* ((repo1 (expand-file-name "repo-ui-1" temp-dir))
           (package-user-dir (expand-file-name "installed" temp-dir))
@@ -3491,7 +3491,7 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
        (cl-letf (((symbol-function 'display-buffer) #'ignore)
                  ((symbol-function 'package--save-selected-packages) #'ignore)
                  ((symbol-function 'native-compile-async) #'ignore))
-         (let ((descs (elpaish-install-repository-packages 'installed)))
+         (let ((descs (elpaish-install-local-packages 'installed)))
            (should (= (length descs) 1))
            (should (eq (package-desc-name (car descs)) 'pkg-ui-one))
            (with-current-buffer "*ELPAish Upgrade Progress*"
@@ -3726,19 +3726,19 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
        (with-current-buffer "*ELPAish Upgrade Progress*"
          (should (string-match-p "\\[Canceled\\]" (buffer-string))))))))
 
-(ert-deftest elpaish-test-install-repository-package-async-and-yielding ()
-  "Test `elpaish-install-repository-package' runs asynchronously with yielding."
+(ert-deftest elpaish-test-install-local-package-async-and-yielding ()
+  "Test `elpaish-install-local-package' runs asynchronously with yielding."
   (elpaish-test-with-temp-env
    (let* ((captured-args nil)
           (fake-handle (lambda (&rest _) :cancelled)))
-     (cl-letf (((symbol-function 'elpaish-install-repository-packages)
+     (cl-letf (((symbol-function 'elpaish-install-local-packages)
                 (lambda (targets &rest args)
                   (setq captured-args (cons targets args))
                   (if (plist-get args :sync)
                       (list (package-desc-create :name (car targets)))
                     fake-handle))))
        ;; Programmatic with :async t returns handle and passes :sync nil :async t
-       (let ((handle (elpaish-install-repository-package 'test-pkg :async t :delay 0.01)))
+       (let ((handle (elpaish-install-local-package 'test-pkg :async t :delay 0.01)))
          (should (eq handle fake-handle))
          (should (equal (car captured-args) '(test-pkg)))
          (should (null (plist-get (cdr captured-args) :sync)))
@@ -3746,7 +3746,7 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
          (should (= (plist-get (cdr captured-args) :delay) 0.01)))
        ;; Programmatic with :sync t passes :sync t :async nil
        (setq captured-args nil)
-       (let ((res (elpaish-install-repository-package 'test-pkg :sync t)))
+       (let ((res (elpaish-install-local-package 'test-pkg :sync t)))
          (should (eq (package-desc-name res) 'test-pkg))
          (should (null (plist-get (cdr captured-args) :async)))
          (should (eq (plist-get (cdr captured-args) :sync) t)))))))

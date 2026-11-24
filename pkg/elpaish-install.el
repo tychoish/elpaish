@@ -414,19 +414,19 @@ or `:error' on failure."
             (delete-directory temp-dir t)))))))
 
 ;;;###autoload
-(defun elpaish-install-repository (&optional repository &rest options)
+(defun elpaish-install-local (&optional repository &rest options)
   "Build REPOSITORY and install its package in the current Emacs session.
 REPOSITORY is a local directory, Git URL, or `elpaish-recipe'.  When
 REPOSITORY is omitted, nil, empty, or one of the scope symbols/keywords
 \\='installed, \\='upgrade, or \\='all, delegates to
-`elpaish-install-repository-packages' to build and install packages defined in
+`elpaish-install-local-packages' to build and install packages defined in
 the current ELPAish repository.
 
 For single repository strings, OPTIONS are keyword arguments accepted by
 `elpaish-register-package'; :name overrides the name derived from the
 repository path.  For example:
 
-  (elpaish-install-repository \"https://example.org/foo.git\"
+  (elpaish-install-local \"https://example.org/foo.git\"
                               :name \"foo\" :branch \"main\")
 
 A recipe object already contains its options and does not accept OPTIONS.
@@ -438,7 +438,7 @@ Return the installed `package-desc', or signal an error if the build fails.
 
 To install packages defined in the current ELPAish repository (with ACR menu
 selection across installed, upgrade, or all), see
-`elpaish-install-repository-packages'."
+`elpaish-install-local-packages'."
   (interactive
    (list (let ((input (read-string "Repository directory, Git URL, or scope (installed/upgrade/all, default installed): ")))
            (if (string-empty-p (string-trim input))
@@ -453,7 +453,7 @@ selection across installed, upgrade, or all), see
                   ((memq repository '(:upgrade upgrade)) 'upgrade)
                   ((memq repository '(:all all)) 'all)
                   (t 'installed))))
-      (apply #'elpaish-install-repository-packages scope options)))
+      (apply #'elpaish-install-local-packages scope options)))
    (t
     (require 'elpaish-recipes)
     (when (and (elpaish-recipe-p repository) options)
@@ -497,10 +497,10 @@ selection across installed, upgrade, or all), see
         (delete-directory temp-dir t))))))
 
 ;;;###autoload
-(cl-defun elpaish-install-repository-packages (&optional scope &key stream sync async delay confirm cleanup callback)
+(cl-defun elpaish-install-local-packages (&optional scope &key stream sync async delay confirm cleanup callback)
   "Build and install packages from the local ELPAish repository into Emacs.
 Unlike `elpaish-install-packages' (which installs pre-built archives from
-`package-archives') and `elpaish-install-repository' (which builds a single
+`package-archives') and `elpaish-install-local' (which builds a single
 package from an external Git URL or local directory), this operation builds
 packages directly from the recipe definitions registered in `elpaish-registry'
 and installs them into `package-user-dir' using `package-install-file',
@@ -560,7 +560,7 @@ cancellation handle function when asynchronous."
                       ("all"       . ,(format "All packages defined in repository (%d package%s)"
                                               all-count
                                               (if (= all-count 1) "" "s")))))
-             (prompt "Install repository packages: ")
+             (prompt "Install local packages: ")
              (choice (if (fboundp 'annotated-completing-read)
                          (annotated-completing-read table
                                                     :prompt prompt
@@ -645,7 +645,7 @@ error object, another list, or any other value; none of these may signal."
    ((consp reject-val) (format "%s" (cdr reject-val)))
    (t (format "%S" reject-val))))
 
-(cl-defun elpaish-install-repository-package (&optional package &key stream sync async delay confirm cleanup callback)
+(cl-defun elpaish-install-local-package (&optional package &key stream sync async delay confirm cleanup callback)
   "Build and install a PACKAGE from the local ELPAish repository into Emacs.
 PACKAGE can be a package symbol, string name, recipe, or a list of packages.
 When called interactively, prompts with an ACR (`annotated-completing-read')
@@ -680,7 +680,7 @@ cancellation handle function when asynchronous."
                                  (cons n (if (string-empty-p summary) "registered recipe" summary))))
                              names))
              (multi current-prefix-arg)
-             (prompt (if multi "Install repository package(s): " "Install repository package: "))
+             (prompt (if multi "Install local package(s): " "Install local package: "))
              (choice (if (fboundp 'annotated-completing-read)
                          (annotated-completing-read table
                                                     :prompt prompt
@@ -705,7 +705,7 @@ cancellation handle function when asynchronous."
          (wrapped-cb (when callback
                        (lambda (descs)
                          (funcall callback (if is-list descs (car descs))))))
-         (res (elpaish-install-repository-packages
+         (res (elpaish-install-local-packages
                targets
                :stream stream
                :sync is-sync
@@ -1673,8 +1673,8 @@ Optional FACTOR divides the current delay (defaults to 2.0)."
                     ("Toggle cleanup legacy packages" "[l/L] Clean up older duplicate versions" . elpaish-install-progress-toggle-cleanup)
                     ("Restart operation" "[g] Restart current package operation" . elpaish-install-progress-restart)
                     ("Cancel operation" "[x/k] Cancel package operation" . elpaish-install-progress-cancel)
-                    ("Install repository package" "Build and install specific recipe" . elpaish-install-repository-package)
-                    ("Install repository packages" "Build and install registered packages" . elpaish-install-repository-packages)
+                    ("Install local package" "Build and install specific recipe" . elpaish-install-local-package)
+                    ("Install local packages" "Build and install registered packages" . elpaish-install-local-packages)
                     ("Clean stale packages" "Remove unreferenced packages" . elpaish-install-clean-stale-packages)
                     ("Rebuild local package" "Recompile package directory" . elpaish-install-rebuild-local-package)
                     ("Quit progress window" "[q] Dismiss progress window" . elpaish-install-progress-quit)))
