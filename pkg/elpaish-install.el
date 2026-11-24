@@ -1489,6 +1489,7 @@ Otherwise, insert VER as plain text."
 
 (define-derived-mode elpaish-install-progress-mode special-mode "ELPAish"
   "Major mode for ELPAish package installation and upgrade progress."
+  (setq-local truncate-lines t)
   (setq buffer-undo-list t)
   (setq-local revert-buffer-function (lambda (_ignore-auto _noconfirm) (elpaish-install-progress-restart)))
   (setq-local mode-line-format
@@ -1497,8 +1498,7 @@ Otherwise, insert VER as plain text."
                                       (plist-get elpaish-install--progress-context :global-state))
                                  "ELPAish"))
                 "] "
-                mode-line-end-spaces))
-  (visual-line-mode 1))
+                mode-line-end-spaces)))
 
 (defun elpaish-install-progress-soft-quit ()
   "Dismiss transient input without canceling the package operation."
@@ -1721,6 +1721,7 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
         (erase-buffer)
         (insert (propertize (format "ELPAish package %s [%s]\n" op-title status-lbl)
                             'face '(:inherit header-line :weight bold :extend t)))
+        (insert "\n")
         (insert (propertize "Duration: " 'face 'bold)
                 (format "%s wall (%s actual, %s waiting)\n"
                         (elpaish-install--format-duration wall-time)
@@ -1731,7 +1732,7 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
                         total-count utd-count work-total (if (= work-total 1) "" "s")
                         work-done (max 0 (- work-total work-done))))
         (insert (propertize "Settings: " 'face 'bold)
-                (format "delay %ss | confirm %s | stale-package cleanup always on\n"
+                (format "delay: %ss | confirm: %s\n"
                         cur-delay
                         (if cur-confirm "on" "off")))
         (insert "\n")

@@ -3435,7 +3435,7 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
          (should (>= (plist-get elpaish-install--progress-context :delay) 0.1))
          (elpaish-install-progress-set-delay 0.5)
          (should (equal (plist-get elpaish-install--progress-context :delay) 0.5))
-         (should (string-match-p "delay 0.5s" (buffer-string)))
+         (should (string-match-p "delay: 0.5s" (buffer-string)))
          (elpaish-install-progress-speed-up)
          (should (equal (plist-get elpaish-install--progress-context :delay) 0.25))
          ;; Test pause and toggle-pause
@@ -3787,7 +3787,9 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
        (with-current-buffer "*ELPAish Upgrade Progress*"
          (let ((text (buffer-string)))
            (should (string-match-p "Clean up legacy packages (3 legacy packages cleaned)" text))
-           (should (string-match-p "cleanup always on" text))
+           (should (string-match-p "delay: .* | confirm: off" text))
+           (should-not (string-match-p "always on" text))
+           (should (buffer-local-value 'truncate-lines (current-buffer)))
            (should (string-match-p "\\[p/SPC\\] +pause" text))))))))
 
 (ert-deftest elpaish-test-upgrade-progress-key-columns-aligned ()
