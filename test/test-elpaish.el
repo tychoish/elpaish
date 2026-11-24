@@ -69,6 +69,14 @@
 (require 'elpaish-signing-keys)
 (require 'url)
 
+(defconst elpaish-test--packages-file
+  (expand-file-name
+   "packages.el"
+   (file-name-directory
+    (directory-file-name
+     (file-name-directory (or load-file-name buffer-file-name default-directory)))))
+  "Absolute path of the repository's packages.el, independent of the runner cwd.")
+
 (defmacro elpaish-test-with-temp-env (&rest body)
   "Execute BODY within an isolated temporary registry, work, and output directory."
   `(let* ((temp-dir (make-temp-file "elpaish-test-" t))
@@ -77,8 +85,8 @@
           (elpaish-release-mode 'all)
           (elpaish-base-url "https://example.com/elpaish/")
           (elpaish-default-branch "main")
-          (elpaish-packages-file "packages.el")
-          (elpaish-packages-files '("packages.el"))
+          (elpaish-packages-file elpaish-test--packages-file)
+          (elpaish-packages-files (list elpaish-test--packages-file))
           (elpaish-modus-theme 'modus-operandi)
           (orig-registry-snapshot (when (hash-table-p elpaish-registry)
                                     (copy-hash-table elpaish-registry)))
