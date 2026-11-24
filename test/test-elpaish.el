@@ -3788,7 +3788,38 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
          (let ((text (buffer-string)))
            (should (string-match-p "Clean up legacy packages (3 legacy packages cleaned)" text))
            (should (string-match-p "cleanup always on" text))
-           (should (string-match-p "p/SPC +pause" text))))))))
+           (should (string-match-p "\\[p/SPC\\] +pause" text))))))))
+
+(ert-deftest elpaish-test-upgrade-progress-key-columns-aligned ()
+  "Key rows in the progress buffer start each column at the same position."
+  (elpaish-test-with-temp-env
+   (let ((buffer (generate-new-buffer " *elpaish-test-progress*")))
+     (unwind-protect
+         (progn
+           (with-current-buffer buffer (elpaish-install-progress-mode))
+           (cl-letf (((symbol-function 'redisplay) #'ignore))
+             (elpaish-install--upgrade-progress
+              buffer '((pkg-a "[x]" "1.0" "done" nil)) "[x]" "[ ]" "Working"
+              nil 'upgrade))
+           (with-current-buffer buffer
+             (let* ((rows (seq-filter (lambda (line)
+                                        (string-match-p "\\`\\s-+\\[[^] ]+\\] .*\\[[^] ]+\\] .*\\[[^] ]+\\]" line))
+                                      (split-string (buffer-string) "\n")))
+                    (columns (seq-map
+                              (lambda (row)
+                                (let ((start 0) positions)
+                                  (while (string-match "\\[[^] ]+\\]" row start)
+                                    (push (match-beginning 0) positions)
+                                    (setq start (match-end 0)))
+                                  (nreverse positions)))
+                              rows)))
+               (should (>= (length rows) 3))
+               (should (= 3 (length (car columns))))
+               (should (seq-every-p (lambda (cols) (equal cols (car columns))) columns))
+               ;; at least four spaces separate a label from the next key
+               (should (seq-every-p (lambda (row) (string-match-p "[^ ]    +\\[" row))
+                                    rows)))))
+       (kill-buffer buffer)))))
 
 (ert-deftest elpaish-test-upgrade-progress-mode-line-and-archives-summary ()
   "Test shortened mode-line and archive old -> new summary formatting."

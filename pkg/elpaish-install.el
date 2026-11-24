@@ -1720,29 +1720,36 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
         (setq-local header-line-format nil)
         (erase-buffer)
         (insert (propertize (format "ELPAish package %s [%s]\n" op-title status-lbl)
-                            'face '(:inherit header-line :weight bold)))
-        (insert (format "Duration: %s wall (%s actual, %s waiting)\n"
+                            'face '(:inherit header-line :weight bold :extend t)))
+        (insert (propertize "Duration: " 'face 'bold)
+                (format "%s wall (%s actual, %s waiting)\n"
                         (elpaish-install--format-duration wall-time)
                         (elpaish-install--format-duration actual-time)
                         (elpaish-install--format-duration wait-time)))
-        (insert (format "Packages: %d total (%d current, %d work item%s: %d done, %d pending)\n"
+        (insert (propertize "Packages: " 'face 'bold)
+                (format "%d total (%d current, %d work item%s: %d done, %d pending)\n"
                         total-count utd-count work-total (if (= work-total 1) "" "s")
                         work-done (max 0 (- work-total work-done))))
-        (insert (propertize (format "Settings: delay %ss | confirm %s | stale-package cleanup always on\n"
-                                    cur-delay
-                                    (if cur-confirm "on" "off"))
-                            'face 'shadow))
+        (insert (propertize "Settings: " 'face 'bold)
+                (format "delay %ss | confirm %s | stale-package cleanup always on\n"
+                        cur-delay
+                        (if cur-confirm "on" "off")))
+        (insert "\n")
         (seq-do
          (lambda (row)
-           (insert "  ")
+           (insert " ")
            (seq-do (lambda (cell)
-                     (insert (propertize (format "%-9s" (car cell)) 'face 'help-key-binding)
-                             (format " %-14s" (cdr cell))))
+                     (pcase-let ((`(,key ,label ,key-width ,label-width) cell))
+                       (insert (propertize (string-pad (format "[%s]" key) key-width)
+                                           'face 'help-key-binding)
+                               "  "
+                               (propertize (string-pad label label-width) 'face 'bold)
+                               "    ")))
                    row)
            (insert "\n"))
-         '((("p/SPC" . "pause") ("c" . "continue") ("g" . "restart"))
-           (("+/-" . "delay") ("d" . "set delay") ("i" . "confirm"))
-           (("x" . "cancel") ("q" . "quit") ("?" . "menu"))))
+         '((("p/SPC" "pause" 7 6) ("c" "continue" 3 9) ("g" "restart" 3 7))
+           (("+/-" "delay" 7 6) ("d" "set delay" 3 9) ("i" "confirm" 3 7))
+           (("x" "cancel" 7 6) ("q" "quit" 3 9) ("?" "menu" 3 7))))
         (insert "\n")
         (unless (eq action 'repo-install)
           (let ((arch-start (point)))
@@ -1757,8 +1764,7 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
                   (let ((line-beg (line-beginning-position))
                         (line-end (line-end-position)))
                     (setq active-pos line-beg)
-                    (add-face-text-property line-beg line-end 'highlight))))))
-          (insert "\n"))
+                    (add-face-text-property line-beg line-end 'highlight)))))))
         (seq-do
          (lambda (entry)
            (let* ((pkg (car entry))
@@ -1807,7 +1813,7 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
                  (put-text-property line-beg (point) 'face 'highlight)))))
          entries)
         (let ((q-beg (point)))
-          (insert (format "\n%s Rebuild package quickstart\n"
+          (insert (format "%s Rebuild package quickstart\n"
                           (elpaish-install--icon-string quickstart-state)))
           (when (string= quickstart-state "[...]")
             (setq active-pos q-beg)
