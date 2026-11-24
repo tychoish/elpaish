@@ -156,7 +156,7 @@
  (elpaish-recipe-path "https://github.com/tychoish/elpaish.git")
  :source-dir "pkg"
  :branch "main"
- :files '("elpaish.pub.asc" "elpaish-keyring-pkg.el")
+ :files '("elpaish-keyring.el" "elpaish.pub.asc" "elpaish-keyring-pkg.el")
  :preflight-skip t
  :summary "GPG Keyring and trust anchors for ELPAish package archives"
  :url "https://github.com/tychoish/elpaish"

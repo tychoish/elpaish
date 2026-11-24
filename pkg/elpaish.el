@@ -603,7 +603,12 @@ point when two recipes are registered against the same directory."
     (let ((own-path (elpaish--recipe-source-path recipe)))
       (delq nil
             (mapcar (lambda (other)
-                      (when (and (not (eq other recipe))
+                      ;; Compare by name, not identity: a recipe deserialized in a
+                      ;; sprite worker is `equal' but not `eq' to its registry entry,
+                      ;; which would otherwise make a package its own sibling and
+                      ;; drop its main file from the build.
+                      (when (and (not (equal (elpaish-recipe-name other)
+                                             (elpaish-recipe-name recipe)))
                                  (equal (elpaish--recipe-source-path other) own-path))
                         (let ((oname (elpaish-recipe-name other)))
                           (if (string-suffix-p ".el" oname) oname (concat oname ".el")))))
@@ -1448,6 +1453,10 @@ Version numbers still track the source's last commit (see
       ;; 3. Build artifact
       (make-directory target-dir t)
       (let* ((files (elpaish--collect-files repo-dir (elpaish-recipe-files recipe) name recipe))
+             (_guard (unless (or (member main-file-name files)
+                                 (string= main-file-name (format "%s-pkg.el" name)))
+                       (error "Refusing to build %s: main file %s missing from collected files %S"
+                              name main-file-name files)))
              (is-tar (or (> (length files) 1) (string= main-file-name (format "%s-pkg.el" name))))
              (pkg-type (if is-tar 'tar 'single))
              (pkg-name-ver (format "%s-%s" name version-str))

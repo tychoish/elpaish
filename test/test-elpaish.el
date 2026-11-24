@@ -1881,6 +1881,27 @@ source's last commit time rather than the time of the build."
        (should refresh-called)
        (should (equal upgraded '(pkg-b pkg-a)))))))
 
+(ert-deftest elpaish-test-upgrade-packages-force-reinstalls-up-to-date ()
+  "`:force' reinstalls each target from the archive even when up to date."
+  (elpaish-test-with-temp-env
+   (let ((reinstalled nil)
+         (upgraded nil)
+         (package-archive-contents (list (list 'pkg-a) (list 'pkg-b)))
+         (package-alist (list (list 'pkg-a (package-desc-create :name 'pkg-a :version '(1)))
+                              (list 'pkg-b (package-desc-create :name 'pkg-b :version '(1))))))
+     (cl-letf (((symbol-function 'package-refresh-contents) #'ignore)
+               ((symbol-function 'package-installed-p) (lambda (_) t))
+               ((symbol-function 'package-upgrade) (lambda (p) (push p upgraded)))
+               ((symbol-function 'package-reinstall) (lambda (p) (push p reinstalled))))
+       (elpaish-install-upgrade-packages 'pkg-a 'pkg-b :sync t :force t)
+       (should (equal reinstalled '(pkg-b pkg-a)))
+       (should-not upgraded)))))
+
+(ert-deftest elpaish-test-package-up-to-date-p-reinstall-never-current ()
+  "The `reinstall' action never treats an installed package as up to date."
+  (cl-letf (((symbol-function 'package-installed-p) (lambda (_) t)))
+    (should-not (elpaish-install--package-up-to-date-p 'pkg-a 'reinstall))))
+
 (ert-deftest elpaish-test-add-bootstrap-packages-nested-and-dedup ()
   "Test `elpaish-install-register-package' flattens arbitrary nesting and dedups."
   (elpaish-test-with-temp-env
@@ -2175,6 +2196,26 @@ take no arguments, and it runs alongside
        (should (member "ex-pkg.el" collected))
        (should-not (member "other-pkg.el" collected))
        (should-not (member "sibling-pkg-pkg.el" collected))))))
+
+(ert-deftest elpaish-test-collect-files-keeps-main-file-for-copied-recipe ()
+  "A recipe copy (as deserialized in a sprite worker) keeps its own main file.
+It must still exclude a genuinely different sibling recipe's entry point."
+  (elpaish-test-with-temp-env
+   (let ((pkg-dir (expand-file-name "twin-pkg" temp-dir)))
+     (make-directory pkg-dir t)
+     (with-temp-file (expand-file-name "twin.el" pkg-dir)
+       (insert ";;; twin.el --- Test -*- lexical-binding: t; -*-\n(provide 'twin)\n"))
+     (with-temp-file (expand-file-name "twin-extra.el" pkg-dir)
+       (insert ";;; twin-extra.el --- Extra -*- lexical-binding: t; -*-\n(provide 'twin-extra)\n"))
+     (let* ((recipe (elpaish-register-package 'twin pkg-dir :files '("*.el")))
+            (copy (copy-sequence recipe)))
+       (should-not (eq copy recipe))
+       (should-not (elpaish--sibling-main-files copy))
+       (should (member "twin.el" (elpaish--collect-files pkg-dir '("*.el") "twin" copy)))
+       (elpaish-register-package 'twin-extra pkg-dir :files '("twin-extra.el"))
+       (let ((collected (elpaish--collect-files pkg-dir '("*.el") "twin" copy)))
+         (should (member "twin.el" collected))
+         (should-not (member "twin-extra.el" collected)))))))
 
 (ert-deftest elpaish-test-tar-package-from-pkg-descriptor ()
   "Test packaging from <name>-pkg.el and asset files without <name>.el."
