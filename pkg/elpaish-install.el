@@ -1533,6 +1533,7 @@ Otherwise, insert VER as plain text."
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
     (define-key map (kbd "g") #'elpaish-install-progress-restart)
+    (define-key map (kbd "R") #'elpaish-install-progress-retry-package)
     (define-key map (kbd "c") #'elpaish-install-progress-continue)
     (define-key map (kbd "r") #'elpaish-install-progress-continue)
     (define-key map (kbd "p") #'elpaish-install-progress-toggle-pause)
@@ -1627,6 +1628,69 @@ Ask for confirmation unless NOCONFIRM is non-nil."
         (elpaish-install--upgrade-run pkgs refresh sync delay callback action
                                       :stream stream :confirm confirm :cleanup cleanup)))
     (user-error "No previous package operation context found to restart")))
+
+(defun elpaish-install-progress--package-at-point ()
+  "Return the package symbol associated with the line at point, or nil."
+  (or (get-text-property (point) 'elpaish-package)
+      (get-text-property (line-beginning-position) 'elpaish-package)))
+
+(defun elpaish-install-progress-retry-package (&optional pkg)
+  "Retry or reinstall a single package in the progress buffer.
+When PKG is nil, use the package at point if on a package line, or prompt
+with completion (listing failed packages first)."
+  (interactive)
+  (let* ((at-point (and (null pkg) (elpaish-install-progress--package-at-point)))
+         (ctx elpaish-install--progress-context)
+         (entries (when (functionp elpaish-install--progress-control-fn)
+                    (funcall elpaish-install--progress-control-fn :list-entries)))
+         (target
+          (cond
+           (pkg (if (symbolp pkg) pkg (intern (format "%s" pkg))))
+           (at-point at-point)
+           ((null ctx)
+            (user-error "No package operation context found"))
+           (t
+            (let* ((ordered
+                    (if entries
+                        (append
+                         (seq-filter (lambda (e) (string= (nth 1 e) "[!]")) entries)
+                         (seq-remove (lambda (e) (string= (nth 1 e) "[!]")) entries))
+                      (seq-map (lambda (p) (list p "[ ]" nil nil nil))
+                               (plist-get ctx :pkgs))))
+                   (table
+                    (seq-map (lambda (e)
+                               (cons (symbol-name (car e))
+                                     (string-trim
+                                      (format "%s %s"
+                                              (or (nth 1 e) "")
+                                              (or (nth 3 e) "")))))
+                             ordered)))
+              (unless table
+                (user-error "No packages available to retry"))
+              (let* ((default-pkg (caar table))
+                     (choice
+                      (if (fboundp 'annotated-completing-read)
+                          (annotated-completing-read table
+                                                     :prompt "Retry/reinstall package: "
+                                                     :default default-pkg
+                                                     :require-match t)
+                        (completing-read "Retry/reinstall package: "
+                                         table nil t nil nil default-pkg))))
+                (intern (string-trim choice))))))))
+    (if (functionp elpaish-install--progress-control-fn)
+        (funcall elpaish-install--progress-control-fn :retry-package target)
+      (unless ctx
+        (user-error "No package operation context found"))
+      (let* ((action (plist-get ctx :action))
+             (retry-act (if (eq action 'repo-install) 'repo-install 'reinstall)))
+        (elpaish-install--upgrade-run (list target) nil
+                                      (plist-get ctx :sync)
+                                      (plist-get ctx :delay)
+                                      nil
+                                      retry-act
+                                      :stream (plist-get ctx :stream)
+                                      :confirm (plist-get ctx :confirm)
+                                      :cleanup (plist-get ctx :cleanup))))))
 
 (defun elpaish-install-progress-pause ()
   "Pause the active ELPAish package operation."
@@ -1725,6 +1789,7 @@ Optional FACTOR divides the current delay (defaults to 2.0)."
                     ("Set yield delay" "[d] Set custom yield delay seconds" . elpaish-install-progress-set-delay)
                     ("Toggle intermediate confirmation" "[i/C] Step-by-step confirmation" . elpaish-install-progress-toggle-confirm)
                     ("Toggle reinstall mode" "Force reinstall on subsequent upgrades" . elpaish-install-toggle-reinstall-mode)
+                    ("Retry / reinstall package" "[R] Reinstall or retry package at point" . elpaish-install-progress-retry-package)
                     ("Restart operation" "[g] Restart current package operation" . elpaish-install-progress-restart)
                     ("Cancel operation" "[x/k] Cancel package operation" . elpaish-install-progress-cancel)
                     ("Install local package" "Build and install specific recipe" . elpaish-install-local-package)
@@ -1825,7 +1890,8 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
            (insert "\n"))
          '((("p/SPC" "pause" 7 6) ("c" "continue" 3 9) ("g" "restart" 3 7))
            (("+/-" "delay" 7 6) ("d" "set delay" 3 9) ("i" "confirm" 3 7))
-           (("x" "cancel" 7 6) ("q" "quit" 3 9) ("?" "menu" 3 7))))
+           (("R" "retry" 7 6) ("x" "cancel" 3 9) ("q" "quit" 3 7))
+           (("?" "menu" 7 6))))
         (insert "\n")
         (unless (eq action 'repo-install)
           (let ((arch-start (point)))
@@ -1881,6 +1947,7 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
                  (insert ")")))
              (let ((line-end (point)))
                (insert "\n")
+               (put-text-property line-beg (point) 'elpaish-package pkg)
                (when up-to-date-p
                  (add-face-text-property line-beg line-end 'elpaish-install-up-to-date-face)
                  (put-text-property line-beg line-end 'elpaish-up-to-date t))
@@ -1949,9 +2016,11 @@ CLEANUP is obsolete and ignored: stale package versions are always removed."
          (global-state (if cur-paused "Paused" "Working"))
          (stage 'refresh)
          (results nil)
+         (retry-overrides nil)
          (timer nil)
          (heartbeat nil)
          (step nil)
+         (cancel-fn nil)
          (current-future nil)
          (start-time (float-time))
          (end-time nil)
@@ -2245,7 +2314,12 @@ CLEANUP is obsolete and ignored: stale package versions are always removed."
                                  (let ((raw-res (let ((inhibit-quit t) (quit-flag nil))
                                                   (if (eq act 'repo-install)
                                                       (elpaish-install--process-repository-package pkg stream)
-                                                    (elpaish-install--process-package pkg act nil)))))
+                                                    (let ((eff-act (if (memq pkg retry-overrides)
+                                                                       (progn
+                                                                         (setq retry-overrides (delq pkg retry-overrides))
+                                                                         'reinstall)
+                                                                     act)))
+                                                      (elpaish-install--process-package pkg eff-act nil))))))
                                    (funcall finish-item raw-res))))))
                        (setq stage 'quickstart)
                        (setq global-state "Working")))
@@ -2278,7 +2352,9 @@ CLEANUP is obsolete and ignored: stale package versions are always removed."
                          (setq cleanup-state "[-]"))
                        (setq actual-time (+ actual-time (- (float-time) t0)))
                        (setq end-time (float-time))
-                       (when (timerp heartbeat) (cancel-timer heartbeat))
+                       (when (timerp heartbeat)
+                         (cancel-timer heartbeat)
+                         (setq heartbeat nil))
                        (setq quickstart-state (if (and changed quickstart-enabled) "[x]" "[-]"))
                        (setq results final-results)
                        (setq stage 'done)
@@ -2295,7 +2371,9 @@ CLEANUP is obsolete and ignored: stale package versions are always removed."
                  (setq cur-paused t global-state "Paused" work-start nil)
                  (message "Operation paused; press c to continue."))
                 (error
-                 (when (timerp heartbeat) (cancel-timer heartbeat))
+                 (when (timerp heartbeat)
+                   (cancel-timer heartbeat)
+                   (setq heartbeat nil))
                  (setq end-time (float-time))
                  (pcase stage
                    ('refresh (setq refresh-state (format "[!] %s" (error-message-string err))))
@@ -2315,70 +2393,134 @@ CLEANUP is obsolete and ignored: stale package versions are always removed."
                   nil
                 (unless sync
                   (setq timer (run-at-time (or cur-delay elpaish-install-yield-delay) nil step)))))))
-    (with-current-buffer buffer
-      (setq-local elpaish-install--progress-step-fn step)
-      (setq-local elpaish-install--progress-control-fn
-                  (lambda (cmd &optional arg)
-                    (pcase cmd
-                      (:pause
-                       (when (timerp timer)
-                         (cancel-timer timer)
-                         (setq timer nil))
-                       (setq cur-paused t)
-                       (setq global-state "Paused")
-                       (funcall render))
-                      (:resume
-                       (when (timerp timer)
-                         (cancel-timer timer)
-                         (setq timer nil))
-                       (setq cur-paused nil)
-                       (setq global-state "Working")
-                       (funcall step))
-                      (:set-delay
-                       (setq cur-delay (max 0.0 (float arg)))
-                       (when (and (timerp timer) (not cur-paused) (not (eq stage 'done)))
-                         (cancel-timer timer)
-                         (setq timer (run-at-time cur-delay nil step)))
-                       (funcall render))
-                      (:set-confirm
-                       (setq cur-confirm (and arg t))
-                       (funcall render))
-                      (:render
-                       (funcall render))))))
-    (if sync
-        (progn
-          (while (and (not (eq stage 'done)) (not cur-paused))
-            (funcall step))
-          results)
-      (unless cur-paused
-        (setq timer (run-at-time 0 nil step)))
-      (unless (or sync noninteractive)
-        (setq heartbeat
-              (run-at-time 1 1 (lambda ()
-                                 (if (and (buffer-live-p buffer)
-                                          (buffer-local-value 'elpaish-install--progress-context buffer)
-                                          (plist-get (buffer-local-value 'elpaish-install--progress-context buffer) :running))
-                                     (funcall render)
-                                   (when (timerp heartbeat) (cancel-timer heartbeat)))))))
-      (let ((cancel (lambda (&optional _)
-                      (when (timerp timer) (cancel-timer timer))
-                      (when (timerp heartbeat) (cancel-timer heartbeat))
-                      (when (and current-future (fboundp 'sprite-future-cancel))
-                        (funcall 'sprite-future-cancel current-future :user-cancel))
-                      (setq current-future nil)
-                      (setq end-time (float-time))
-                      (setq remaining nil)
-                      (setq stage 'done)
-                      (setq cur-paused nil)
-                      (setq global-state "Canceled")
-                      (setq elpaish-install--active-cancel-handle nil)
-                      (with-current-buffer buffer
-                        (setf (plist-get elpaish-install--progress-context :running) nil)
-                        (setf (plist-get elpaish-install--progress-context :end-time) end-time))
-                      (funcall render)
-                      (logx 'info :msg "[elpaish] Package operation canceled."))))
-        (setq elpaish-install--active-cancel-handle cancel)
-        cancel))))
+    (setq cancel-fn
+          (lambda (&optional _)
+            (when (timerp timer) (cancel-timer timer))
+            (when (timerp heartbeat)
+              (cancel-timer heartbeat)
+              (setq heartbeat nil))
+            (when (and current-future (fboundp 'sprite-future-cancel))
+              (funcall 'sprite-future-cancel current-future :user-cancel))
+            (setq current-future nil)
+            (setq end-time (float-time))
+            (setq remaining nil)
+            (setq stage 'done)
+            (setq cur-paused nil)
+            (setq global-state "Canceled")
+            (setq elpaish-install--active-cancel-handle nil)
+            (with-current-buffer buffer
+              (setf (plist-get elpaish-install--progress-context :running) nil)
+              (setf (plist-get elpaish-install--progress-context :end-time) end-time))
+            (funcall render)
+            (logx 'info :msg "[elpaish] Package operation canceled.")))
+    (let ((start-heartbeat
+           (lambda ()
+             (unless (or sync noninteractive (timerp heartbeat))
+               (setq heartbeat
+                     (run-at-time 1 1
+                                  (lambda ()
+                                    (if (and (buffer-live-p buffer)
+                                             (buffer-local-value 'elpaish-install--progress-context buffer)
+                                             (plist-get (buffer-local-value 'elpaish-install--progress-context buffer) :running))
+                                        (funcall render)
+                                      (when (timerp heartbeat)
+                                        (cancel-timer heartbeat)
+                                        (setq heartbeat nil))))))))))
+      (with-current-buffer buffer
+        (setq-local elpaish-install--progress-step-fn step)
+        (setq-local elpaish-install--progress-control-fn
+                    (lambda (cmd &optional arg)
+                      (pcase cmd
+                        (:pause
+                         (when (timerp timer)
+                           (cancel-timer timer)
+                           (setq timer nil))
+                         (setq cur-paused t)
+                         (setq global-state "Paused")
+                         (funcall render))
+                        (:resume
+                         (when (timerp timer)
+                           (cancel-timer timer)
+                           (setq timer nil))
+                         (setq cur-paused nil)
+                         (if current-future
+                             (progn
+                               (setq global-state "Compiling in sprite")
+                               (funcall render))
+                           (setq global-state "Working")
+                           (funcall step)))
+                        (:set-delay
+                         (setq cur-delay (max 0.0 (float arg)))
+                         (when (and (timerp timer) (not cur-paused) (not (eq stage 'done)))
+                           (cancel-timer timer)
+                           (setq timer (run-at-time cur-delay nil step)))
+                         (funcall render))
+                        (:set-confirm
+                         (setq cur-confirm (and arg t))
+                         (funcall render))
+                        (:list-entries
+                         entries)
+                        (:retry-package
+                         (let* ((target-pkg (if (symbolp arg) arg (intern (format "%s" arg))))
+                                (entry (assq target-pkg entries)))
+                           (unless entry
+                             (user-error "Package %s is not in this progress buffer" target-pkg))
+                           (when (or (memq target-pkg remaining)
+                                     (and current-future (string= (nth 1 entry) "[...]")))
+                             (user-error "Package %s is already queued or running" target-pkg))
+                           (when (and (eq stage 'done)
+                                      (bound-and-true-p elpaish-install--active-cancel-handle)
+                                      (not (eq elpaish-install--active-cancel-handle cancel-fn)))
+                             (user-error "Another ELPAish package operation is currently running"))
+                           (let* ((ver (elpaish-install--installed-version target-pkg))
+                                  (ts (elpaish-install--package-previous-timestamps target-pkg ver)))
+                             (setf (nth 1 entry) "[ ]"
+                                   (nth 2 entry) ver
+                                   (nth 3 entry) nil
+                                   (nth 4 entry) (append (list :work-item t :up-to-date nil) ts)))
+                           (unless (eq act 'repo-install)
+                             (cl-pushnew target-pkg retry-overrides))
+                           (if (not (eq stage 'done))
+                               (progn
+                                 (when (eq stage 'quickstart)
+                                   (setq stage 'packages))
+                                 (setq remaining (cons target-pkg remaining))
+                                 (funcall render))
+                             (setq remaining (list target-pkg)
+                                   results nil
+                                   stage 'packages
+                                   end-time nil
+                                   work-start nil
+                                   cur-paused nil
+                                   quickstart-state "[ ]"
+                                   cleanup-state "[ ]"
+                                   global-state "Working")
+                             (when (buffer-live-p buffer)
+                               (with-current-buffer buffer
+                                 (setf (plist-get elpaish-install--progress-context :running) t)
+                                 (setf (plist-get elpaish-install--progress-context :paused) nil)
+                                 (setf (plist-get elpaish-install--progress-context :end-time) nil)))
+                             (funcall render)
+                             (if sync
+                                 (progn
+                                   (while (and (not (eq stage 'done)) (not cur-paused))
+                                     (funcall step))
+                                   results)
+                               (setq elpaish-install--active-cancel-handle cancel-fn)
+                               (funcall start-heartbeat)
+                               (setq timer (run-at-time 0 nil step))))))
+                        (:render
+                         (funcall render))))))
+      (if sync
+          (progn
+            (while (and (not (eq stage 'done)) (not cur-paused))
+              (funcall step))
+            results)
+        (unless cur-paused
+          (setq timer (run-at-time 0 nil step)))
+        (funcall start-heartbeat)
+        (setq elpaish-install--active-cancel-handle cancel-fn)
+        cancel-fn))))
 
 ;;;###autoload
 (cl-defun elpaish-install-upgrade-packages (&rest args)
