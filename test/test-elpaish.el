@@ -4389,16 +4389,16 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
 
 (ert-deftest elpaish-test-install-local-packages-workers-forwarding ()
   "Test local worker count resolution and `:workers' forwarding."
-  (let ((elpaish-parallel-jobs 8)
-        (sprite-max-count 4)
-        (elpaish-install-local-workers nil))
+  (dlet ((elpaish-parallel-jobs 8)
+         (sprite-max-count 4)
+         (elpaish-install-local-workers nil))
     (should (= (elpaish-install--resolve-local-workers) 4))
     (should (= (elpaish-install--resolve-local-workers 2) 2))
     (let ((elpaish-install-local-workers 3))
       (should (= (elpaish-install--resolve-local-workers) 3))
       (should (= (elpaish-install--resolve-local-workers 5) 5)))
-    (let ((elpaish-parallel-jobs 2)
-          (sprite-max-count 6))
+    (dlet ((elpaish-parallel-jobs 2)
+           (sprite-max-count 6))
       (should (= (elpaish-install--resolve-local-workers) 2))))
   (elpaish-test-with-temp-env
    (let ((repo (expand-file-name "repo-w" temp-dir))
