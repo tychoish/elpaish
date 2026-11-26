@@ -4165,9 +4165,9 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
                 (lambda (_future on-resolve &optional _on-reject)
                   (funcall on-resolve (list (list :status :ok :pkg 'pkg-sib)))
                   fake-future)))
-       (elpaish-async-build-package-in-sprite 'pkg-sib :sprite "work.1.worker-1")
+       (elpaish-async-build-package-in-sprite 'pkg-sib :sprite "work.1.worker-1" :staging-dir temp-dir)
        (should (equal (plist-get (car captured-calls) :sprites) '("work.1.worker-1")))
-       (elpaish-async-build-package-in-sprite 'pkg-sib)
+       (elpaish-async-build-package-in-sprite 'pkg-sib :staging-dir temp-dir)
        (should-not (plist-member (car captured-calls) :sprites)))
      ;; Verify worker form populates an empty worker registry from host recipes
      (let* ((recipes (list (map-elt elpaish-registry "pkg-sib")))
