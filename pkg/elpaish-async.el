@@ -21,6 +21,8 @@
 (declare-function sprite-future-then "sprite-future" (future on-resolve &optional on-reject))
 (declare-function sprite-future--make "sprite-future" (&rest args))
 (declare-function sprite-future--settle "sprite-future" (future state value &optional before-callbacks))
+(declare-function sprite-get-or-create-fleet "sprite-daemon" (count &rest args))
+(declare-function sprite--target-name "sprite-daemon" (s))
 (declare-function elpaish-recipe-p "elpaish" (object))
 (declare-function elpaish-recipe-name "elpaish" (recipe))
 (declare-function elpaish-build-package "elpaish" (recipe &optional stream output-directory-path))
@@ -119,11 +121,33 @@ recipe's source path, and finally `pkg/' under `default-directory'."
         (and src (file-exists-p (expand-file-name "elpaish.el" src)) src)))
      (t (expand-file-name "pkg/" default-directory)))))
 
-(defun elpaish-async--build-package-form (recipe-spec stream staging-dir load-path-dirs elpaish-dir)
+;;;###autoload
+(defun elpaish-async-acquire-sprite-targets (count)
+  "Acquire up to COUNT distinct sprite target names for parallel builds.
+Delegates to `sprite-get-or-create-fleet' when available and returns a
+deduplicated list of sprite target name strings, or nil when no sprites
+can be acquired."
+  (when (and (integerp count)
+             (> count 0)
+             (fboundp 'sprite-get-or-create-fleet))
+    (let ((sprites (condition-case nil
+                       (sprite-get-or-create-fleet count)
+                     (error nil))))
+      (seq-uniq
+       (delq nil
+             (seq-map (lambda (s)
+                        (cond
+                         ((stringp s) s)
+                         ((fboundp 'sprite--target-name) (sprite--target-name s))
+                         (t nil)))
+                      sprites))))))
+
+(defun elpaish-async--build-package-form (recipe-spec stream staging-dir load-path-dirs elpaish-dir &optional registry-recipes)
   "Construct Lisp form to preflight and build RECIPE-SPEC in a sprite.
 STREAM is the target release stream, STAGING-DIR receives the built artifact,
-LOAD-PATH-DIRS augments worker `load-path', and ELPAISH-DIR specifies the
-directory of ELPAish source/bytecode to reload if changed."
+LOAD-PATH-DIRS augments worker `load-path', ELPAISH-DIR specifies the
+directory of ELPAish source/bytecode to reload if changed, and optional
+REGISTRY-RECIPES synchronizes sibling recipes into the worker registry."
   `(progn
      (dolist (p ',load-path-dirs)
        (add-to-list 'load-path p))
@@ -157,6 +181,12 @@ directory of ELPAish source/bytecode to reload if changed."
      (require 'elpaish)
      (require 'elpaish-recipes)
      (require 'elpaish-check nil t)
+     (when ',registry-recipes
+       (unless (and (boundp 'elpaish-registry) (hash-table-p elpaish-registry))
+         (setq elpaish-registry (make-hash-table :test #'equal)))
+       (dolist (r ',registry-recipes)
+         (when (elpaish-recipe-p r)
+           (setf (map-elt elpaish-registry (elpaish-recipe-name r)) r))))
      (let* ((recipe-or-name ',recipe-spec)
             (effective-stream ',stream)
             (output-dir ,staging-dir)
@@ -218,7 +248,7 @@ directory of ELPAish source/bytecode to reload if changed."
                     :log (format "Exception during build of %s: %s" pkg-name (error-message-string err))))))))))
 
 ;;;###autoload
-(cl-defun elpaish-async-build-package-in-sprite (recipe &key stream staging-dir timeout)
+(cl-defun elpaish-async-build-package-in-sprite (recipe &key stream staging-dir timeout sprite)
   "Build RECIPE asynchronously inside an isolated worker sprite daemon.
 Returns a `sprite-future' resolving to a structured result plist:
   (:status :ok :artifact PATH :diagnostics DIAG :pkg PKG)
@@ -228,6 +258,7 @@ or on failure:
 STREAM specifies the release stream (defaults to \\='snapshot).
 STAGING-DIR specifies the target directory for the built package artifact.
 TIMEOUT overrides `elpaish-build-timeout'.
+SPRITE, when non-nil, pins execution to that target sprite name or struct.
 When no sprite is available the fleet rejects the dispatch; per
 `elpaish-async-local-fallback' the build then runs in this Emacs, blocking
 until it finishes, or fails."
@@ -235,7 +266,12 @@ until it finishes, or fails."
          (effective-timeout (or timeout elpaish-build-timeout))
          (target-dir (or staging-dir (make-temp-file "elpaish-sprite-build-" t)))
          (elpaish-dir (elpaish-async--resolve-elpaish-dir))
-         (form (elpaish-async--build-package-form recipe effective-stream target-dir load-path elpaish-dir)))
+         (registry-recipes (when (and (boundp 'elpaish-registry)
+                                      (hash-table-p elpaish-registry)
+                                      (> (hash-table-count elpaish-registry) 0))
+                             (map-values elpaish-registry)))
+         (form (elpaish-async--build-package-form
+                recipe effective-stream target-dir load-path elpaish-dir registry-recipes)))
     (cond
      ((and (require 'sprite nil t)
            (require 'sprite-fleet nil t)
@@ -243,14 +279,16 @@ until it finishes, or fails."
            (fboundp 'sprite-fleet-mapcar)
            (fboundp 'sprite-future-then))
       (let ((fleet-future
-             (sprite-fleet-mapcar
-              form
-              (list t)
-              :fleet-size 1
-              :timeout effective-timeout
-              :async t
-              :order 'preserve
-              :error-policy :collect-error)))
+             (apply #'sprite-fleet-mapcar
+                    form
+                    (list t)
+                    :fleet-size 1
+                    :timeout effective-timeout
+                    :async t
+                    :order 'preserve
+                    :error-policy :collect-error
+                    (when sprite
+                      (list :sprites (list sprite))))))
         (sprite-future-then
          fleet-future
          (lambda (results)
