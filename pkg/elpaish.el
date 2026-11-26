@@ -2281,7 +2281,7 @@ If IDLE is non-nil, run rebuilds when Emacs is idle for INTERVAL."
 
 (declare-function elpaish-load-packages "elpaish-recipes" (&optional files))
 (declare-function elpaish-ops-status-entries "elpaish-ops" (&optional resolver))
-(declare-function elpaish-install-local-package "elpaish-install" (&optional package &key stream sync async delay confirm cleanup callback))
+(declare-function elpaish-install-local-package "elpaish-install" (&optional package &key stream sync async delay confirm cleanup callback workers))
 
 ;;;###autoload (autoload 'elpaish-menu "elpaish" nil t)
 (transient-define-prefix elpaish-menu ()
