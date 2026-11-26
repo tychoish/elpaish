@@ -107,6 +107,20 @@ Defaults to nil (off).  Can also be toggled interactively in
   :type 'boolean
   :group 'elpaish-install)
 
+(defcustom elpaish-install-reinstall-mode nil
+  "When non-nil, upgrade operations reinstall packages from their archives.
+This applies to new operations; an explicit :force or :reinstall option
+overrides it.  An archive version can replace a newer local build."
+  :type 'boolean
+  :group 'elpaish-install)
+
+;;;###autoload
+(defun elpaish-install-toggle-reinstall-mode ()
+  "Toggle forced reinstallation for subsequent upgrade operations."
+  (interactive)
+  (setq elpaish-install-reinstall-mode (not elpaish-install-reinstall-mode))
+  (message "ELPAish reinstall mode %s" (if elpaish-install-reinstall-mode "enabled" "disabled")))
+
 (defface elpaish-install-up-to-date-face
   '((t :inherit shadow))
   "Face used in the progress buffer to gray out up-to-date packages."
@@ -1556,11 +1570,14 @@ Otherwise, insert VER as plain text."
         (logx 'info :msg "[elpaish] Operation canceled."))
     (logx 'warn :msg "[elpaish] No active package operation to cancel.")))
 
-(defun elpaish-install-progress-restart (&optional _ignore-auto _noconfirm)
-  "Restart package operation using stored context."
+(defun elpaish-install-progress-restart (&optional _ignore-auto noconfirm)
+  "Restart package operation using stored context.
+Ask for confirmation unless NOCONFIRM is non-nil."
   (interactive)
   (if-let* ((ctx elpaish-install--progress-context))
-      (let ((pkgs (plist-get ctx :pkgs))
+      (when (or noconfirm
+                (yes-or-no-p "Restart the ELPAish package operation? "))
+       (let ((pkgs (plist-get ctx :pkgs))
             (refresh (plist-get ctx :refresh))
             (sync (plist-get ctx :sync))
             (delay (plist-get ctx :delay))
@@ -1573,7 +1590,7 @@ Otherwise, insert VER as plain text."
                    (plist-get ctx :running))
           (elpaish-install-cancel))
         (elpaish-install--upgrade-run pkgs refresh sync delay callback action
-                                      :stream stream :confirm confirm :cleanup cleanup))
+                                      :stream stream :confirm confirm :cleanup cleanup)))
     (user-error "No previous package operation context found to restart")))
 
 (defun elpaish-install-progress-pause ()
@@ -1672,12 +1689,14 @@ Optional FACTOR divides the current delay (defaults to 2.0)."
                     ("Speed up execution" "[-/<] Decrease yield delay" . elpaish-install-progress-speed-up)
                     ("Set yield delay" "[d] Set custom yield delay seconds" . elpaish-install-progress-set-delay)
                     ("Toggle intermediate confirmation" "[i/C] Step-by-step confirmation" . elpaish-install-progress-toggle-confirm)
+                    ("Toggle reinstall mode" "Force reinstall on subsequent upgrades" . elpaish-install-toggle-reinstall-mode)
                     ("Restart operation" "[g] Restart current package operation" . elpaish-install-progress-restart)
                     ("Cancel operation" "[x/k] Cancel package operation" . elpaish-install-progress-cancel)
                     ("Install local package" "Build and install specific recipe" . elpaish-install-local-package)
                     ("Install local packages" "Build and install registered packages" . elpaish-install-local-packages)
                     ("Clean stale packages" "Remove unreferenced packages" . elpaish-install-clean-stale-packages)
                     ("Rebuild local package" "Recompile package directory" . elpaish-install-rebuild-local-package)
+                    ("Reactivate installed packages" "Reload installed packages in this Emacs" . elpaish-install-reactivate-packages)
                     ("Quit progress window" "[q] Dismiss progress window" . elpaish-install-progress-quit)))
          (choice (if (fboundp 'annotated-completing-read)
                      (annotated-completing-read actions :prompt "ELPAish Action: ")
@@ -2335,6 +2354,8 @@ with cooperative yielding.  When called interactively with a prefix argument
 \(\\[universal-argument] \\[universal-argument]) every target package is
 force-reinstalled from the configured archives even when already up to date
 \(including replacing a newer locally built version with the archive's).
+`elpaish-install-reinstall-mode' enables forced reinstallation by default;
+toggle it with `elpaish-install-toggle-reinstall-mode'.
 
 ARGS can contain package symbols, lists of package symbols, or keyword options:
   :sync BOOL        - When non-nil, execute synchronously.
@@ -2360,12 +2381,12 @@ When no packages are specified in ARGS, defaults to
   (interactive "P")
   (let* ((interactive-p (called-interactively-p 'any))
          (prefix-arg-val (when interactive-p (car args)))
-         (force (equal prefix-arg-val '(16)))
+         (force (or (equal prefix-arg-val '(16)) elpaish-install-reinstall-mode))
          (remaining (if interactive-p nil args))
          (pkgs nil)
          (group nil)
          (refresh t)
-         (sync (and prefix-arg-val (not force)))
+         (sync (and prefix-arg-val (not (equal prefix-arg-val '(16)))))
          (async :default)
          (concurrency nil)
          (delay nil)
@@ -2719,7 +2740,7 @@ When NO-PROMPT is non-nil, automatically deletes all stale versions."
 (defun elpaish-install-sync-package-load-paths ()
   "Prune stale package directories from `load-path'.
 Also ensures current ELPA directories and autoloads are loaded."
-  (let ((elpa-dir (expand-file-name "elpa" user-emacs-directory)))
+  (let ((elpa-dir (expand-file-name package-user-dir)))
     (when (file-directory-p elpa-dir)
       (let ((newest-dirs (make-hash-table :test #'equal))
             (stale-dirs (make-hash-table :test #'equal)))
@@ -2754,6 +2775,59 @@ Also ensures current ELPA directories and autoloads are loaded."
                        (file-exists-p (concat autoloads-file ".elc")))
                (load autoloads-file t t))))
          newest-dirs)))))
+
+;;;###autoload
+(defun elpaish-install-reactivate-packages ()
+  "Refresh installed package activation and reload previously loaded files.
+Reload failures are reported and do not prevent other packages from loading.
+This operates in the current Emacs process and does not rebuild packages."
+  (interactive)
+  (when (and (called-interactively-p 'interactive)
+             (not (yes-or-no-p "Reactivate and reload installed packages in this Emacs? ")))
+    (user-error "Package reactivation canceled"))
+  (let ((loaded nil)
+        (old-dirs nil)
+        (failures nil)
+        (count 0))
+    (seq-do
+     (lambda (entry)
+       (when-let* ((desc (cadr entry))
+                   (dir (package-desc-dir desc)))
+         (push (directory-file-name (expand-file-name dir)) old-dirs)
+         (seq-do
+          (lambda (history)
+            (when (and (stringp (car history))
+                       (file-in-directory-p (car history) dir))
+              (push (cons (car entry) (file-relative-name (car history) dir)) loaded)))
+          load-history)))
+     package-alist)
+    (setq package-alist nil)
+    (setq package-activated-list nil)
+    (package-load-all-descriptors)
+    (setq load-path
+          (seq-remove (lambda (path)
+                        (and (stringp path)
+                             (member (directory-file-name (expand-file-name path)) old-dirs)))
+                      load-path))
+    (let ((package-quickstart nil))
+      (package-activate-all))
+    (seq-do
+     (lambda (item)
+       (condition-case err
+           (let* ((desc (cadr (assq (car item) package-alist)))
+                  (dir (and (memq (car item) package-activated-list)
+                            desc (package-desc-dir desc))))
+             (unless dir (error "Package is no longer installed"))
+             (load (file-name-sans-extension (expand-file-name (cdr item) dir)) nil t)
+             (setq count (1+ count)))
+         (error (push (cons item (error-message-string err)) failures))))
+     loaded)
+    (setq failures (nreverse failures))
+    (if failures
+        (display-warning 'elpaish-install
+                         (format "Package reload failures: %S" failures))
+      (message "Reactivated packages and reloaded %d files" count))
+    failures))
 
 ;;;###autoload
 (defun elpaish-install-optimize-quickstart-file (file)
