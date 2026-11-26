@@ -982,7 +982,9 @@ Returns t if checks pass, nil if quarantined."
                    (name (elpaish-recipe-name recipe))
                    (main-file (if (string-suffix-p ".el" name) name (concat name ".el")))
                    (sibling-dirs (thread-last (hash-table-values elpaish-registry)
-                                   (seq-remove (lambda (r) (eq r recipe)))
+                                   (seq-remove (lambda (r)
+                                                 (equal (elpaish-recipe-name r)
+                                                        (elpaish-recipe-name recipe))))
                                    (seq-map #'elpaish--recipe-source-path)))
                    (elpa-dirs (when (and (boundp 'package-user-dir)
                                          package-user-dir

@@ -20,6 +20,7 @@
 
 (declare-function elpaish-recipe-p "elpaish" (object))
 (declare-function elpaish-recipe-name "elpaish" (recipe))
+(declare-function elpaish-recipe-files "elpaish" (recipe))
 (declare-function elpaish-recipe-requires "elpaish" (recipe))
 (declare-function elpaish-recipe-summary "elpaish" (recipe))
 (declare-function copy-elpaish-recipe "elpaish" (recipe))
@@ -357,6 +358,38 @@ and invokes `package-install' for any uninstalled dependency."
       (or (map-elt elpaish-registry name-str)
           (map-elt elpaish-registry name-sym)))))
 
+(defun elpaish-install--verify-artifact (artifact recipe)
+  "Verify that tar ARTIFACT contains the main entry-point file for RECIPE.
+Signals an error if ARTIFACT is a valid tar archive that omits the
+expected main file, preventing a broken build from overwriting an
+installed package.  Non-tar artifacts and unreadable stubs are ignored
+so `package-install-file' handles them directly."
+  (when (and artifact
+             (stringp artifact)
+             (string-suffix-p ".tar" artifact)
+             (file-exists-p artifact)
+             recipe
+             (fboundp 'elpaish-recipe-name)
+             (fboundp 'elpaish-recipe-files))
+    (let* ((name (elpaish-recipe-name recipe))
+           (rec-files (elpaish-recipe-files recipe))
+           (pkg-only (and rec-files
+                          (member (format "%s-pkg.el" name) rec-files)
+                          (not (member (format "%s.el" name) rec-files))))
+           (main-file (cond
+                       (pkg-only (format "%s-pkg.el" name))
+                       ((string-suffix-p ".el" name) name)
+                       (t (concat name ".el")))))
+      (with-temp-buffer
+        (when (zerop (call-process "tar" nil t nil "-tf" artifact))
+          (let ((entries (split-string (buffer-string) "\n" t)))
+            (unless (seq-some (lambda (entry)
+                                (or (string= entry main-file)
+                                    (string-suffix-p (concat "/" main-file) entry)))
+                              entries)
+              (error "Refusing to install %s: main file %s missing from artifact %s"
+                     name main-file (file-name-nondirectory artifact)))))))))
+
 (defun elpaish-install--process-repository-package (pkg &optional stream)
   "Build and install single repository package PKG for STREAM.
 Returns a result plist with `:status', `:pkg', `:from', `:to', `:desc',
@@ -391,6 +424,7 @@ or `:error' on failure."
                         (logx 'error :msg (format "[elpaish] Failed to build %s: %s" pkg-name err-msg)
                               :pkg pkg-name :error err-msg)
                         (list :status :failed :pkg pkg :error err-msg))
+                    (elpaish-install--verify-artifact artifact recipe)
                     (let* ((built-desc (package-install-file artifact))
                            (desc (or (seq-find (lambda (candidate)
                                                  (equal (package-desc-version candidate)
@@ -496,6 +530,7 @@ selection across installed, upgrade, or all), see
                                                   (expand-file-name "build" temp-dir))))
             (unless artifact
               (error "Could not build package %s" (elpaish-recipe-name recipe)))
+            (elpaish-install--verify-artifact artifact recipe)
             (let* ((built-desc (package-install-file artifact))
                    (desc (or (seq-find (lambda (candidate)
                                          (equal (package-desc-version candidate)
@@ -2151,32 +2186,34 @@ CLEANUP is obsolete and ignored: stale package versions are always removed."
                                                                               (prev-ver (and prev-desc
                                                                                              (package-version-join (package-desc-version prev-desc)))))
                                                                          (unwind-protect
-                                                                             (let* ((built-desc (package-install-file artifact))
-                                                                                    (desc (or (seq-find
-                                                                                               (lambda (candidate)
-                                                                                                 (equal (package-desc-version candidate)
-                                                                                                        (package-desc-version built-desc)))
-                                                                                               (cdr (assq (package-desc-name built-desc) package-alist)))
-                                                                                              built-desc))
-                                                                                    (new-ver (and desc (package-version-join (package-desc-version desc))))
-                                                                                    (status (if prev-ver :upgraded :installed))
-                                                                                    (res (list :status status
-                                                                                               :pkg pkg
-                                                                                               :from prev-ver
-                                                                                               :to new-ver
-                                                                                               :desc desc)))
-                                                                               (when (and desc (fboundp 'package--reload-previously-loaded))
-                                                                                 (condition-case nil
-                                                                                     (package--reload-previously-loaded desc)
-                                                                                   (error nil)))
-                                                                               (logx 'info :msg (format "[elpaish] Installed %s (%s)"
-                                                                                                        pkg-name (or new-ver ""))
-                                                                                     :pkg pkg-name :version new-ver)
-                                                                               (elpaish-install--run-package-updated-hooks
-                                                                                pkg-sym
-                                                                                (if prev-ver 'upgraded 'installed)
-                                                                                res)
-                                                                               res)
+                                                                             (progn
+                                                                               (elpaish-install--verify-artifact artifact recipe)
+                                                                               (let* ((built-desc (package-install-file artifact))
+                                                                                      (desc (or (seq-find
+                                                                                                 (lambda (candidate)
+                                                                                                   (equal (package-desc-version candidate)
+                                                                                                          (package-desc-version built-desc)))
+                                                                                                 (cdr (assq (package-desc-name built-desc) package-alist)))
+                                                                                                built-desc))
+                                                                                      (new-ver (and desc (package-version-join (package-desc-version desc))))
+                                                                                      (status (if prev-ver :upgraded :installed))
+                                                                                      (res (list :status status
+                                                                                                 :pkg pkg
+                                                                                                 :from prev-ver
+                                                                                                 :to new-ver
+                                                                                                 :desc desc)))
+                                                                                 (when (and desc (fboundp 'package--reload-previously-loaded))
+                                                                                   (condition-case nil
+                                                                                       (package--reload-previously-loaded desc)
+                                                                                     (error nil)))
+                                                                                 (logx 'info :msg (format "[elpaish] Installed %s (%s)"
+                                                                                                          pkg-name (or new-ver ""))
+                                                                                       :pkg pkg-name :version new-ver)
+                                                                                 (elpaish-install--run-package-updated-hooks
+                                                                                  pkg-sym
+                                                                                  (if prev-ver 'upgraded 'installed)
+                                                                                  res)
+                                                                                 res))
                                                                            (when (and artifact (file-exists-p artifact))
                                                                              (let ((parent-dir (file-name-directory artifact)))
                                                                                (if (and parent-dir (file-directory-p parent-dir)

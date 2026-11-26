@@ -25,7 +25,9 @@
 (declare-function elpaish-recipe-name "elpaish" (recipe))
 (declare-function elpaish-build-package "elpaish" (recipe &optional stream output-directory-path))
 (declare-function elpaish-preflight-package "elpaish" (recipe))
+(declare-function elpaish--recipe-source-path "elpaish" (recipe))
 (declare-function elpaish-install--resolve-repository-recipe "elpaish-install" (pkg))
+(defvar elpaish-registry)
 
 (defgroup elpaish-async nil
   "Concurrency and parallel execution options for ELPAish."
@@ -90,13 +92,67 @@ to preserve uniform error collection semantics."
                 (error (list :error err :target 'local))))
             items))))
 
+(defvar elpaish-async--worker-loaded-files nil
+  "Alist mapping library name to (FILE . MTIME) loaded in a sprite worker.
+Used to reload ELPAish libraries automatically when a persistent sprite
+daemon outlives a package upgrade or source edit.")
+
+(defun elpaish-async--resolve-elpaish-dir ()
+  "Resolve the directory containing `elpaish.el' for sprite workers.
+Prefers `locate-library' for `elpaish', then the directory of
+`elpaish-async' if it contains `elpaish', then the registered `elpaish'
+recipe's source path, and finally `pkg/' under `default-directory'."
+  (let ((lib (locate-library "elpaish")))
+    (cond
+     (lib (file-name-directory lib))
+     ((let* ((async-lib (locate-library "elpaish-async"))
+             (dir (and async-lib (file-name-directory async-lib))))
+        (and dir
+             (or (file-exists-p (expand-file-name "elpaish.el" dir))
+                 (file-exists-p (expand-file-name "elpaish.elc" dir)))
+             dir)))
+     ((and (boundp 'elpaish-registry)
+           (hash-table-p elpaish-registry)
+           (fboundp 'elpaish--recipe-source-path))
+      (let* ((rec (map-elt elpaish-registry "elpaish"))
+             (src (and rec (elpaish--recipe-source-path rec))))
+        (and src (file-exists-p (expand-file-name "elpaish.el" src)) src)))
+     (t (expand-file-name "pkg/" default-directory)))))
+
 (defun elpaish-async--build-package-form (recipe-spec stream staging-dir load-path-dirs elpaish-dir)
-  "Construct Lisp form to preflight and build RECIPE-SPEC in a sprite."
+  "Construct Lisp form to preflight and build RECIPE-SPEC in a sprite.
+STREAM is the target release stream, STAGING-DIR receives the built artifact,
+LOAD-PATH-DIRS augments worker `load-path', and ELPAISH-DIR specifies the
+directory of ELPAish source/bytecode to reload if changed."
   `(progn
      (dolist (p ',load-path-dirs)
        (add-to-list 'load-path p))
-     (when ,elpaish-dir
-       (add-to-list 'load-path ,elpaish-dir))
+     (when (and ,elpaish-dir (file-directory-p ,elpaish-dir))
+       (let ((dir (file-name-as-directory ,elpaish-dir)))
+         (setq load-path (cons dir (delete dir load-path)))
+         (unless (boundp 'elpaish-async--worker-loaded-files)
+           (set 'elpaish-async--worker-loaded-files nil))
+         (dolist (lib '("elpaish" "elpaish-recipes" "elpaish-check"))
+           (let* ((el-file (expand-file-name (concat lib ".el") dir))
+                  (elc-file (expand-file-name (concat lib ".elc") dir))
+                  (has-el (file-exists-p el-file))
+                  (has-elc (file-exists-p elc-file))
+                  (target (cond
+                           ((and has-el has-elc)
+                            (if (file-newer-than-file-p el-file elc-file) el-file elc-file))
+                           (has-elc elc-file)
+                           (has-el el-file)
+                           (t nil))))
+             (when target
+               (let* ((attrs (file-attributes target))
+                      (sig (cons target (and attrs (file-attribute-modification-time attrs))))
+                      (prev (cdr (assoc lib (symbol-value 'elpaish-async--worker-loaded-files)))))
+                 (when (or (not (featurep (intern lib)))
+                           (not (equal sig prev)))
+                   (load target nil t)
+                   (set 'elpaish-async--worker-loaded-files
+                        (cons (cons lib sig)
+                              (assoc-delete-all lib (symbol-value 'elpaish-async--worker-loaded-files)))))))))))
      (require 'map)
      (require 'elpaish)
      (require 'elpaish-recipes)
@@ -125,6 +181,14 @@ to preserve uniform error collection semantics."
                    :stage :recipe-resolution
                    :error (format "No recipe found in repository for %s" pkg-name)
                    :log (format "Recipe resolution failed for %s" pkg-name))
+           (when (and (boundp 'elpaish--preflight-cache)
+                      (hash-table-p elpaish--preflight-cache))
+             (map-delete elpaish--preflight-cache pkg-name))
+           (when (and (boundp 'elpaish--preflight-diagnostics)
+                      (hash-table-p elpaish--preflight-diagnostics))
+             (map-delete elpaish--preflight-diagnostics pkg-name))
+           (when (boundp 'elpaish--last-build-error)
+             (setq elpaish--last-build-error nil))
            (condition-case err
                (let ((artifact (elpaish-build-package rec effective-stream output-dir)))
                  (if (and artifact (file-exists-p artifact))
@@ -138,7 +202,7 @@ to preserve uniform error collection semantics."
                           (last-err (or (and (boundp 'elpaish--last-build-error) elpaish--last-build-error)
                                         "Build produced no artifact"))
                           (stage (cond
-                                  ((and diag (listp diag)) (car diag))
+                                  ((and diag (listp diag)) :preflight)
                                   ((and (boundp 'elpaish--last-build-error) elpaish--last-build-error) :build)
                                   (t :preflight))))
                      (list :status :failed
@@ -170,10 +234,7 @@ until it finishes, or fails."
   (let* ((effective-stream (or stream 'snapshot))
          (effective-timeout (or timeout elpaish-build-timeout))
          (target-dir (or staging-dir (make-temp-file "elpaish-sprite-build-" t)))
-         (elpaish-lib (locate-library "elpaish"))
-         (elpaish-dir (if elpaish-lib
-                          (file-name-directory elpaish-lib)
-                        (expand-file-name "pkg/" default-directory)))
+         (elpaish-dir (elpaish-async--resolve-elpaish-dir))
          (form (elpaish-async--build-package-form recipe effective-stream target-dir load-path elpaish-dir)))
     (cond
      ((and (require 'sprite nil t)
@@ -195,8 +256,15 @@ until it finishes, or fails."
          (lambda (results)
            (let ((res (car results)))
              (cond
+              ((and (listp res) (plist-member res :status)) res)
               ((elpaish-async-error-p res)
-               (let ((err-msg (error-message-string (plist-get res :error))))
+               (let* ((raw-err (plist-get res :error))
+                      (err-msg (cond
+                                ((stringp raw-err) raw-err)
+                                ((and (consp raw-err) (symbolp (car raw-err))
+                                      (get (car raw-err) 'error-conditions))
+                                 (error-message-string raw-err))
+                                (t (format "%S" raw-err)))))
                  (list :status :failed
                        :pkg (cond
                              ((elpaish-recipe-p recipe) (intern (elpaish-recipe-name recipe)))
