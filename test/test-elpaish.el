@@ -3835,6 +3835,28 @@ FORM-VALUE is the build form, FALLBACK the policy and CHOICE the key pressed."
            (should (buffer-local-value 'truncate-lines (current-buffer)))
            (should (string-match-p "\\[p/SPC\\] +pause" text))))))))
 
+(ert-deftest elpaish-test-upgrade-progress-workers-header ()
+  "Worker counts appear for every operation and follow current render state."
+  (elpaish-test-with-temp-env
+   (with-temp-buffer
+     (elpaish-install-progress-mode)
+     (setq-local elpaish-install--progress-context '(:workers 3))
+     (cl-letf (((symbol-function 'redisplay) #'ignore))
+       (dolist (action '(install reinstall upgrade repo-install))
+         (elpaish-install--upgrade-progress
+          (current-buffer) nil "[ ]" "[ ]" "Working" nil action)
+         (should (string-match-p
+                  (if (eq action 'repo-install) "workers: 3" "workers: 1")
+                  (buffer-string))))
+       (elpaish-install--upgrade-progress
+        (current-buffer) nil "[ ]" "[ ]" "Working" nil 'repo-install
+        '(:workers 4 :active-workers 2))
+       (should (string-match-p "workers: 4 (2 active)" (buffer-string)))
+       (setq-local elpaish-install--progress-context nil)
+       (elpaish-install--upgrade-progress
+        (current-buffer) nil "[ ]" "[ ]" "Working" nil 'repo-install)
+       (should (string-match-p "workers: 1" (buffer-string)))))))
+
 (ert-deftest elpaish-test-upgrade-progress-key-columns-aligned ()
   "Key rows in the progress buffer start each column at the same position."
   (elpaish-test-with-temp-env

@@ -1912,8 +1912,11 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
              (cur-confirm (if (plist-member stats :confirm)
                               (plist-get stats :confirm)
                             (plist-get ctx :confirm)))
-             (cur-workers (or (plist-get stats :workers)
-                              (plist-get ctx :workers)))
+             (cur-workers (if (eq action 'repo-install)
+                              (or (plist-get stats :workers)
+                                  (plist-get ctx :workers)
+                                  1)
+                            1))
              (active-workers (or (plist-get stats :active-workers) 0))
              (cur-cleanup t))
         (setq-local header-line-format nil)
@@ -1931,17 +1934,13 @@ and options plist.  CLEANUP-STATE is the stale package cleanup status."
                         total-count utd-count work-total (if (= work-total 1) "" "s")
                         work-done (max 0 (- work-total work-done))))
         (insert (propertize "Settings: " 'face 'bold)
-                (if (and (eq action 'repo-install) cur-workers)
-                    (format "delay: %ss | confirm: %s | workers: %d%s\n"
-                            cur-delay
-                            (if cur-confirm "on" "off")
-                            cur-workers
-                            (if (> active-workers 0)
-                                (format " (%d active)" active-workers)
-                              ""))
-                  (format "delay: %ss | confirm: %s\n"
-                          cur-delay
-                          (if cur-confirm "on" "off"))))
+                (format "delay: %ss | confirm: %s | workers: %d%s\n"
+                        cur-delay
+                        (if cur-confirm "on" "off")
+                        cur-workers
+                        (if (> active-workers 0)
+                            (format " (%d active)" active-workers)
+                          "")))
         (insert "\n")
         (seq-do
          (lambda (row)
